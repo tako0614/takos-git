@@ -1,0 +1,22 @@
+{
+  "workspace": [
+    "./apps/git",
+    "./packages/git-contract"
+  ],
+  "nodeModulesDir": "auto",
+  "compilerOptions": {
+    "strict": true,
+    "lib": ["deno.window", "dom", "dom.iterable"],
+    "types": ["node"]
+  },
+  "imports": {
+    "takos-git-contract": "./packages/git-contract/src/index.ts",
+    "takos-git-contract/": "./packages/git-contract/src/",
+    "hono": "npm:hono@^4.12.4",
+    "zod": "npm:zod@^3.25.32"
+  },
+  "tasks": {
+    "check": "deno check apps/git/src/index.ts packages/git-contract/src/index.ts",
+    "dev": "deno run --allow-net --allow-env apps/git/src/index.ts"
+  }
+}

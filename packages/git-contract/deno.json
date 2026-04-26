@@ -1,0 +1,11 @@
+{
+  "name": "takos-git-contract",
+  "version": "1.0.0",
+  "exports": {
+    ".": "./src/index.ts",
+    "./internal-api": "./src/internal-api.ts"
+  },
+  "tasks": {
+    "check": "deno check src/index.ts"
+  }
+}

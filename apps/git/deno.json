@@ -1,0 +1,11 @@
+{
+  "name": "takos-git-service",
+  "version": "1.0.0",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "tasks": {
+    "check": "deno check src/index.ts",
+    "dev": "deno run --allow-net --allow-env src/index.ts"
+  }
+}
