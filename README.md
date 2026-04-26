@@ -5,7 +5,8 @@ Takos Git hosting service.
 `takos-git` owns repository hosting, Git Smart HTTP, source object storage,
 repository metadata, refs, pull request repository data, source resolution, and
 Git-facing API contracts. Browser and CLI clients do not call this service
-directly; `takos-web` verifies the user and forwards signed internal requests.
+directly; `takos-app` verifies the user and forwards signed internal requests.
+The current app checkout path is `../web` until the rename is completed.
 
 ## Layout
 
