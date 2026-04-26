@@ -96,8 +96,38 @@ export async function signInternalRequest(
   };
 }
 
+export async function verifyInternalRequestSignature(
+  input: SignedInternalRequestInput & {
+    secret: string;
+    signature: string;
+  },
+): Promise<boolean> {
+  const expected = await signInternalRequest({
+    ...input,
+    actor: {
+      actorAccountId: "verification-only",
+      roles: [],
+      requestId: "verification-only",
+    },
+    secret: input.secret,
+  });
+  return timingSafeEqualHex(
+    expected.headers[TAKOS_INTERNAL_SIGNATURE_HEADER],
+    input.signature,
+  );
+}
+
 function toHex(buffer: ArrayBuffer): string {
   return Array.from(new Uint8Array(buffer))
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("");
+}
+
+function timingSafeEqualHex(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i += 1) {
+    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return diff === 0;
 }

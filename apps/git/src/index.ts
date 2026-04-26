@@ -8,6 +8,7 @@ import {
   TAKOS_INTERNAL_ACTOR_HEADER,
   TAKOS_INTERNAL_SIGNATURE_HEADER,
   TAKOS_INTERNAL_TIMESTAMP_HEADER,
+  verifyInternalRequestSignature,
 } from "takos-git-contract";
 
 const app = new Hono();
@@ -15,7 +16,7 @@ const app = new Hono();
 app.get("/health", (c) => c.json({ ok: true, service: "takos-git" }));
 
 app.post(TAKOS_GIT_INTERNAL_PATHS.resolveSource, async (c) => {
-  const auth = readInternalAuth(c.req.raw);
+  const auth = await readInternalAuth(c.req.raw);
   if (!auth.ok) return c.json({ error: auth.error }, 401);
 
   const request = await c.req.json<GitResolveSourceRequest>();
@@ -27,8 +28,8 @@ app.post(TAKOS_GIT_INTERNAL_PATHS.resolveSource, async (c) => {
   return c.json(response);
 });
 
-app.get(TAKOS_GIT_INTERNAL_PATHS.repositories, (c) => {
-  const auth = readInternalAuth(c.req.raw);
+app.get(TAKOS_GIT_INTERNAL_PATHS.repositories, async (c) => {
+  const auth = await readInternalAuth(c.req.raw);
   if (!auth.ok) return c.json({ error: auth.error }, 401);
 
   const repositories: GitRepositorySummary[] = [];
@@ -37,13 +38,22 @@ app.get(TAKOS_GIT_INTERNAL_PATHS.repositories, (c) => {
 
 function readInternalAuth(
   request: Request,
-): { ok: true } | { ok: false; error: string } {
+): Promise<{ ok: true } | { ok: false; error: string }> {
   const secret = Deno.env.get("TAKOS_INTERNAL_SERVICE_SECRET");
+  return readInternalAuthWithSecret(request, secret);
+}
+
+async function readInternalAuthWithSecret(
+  request: Request,
+  secret: string | undefined,
+): Promise<{ ok: true } | { ok: false; error: string }> {
   if (!secret) return { ok: false, error: "internal service secret missing" };
-  if (!request.headers.get(TAKOS_INTERNAL_SIGNATURE_HEADER)) {
+  const signature = request.headers.get(TAKOS_INTERNAL_SIGNATURE_HEADER);
+  if (!signature) {
     return { ok: false, error: "missing internal signature" };
   }
-  if (!request.headers.get(TAKOS_INTERNAL_TIMESTAMP_HEADER)) {
+  const timestamp = request.headers.get(TAKOS_INTERNAL_TIMESTAMP_HEADER);
+  if (!timestamp) {
     return { ok: false, error: "missing internal timestamp" };
   }
   const actorHeader = request.headers.get(TAKOS_INTERNAL_ACTOR_HEADER);
@@ -53,6 +63,17 @@ function readInternalAuth(
   } catch {
     return { ok: false, error: "invalid actor context" };
   }
+  const body = await request.clone().text();
+  const path = new URL(request.url).pathname;
+  const valid = await verifyInternalRequestSignature({
+    method: request.method,
+    path,
+    body,
+    timestamp,
+    secret,
+    signature,
+  });
+  if (!valid) return { ok: false, error: "invalid internal signature" };
   return { ok: true };
 }
 
