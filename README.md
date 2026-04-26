@@ -6,7 +6,7 @@ Takos Git hosting service.
 repository metadata, refs, pull request repository data, source resolution, and
 Git-facing API contracts. Browser and CLI clients do not call this service
 directly; `takos-app` verifies the user and forwards signed internal requests.
-The current app checkout path is `../web` until the rename is completed.
+The current app checkout path is `../app`.
 
 ## Layout
 
