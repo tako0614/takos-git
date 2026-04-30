@@ -96,6 +96,57 @@ Deno.test("source resolver rejects branch or tag refs as unresolved", async () =
   }
 });
 
+Deno.test("repository metadata creation does not create an on-disk bare repository", async () => {
+  const root = await Deno.makeTempDir();
+  const originalRoot = Deno.env.get("TAKOS_GIT_REPOSITORY_ROOT");
+  Deno.env.set("TAKOS_GIT_REPOSITORY_ROOT", root);
+  try {
+    const repositoryId = `metadata-${crypto.randomUUID()}`;
+    const commit = "0123456789abcdef0123456789abcdef01234567";
+    const create = await signedRequest({
+      method: "POST",
+      path: TAKOS_GIT_INTERNAL_PATHS.repositories,
+      body: JSON.stringify({
+        id: repositoryId,
+        name: "Metadata Only",
+        ownerAccountId: "acct_1",
+        refs: { main: commit },
+      }),
+    });
+
+    assert.equal(create.status, 201);
+    await assert.rejects(
+      () => Deno.stat(`${root}/${repositoryId}.git`),
+      Deno.errors.NotFound,
+    );
+
+    const refs = await signedRequest({
+      method: "GET",
+      path: TAKOS_GIT_INTERNAL_PATHS.repositoryRefs(repositoryId),
+    });
+    assert.equal(refs.status, 404);
+    assert.deepEqual(await refs.json(), {
+      error: "repository not found",
+      code: "git_repository_not_found",
+      repositoryId,
+    });
+
+    const resolved = await signedResolveRequest({
+      repositoryId,
+      sourceRef: "main",
+    });
+    assert.equal(resolved.status, 404);
+    assert.deepEqual(await resolved.json(), {
+      error: "repository not found",
+      code: "git_repository_not_found",
+      repositoryId,
+    });
+  } finally {
+    restoreEnv("TAKOS_GIT_REPOSITORY_ROOT", originalRoot);
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
 Deno.test("source resolver resolves refs from configured bare repository root", async () => {
   await withBareRepository(async (fixture) => {
     const originalRoot = Deno.env.get("TAKOS_GIT_REPOSITORY_ROOT");
@@ -113,6 +164,54 @@ Deno.test("source resolver resolves refs from configured bare repository root", 
         sourceRef: "main",
         resolvedCommit: fixture.commit,
         resolvedRef: "refs/heads/main",
+      });
+    } finally {
+      restoreEnv("TAKOS_GIT_REPOSITORY_ROOT", originalRoot);
+    }
+  });
+});
+
+Deno.test("source resolver verifies literal commits against configured bare repository root", async () => {
+  await withBareRepository(async (fixture) => {
+    const originalRoot = Deno.env.get("TAKOS_GIT_REPOSITORY_ROOT");
+    Deno.env.set("TAKOS_GIT_REPOSITORY_ROOT", fixture.root);
+    try {
+      const response = await signedResolveRequest({
+        repositoryId: fixture.repositoryId,
+        sourceRef: fixture.commit,
+      });
+      const body = await response.json();
+
+      assert.equal(response.status, 200);
+      assert.deepEqual(body, {
+        repositoryId: fixture.repositoryId,
+        sourceRef: fixture.commit,
+        resolvedCommit: fixture.commit,
+      });
+    } finally {
+      restoreEnv("TAKOS_GIT_REPOSITORY_ROOT", originalRoot);
+    }
+  });
+});
+
+Deno.test("source resolver rejects missing literal commits when repository root is configured", async () => {
+  await withBareRepository(async (fixture) => {
+    const originalRoot = Deno.env.get("TAKOS_GIT_REPOSITORY_ROOT");
+    Deno.env.set("TAKOS_GIT_REPOSITORY_ROOT", fixture.root);
+    try {
+      const missingCommit = "f".repeat(40);
+      const response = await signedResolveRequest({
+        repositoryId: fixture.repositoryId,
+        sourceRef: missingCommit,
+      });
+      const body = await response.json();
+
+      assert.equal(response.status, 422);
+      assert.deepEqual(body, {
+        error: "literal commit id was not found in repository",
+        code: "git_commit_not_found",
+        repositoryId: fixture.repositoryId,
+        objectId: missingCommit,
       });
     } finally {
       restoreEnv("TAKOS_GIT_REPOSITORY_ROOT", originalRoot);
@@ -142,7 +241,7 @@ Deno.test("refs endpoint lists refs from configured bare repository root", async
   });
 });
 
-Deno.test("object endpoint reads Git objects from configured bare repository root", async () => {
+Deno.test("object endpoint returns git cat-file pretty output from configured bare repository root", async () => {
   await withBareRepository(async (fixture) => {
     const originalRoot = Deno.env.get("TAKOS_GIT_REPOSITORY_ROOT");
     Deno.env.set("TAKOS_GIT_REPOSITORY_ROOT", fixture.root);
@@ -151,24 +250,110 @@ Deno.test("object endpoint reads Git objects from configured bare repository roo
         method: "GET",
         path: TAKOS_GIT_INTERNAL_PATHS.object(
           fixture.repositoryId,
-          fixture.blob,
+          fixture.commit,
         ),
       });
 
       assert.equal(response.status, 200);
-      assert.equal(response.headers.get("x-takos-git-object-id"), fixture.blob);
-      assert.equal(response.headers.get("x-takos-git-object-type"), "blob");
-      assert.equal(await response.text(), "hello from takos-git\n");
+      assert.equal(
+        response.headers.get("x-takos-git-object-id"),
+        fixture.commit,
+      );
+      assert.equal(response.headers.get("x-takos-git-object-type"), "commit");
+      assert.equal(
+        response.headers.get("x-takos-git-object-format"),
+        "git-cat-file-pretty",
+      );
+      const text = await response.text();
+      assert.match(text, /^tree [0-9a-f]{40}$/m);
+      assert.match(text, /^author Takos Test <test@example\.com> /m);
+      assert.match(text, /\n\ninitial\n$/);
     } finally {
       restoreEnv("TAKOS_GIT_REPOSITORY_ROOT", originalRoot);
     }
   });
 });
 
-Deno.test("smart HTTP supports clone and push against configured bare repository root", async () => {
+Deno.test("smart HTTP rejects unauthenticated clone/fetch discovery", async () => {
+  await withBareRepository(async (fixture) => {
+    const originalRoot = Deno.env.get("TAKOS_GIT_REPOSITORY_ROOT");
+    const originalSecret = Deno.env.get("TAKOS_INTERNAL_SERVICE_SECRET");
+    Deno.env.set("TAKOS_GIT_REPOSITORY_ROOT", fixture.root);
+    Deno.env.set("TAKOS_INTERNAL_SERVICE_SECRET", "test-secret");
+    try {
+      const response = await app.request(
+        `/${fixture.repositoryId}.git/info/refs?service=git-upload-pack`,
+      );
+      const body = await response.json();
+
+      assert.equal(response.status, 401);
+      assert.deepEqual(body, { error: "missing internal signature" });
+    } finally {
+      restoreEnv("TAKOS_GIT_REPOSITORY_ROOT", originalRoot);
+      restoreEnv("TAKOS_INTERNAL_SERVICE_SECRET", originalSecret);
+    }
+  });
+});
+
+Deno.test("smart HTTP rejects unauthenticated push endpoint", async () => {
+  await withBareRepository(async (fixture) => {
+    const originalRoot = Deno.env.get("TAKOS_GIT_REPOSITORY_ROOT");
+    const originalSecret = Deno.env.get("TAKOS_INTERNAL_SERVICE_SECRET");
+    Deno.env.set("TAKOS_GIT_REPOSITORY_ROOT", fixture.root);
+    Deno.env.set("TAKOS_INTERNAL_SERVICE_SECRET", "test-secret");
+    try {
+      const response = await app.request(
+        `/${fixture.repositoryId}.git/git-receive-pack`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/x-git-receive-pack-request",
+          },
+          body: "",
+        },
+      );
+      const body = await response.json();
+
+      assert.equal(response.status, 401);
+      assert.deepEqual(body, { error: "missing internal signature" });
+    } finally {
+      restoreEnv("TAKOS_GIT_REPOSITORY_ROOT", originalRoot);
+      restoreEnv("TAKOS_INTERNAL_SERVICE_SECRET", originalSecret);
+    }
+  });
+});
+
+Deno.test("smart HTTP serves signed clone/fetch discovery", async () => {
   await withBareRepository(async (fixture) => {
     const originalRoot = Deno.env.get("TAKOS_GIT_REPOSITORY_ROOT");
     Deno.env.set("TAKOS_GIT_REPOSITORY_ROOT", fixture.root);
+    try {
+      const path = `/${fixture.repositoryId}.git/info/refs`;
+      const response = await signedRequest({
+        method: "GET",
+        path,
+        requestPath: `${path}?service=git-upload-pack`,
+      });
+      const body = await response.text();
+
+      assert.equal(response.status, 200);
+      assert.match(
+        response.headers.get("content-type") ?? "",
+        /^application\/x-git-upload-pack-advertisement/,
+      );
+      assert.match(body, /# service=git-upload-pack/);
+    } finally {
+      restoreEnv("TAKOS_GIT_REPOSITORY_ROOT", originalRoot);
+    }
+  });
+});
+
+Deno.test("smart HTTP rejects normal git clients because they cannot sign internal requests", async () => {
+  await withBareRepository(async (fixture) => {
+    const originalRoot = Deno.env.get("TAKOS_GIT_REPOSITORY_ROOT");
+    const originalSecret = Deno.env.get("TAKOS_INTERNAL_SERVICE_SECRET");
+    Deno.env.set("TAKOS_GIT_REPOSITORY_ROOT", fixture.root);
+    Deno.env.set("TAKOS_INTERNAL_SERVICE_SECRET", "test-secret");
     const server = Deno.serve({
       hostname: "127.0.0.1",
       port: 0,
@@ -180,27 +365,20 @@ Deno.test("smart HTTP supports clone and push against configured bare repository
         const addr = server.addr as Deno.NetAddr;
         const remoteUrl =
           `http://127.0.0.1:${addr.port}/${fixture.repositoryId}.git`;
-        await git(["clone", remoteUrl, cloneDir]);
-        await git(["-C", cloneDir, "config", "user.email", "test@example.com"]);
-        await git(["-C", cloneDir, "config", "user.name", "Takos Test"]);
-        await Deno.writeTextFile(`${cloneDir}/SECOND.md`, "second\n");
-        await git(["-C", cloneDir, "add", "SECOND.md"]);
-        await git(["-C", cloneDir, "commit", "-m", "second"]);
-        await git(["-C", cloneDir, "push", "origin", "main"]);
+        const clone = await gitOutput(["clone", remoteUrl, cloneDir]);
 
-        const pushed = await git([
-          "--git-dir",
-          `${fixture.root}/${fixture.repositoryId}.git`,
-          "rev-parse",
-          "refs/heads/main",
-        ]);
-        assert.notEqual(pushed.trim(), fixture.commit);
+        assert.equal(clone.success, false);
+        assert.match(
+          `${clone.stdout}\n${clone.stderr}`,
+          /Authentication failed|The requested URL returned error: 401|could not read Username/,
+        );
       } finally {
         await Deno.remove(cloneDir, { recursive: true });
       }
     } finally {
       await server.shutdown();
       restoreEnv("TAKOS_GIT_REPOSITORY_ROOT", originalRoot);
+      restoreEnv("TAKOS_INTERNAL_SERVICE_SECRET", originalSecret);
     }
   });
 });
@@ -304,6 +482,7 @@ async function signedResolveRequest(input: {
 async function signedRequest(input: {
   readonly method: string;
   readonly path: string;
+  readonly requestPath?: string;
   readonly body?: string;
   readonly timestamp?: string;
   readonly caller?: string;
@@ -325,7 +504,7 @@ async function signedRequest(input: {
       caller: input.caller ?? "takos-app",
       audience: input.audience ?? "takos-git",
     });
-    return await app.request(input.path, {
+    return await app.request(input.requestPath ?? input.path, {
       method: input.method,
       headers: {
         ...(body ? { "content-type": "application/json" } : {}),
@@ -386,15 +565,26 @@ async function withBareRepository(
 }
 
 async function git(args: string[]): Promise<string> {
+  const output = await gitOutput(args);
+  if (!output.success) {
+    throw new Error(output.stderr);
+  }
+  return output.stdout;
+}
+
+async function gitOutput(
+  args: string[],
+): Promise<{ success: boolean; stdout: string; stderr: string }> {
   const output = await new Deno.Command("git", {
     args,
     stdout: "piped",
     stderr: "piped",
   }).output();
-  if (!output.success) {
-    throw new Error(new TextDecoder().decode(output.stderr));
-  }
-  return new TextDecoder().decode(output.stdout);
+  return {
+    success: output.success,
+    stdout: new TextDecoder().decode(output.stdout),
+    stderr: new TextDecoder().decode(output.stderr),
+  };
 }
 
 function restoreEnv(key: string, value: string | undefined) {
