@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import app from "./index.ts";
 import {
-  signInternalRequest,
+  TAKOS_GIT_CAPABILITIES,
   TAKOS_GIT_INTERNAL_PATHS,
   type TakosActorContext,
 } from "takos-git-contract";
+import { signTakosInternalRequest } from "takos-paas-contract/internal-rpc";
 
 const actor: TakosActorContext = {
   actorAccountId: "acct_1",
@@ -470,6 +471,7 @@ async function signedResolveRequest(input: {
     path: TAKOS_GIT_INTERNAL_PATHS.resolveSource,
     caller: input.caller,
     audience: input.audience,
+    capabilities: [TAKOS_GIT_CAPABILITIES.refResolve],
     body: JSON.stringify({
       ...(input.includeBodyActor ? { actor } : {}),
       repositoryId: input.repositoryId,
@@ -487,6 +489,7 @@ async function signedRequest(input: {
   readonly timestamp?: string;
   readonly caller?: string;
   readonly audience?: string;
+  readonly capabilities?: readonly string[];
 }): Promise<Response> {
   const originalSecret = Deno.env.get("TAKOS_INTERNAL_SERVICE_SECRET");
   const originalCallers = Deno.env.get("TAKOS_GIT_INTERNAL_CALLERS");
@@ -494,17 +497,22 @@ async function signedRequest(input: {
   Deno.env.set("TAKOS_GIT_INTERNAL_CALLERS", "takos-app,takos-paas");
   try {
     const body = input.body ?? "";
-    const signed = await signInternalRequest({
+    const requestPath = input.requestPath ?? input.path;
+    const requestUrl = new URL(requestPath, "https://git.internal");
+    const signed = await signTakosInternalRequest({
       method: input.method,
-      path: input.path,
+      path: requestUrl.pathname,
+      query: requestUrl.search,
       body,
       timestamp: input.timestamp ?? new Date().toISOString(),
       secret: "test-secret",
       actor,
       caller: input.caller ?? "takos-app",
       audience: input.audience ?? "takos-git",
+      capabilities: input.capabilities ??
+        defaultCapabilities(input.method, input.path),
     });
-    return await app.request(input.requestPath ?? input.path, {
+    return await app.request(requestPath, {
       method: input.method,
       headers: {
         ...(body ? { "content-type": "application/json" } : {}),
@@ -516,6 +524,26 @@ async function signedRequest(input: {
     restoreEnv("TAKOS_INTERNAL_SERVICE_SECRET", originalSecret);
     restoreEnv("TAKOS_GIT_INTERNAL_CALLERS", originalCallers);
   }
+}
+
+function defaultCapabilities(method: string, path: string): readonly string[] {
+  const verb = method.toUpperCase();
+  if (path.includes("/git-receive-pack")) {
+    return [TAKOS_GIT_CAPABILITIES.repoWrite];
+  }
+  if (path.includes("/git-upload-pack") || path.includes(".git")) {
+    return [TAKOS_GIT_CAPABILITIES.repoRead];
+  }
+  if (path.startsWith("/internal/objects/")) {
+    return [TAKOS_GIT_CAPABILITIES.objectRead];
+  }
+  if (path === TAKOS_GIT_INTERNAL_PATHS.resolveSource) {
+    return [TAKOS_GIT_CAPABILITIES.refResolve];
+  }
+  if (path.includes("/refs") || verb === "GET") {
+    return [TAKOS_GIT_CAPABILITIES.repoRead];
+  }
+  return [TAKOS_GIT_CAPABILITIES.repoWrite];
 }
 
 async function withBareRepository(

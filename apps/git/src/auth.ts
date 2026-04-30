@@ -3,13 +3,19 @@ import {
   TAKOS_INTERNAL_ACTOR_HEADER,
   TAKOS_INTERNAL_AUDIENCE_HEADER,
   TAKOS_INTERNAL_CALLER_HEADER,
+  TAKOS_INTERNAL_CAPABILITIES_HEADER,
   TAKOS_INTERNAL_SIGNATURE_HEADER,
   TAKOS_INTERNAL_TIMESTAMP_HEADER,
-  verifySignedInternalRequestFromHeaders,
-} from "takos-git-contract";
+  verifyTakosInternalRequestFromHeaders,
+} from "takos-paas-contract/internal-rpc";
+import { TAKOS_GIT_CAPABILITIES } from "takos-git-contract";
 
 const TAKOS_GIT_EXPECTED_AUDIENCE = "takos-git";
-const TAKOS_GIT_DEFAULT_INTERNAL_CALLERS = ["takos-app", "takos-paas"];
+const TAKOS_GIT_DEFAULT_INTERNAL_CALLERS = [
+  "takos-app",
+  "takos-paas",
+  "takos-agent",
+];
 
 export function readInternalAuth(
   request: Request,
@@ -45,18 +51,29 @@ async function readInternalAuthWithSecret(
   }
   const audience = request.headers.get(TAKOS_INTERNAL_AUDIENCE_HEADER);
   if (!audience) return { ok: false, error: "missing internal audience" };
+  const requiredCapabilities = requiredGitCapabilities(request);
+  if (requiredCapabilities.length > 0) {
+    const capabilities = request.headers.get(
+      TAKOS_INTERNAL_CAPABILITIES_HEADER,
+    );
+    if (!capabilities) {
+      return { ok: false, error: "missing internal capability" };
+    }
+  }
   const body = await request.clone().text();
-  const path = new URL(request.url).pathname;
-  const valid = await verifySignedInternalRequestFromHeaders({
+  const url = new URL(request.url);
+  const verified = await verifyTakosInternalRequestFromHeaders({
     method: request.method,
-    path,
+    path: url.pathname,
+    query: url.search,
     body,
     secret,
     headers: request.headers,
-    expectedCaller: caller,
+    expectedCaller: allowedInternalCallers(),
     expectedAudience: TAKOS_GIT_EXPECTED_AUDIENCE,
+    requiredCapabilities,
   });
-  if (!valid) return { ok: false, error: "invalid internal signature" };
+  if (!verified) return { ok: false, error: "invalid internal signature" };
   return { ok: true };
 }
 
@@ -65,4 +82,41 @@ function allowedInternalCallers(): string[] {
   return (configured?.split(",") ?? TAKOS_GIT_DEFAULT_INTERNAL_CALLERS)
     .map((caller) => caller.trim())
     .filter(Boolean);
+}
+
+function requiredGitCapabilities(request: Request): string[] {
+  const url = new URL(request.url);
+  const path = url.pathname;
+  const method = request.method.toUpperCase();
+  if (isReceivePack(path, url.searchParams)) {
+    return [TAKOS_GIT_CAPABILITIES.repoWrite];
+  }
+  if (isUploadPack(path, url.searchParams)) {
+    return [TAKOS_GIT_CAPABILITIES.repoRead];
+  }
+  if (path.startsWith("/internal/objects/")) {
+    return [TAKOS_GIT_CAPABILITIES.objectRead];
+  }
+  if (path === "/internal/source/resolve") {
+    return [TAKOS_GIT_CAPABILITIES.refResolve];
+  }
+  if (path.includes("/refs")) {
+    return [TAKOS_GIT_CAPABILITIES.repoRead];
+  }
+  if (path.startsWith("/internal/repositories")) {
+    return method === "GET"
+      ? [TAKOS_GIT_CAPABILITIES.repoRead]
+      : [TAKOS_GIT_CAPABILITIES.repoWrite];
+  }
+  return [];
+}
+
+function isUploadPack(path: string, params: URLSearchParams): boolean {
+  return path.endsWith("/git-upload-pack") ||
+    params.get("service") === "git-upload-pack";
+}
+
+function isReceivePack(path: string, params: URLSearchParams): boolean {
+  return path.endsWith("/git-receive-pack") ||
+    params.get("service") === "git-receive-pack";
 }

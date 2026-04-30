@@ -2,12 +2,14 @@
 
 Takos Git hosting service shell.
 
-`takos-git` currently provides Git DTOs/signing helpers and a small internal
-service shell for compatibility routes. It has a process-local in-memory
-repository metadata store, basic repository CRUD-ish internal endpoints, and
-branch/tag ref source resolution for refs already present in that store. Literal
-40-hex and 64-hex commit IDs are accepted directly only when no repository root
-is configured; with `TAKOS_GIT_REPOSITORY_ROOT`, literal IDs must exist in the
+`takos-git` currently provides Git DTOs/path contracts and a small internal
+service shell for compatibility routes. Internal request signing is owned by
+`takos-paas-contract/internal-rpc`; the Git contract only publishes Git-owned
+routes and capabilities. The service has a process-local in-memory repository
+metadata store, basic repository CRUD-ish internal endpoints, and branch/tag ref
+source resolution for refs already present in that store. Literal 40-hex and
+64-hex commit IDs are accepted directly only when no repository root is
+configured; with `TAKOS_GIT_REPOSITORY_ROOT`, literal IDs must exist in the
 target bare repository and resolve as commits.
 
 When `TAKOS_GIT_REPOSITORY_ROOT` points at a directory of bare repositories, the
@@ -30,13 +32,13 @@ canonical source semantics are owned by the PaaS control plane in `../paas`.
 
 ```text
 apps/git                 internal Git service entrypoint
-packages/git-contract    internal/public Git DTOs and signing helpers
+packages/git-contract    internal/public Git DTOs, paths, and capabilities
 ```
 
 ## Env
 
 - `TAKOS_INTERNAL_SERVICE_SECRET` is required for signed internal endpoints.
-- `TAKOS_GIT_INTERNAL_CALLERS` defaults to `takos-app,takos-paas`.
+- `TAKOS_GIT_INTERNAL_CALLERS` defaults to `takos-app,takos-paas,takos-agent`.
 - `TAKOS_GIT_INTERNAL_URL` is consumed by callers when they route to this shell.
 - `TAKOS_GIT_REPOSITORY_ROOT` enables bare-repository ref/object reads and Smart
   HTTP hosting. Smart HTTP requests still require valid Takos internal signed
@@ -71,8 +73,10 @@ packages/git-contract    internal/public Git DTOs and signing helpers
 - Smart HTTP-shaped paths such as `/owner/repo.git/info/refs`,
   `/owner/repo.git/git-upload-pack`, and `/owner/repo.git/git-receive-pack` are
   served by `git http-backend` when `TAKOS_GIT_REPOSITORY_ROOT` is configured
-  and the request carries valid Takos internal signed headers. Unsigned clone,
-  fetch, and push requests are rejected with `401`.
+  and the request carries a valid v3 Takos internal RPC envelope. Unsigned
+  clone, fetch, and push requests are rejected with `401`. The public Git client
+  entry point is `takos-app`, which authenticates the user and forwards with
+  `git.repo.read` or `git.repo.write`.
 
 ## Local Commands
 
