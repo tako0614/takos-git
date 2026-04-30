@@ -68,7 +68,13 @@ export const TAKOS_GIT_INTERNAL_PATHS = {
   repositories: "/internal/repositories",
   repository: (repositoryId: string): string =>
     `/internal/repositories/${encodeURIComponent(repositoryId)}`,
+  repositoryRefs: (repositoryId: string): string =>
+    `/internal/repositories/${encodeURIComponent(repositoryId)}/refs`,
   objects: "/internal/objects",
+  object: (repositoryId: string, objectId: string): string =>
+    `/internal/objects/${encodeURIComponent(repositoryId)}/${
+      encodeURIComponent(objectId)
+    }`,
   resolveSource: "/internal/source/resolve",
 } as const;
 

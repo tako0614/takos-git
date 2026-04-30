@@ -19,7 +19,7 @@ import {
 
 const app: Hono = new Hono();
 const TAKOS_GIT_EXPECTED_AUDIENCE = "takos-git";
-const TAKOS_GIT_DEFAULT_INTERNAL_CALLERS = ["takos-app", "takos-deploy"];
+const TAKOS_GIT_DEFAULT_INTERNAL_CALLERS = ["takos-app", "takos-paas"];
 const repositories = new Map<string, StoredGitRepository>();
 
 interface StoredGitRepository {
@@ -81,6 +81,22 @@ app.get("/internal/repositories/:repositoryId", async (c) => {
     return c.json(repositoryNotFound(c.req.param("repositoryId")), 404);
   }
   return c.json({ repository: repositoryDetail(repository) });
+});
+
+app.get("/internal/repositories/:repositoryId/refs", async (c) => {
+  const auth = await readInternalAuth(c.req.raw);
+  if (!auth.ok) return c.json({ error: auth.error }, 401);
+
+  const repositoryId = c.req.param("repositoryId");
+  const gitRefs = await readConfiguredGitRefs(repositoryId);
+  if (gitRefs.ok) {
+    return c.json({ repositoryId, refs: gitRefs.refs });
+  }
+  if (gitRefs.status !== 501) return c.json(gitRefs.body, gitRefs.status);
+
+  const repository = repositories.get(repositoryId);
+  if (!repository) return c.json(gitRefs.body, 501);
+  return c.json({ repositoryId, refs: repositoryRefs(repository) });
 });
 
 app.patch("/internal/repositories/:repositoryId", async (c) => {
@@ -148,9 +164,12 @@ app.post(TAKOS_GIT_INTERNAL_PATHS.resolveSource, async (c) => {
   }
 
   const repository = repositories.get(request.repositoryId);
-  const resolved = repository
-    ? resolveStoredRef(repository, request.sourceRef)
-    : undefined;
+  const resolved = await resolveConfiguredGitRef(
+    request.repositoryId,
+    repository?.defaultBranch ?? "main",
+    request.sourceRef,
+  ) ??
+    (repository ? resolveStoredRef(repository, request.sourceRef) : undefined);
   if (!resolved) {
     return c.json({
       error: "real ref resolution is not implemented/configured for takos-git",
@@ -167,6 +186,26 @@ app.post(TAKOS_GIT_INTERNAL_PATHS.resolveSource, async (c) => {
     resolvedRef: resolved.name,
   };
   return c.json(response);
+});
+
+app.get("/internal/objects/:repositoryId/:objectId", async (c) => {
+  const auth = await readInternalAuth(c.req.raw);
+  if (!auth.ok) return c.json({ error: auth.error }, 401);
+
+  const object = await readConfiguredGitObject(
+    c.req.param("repositoryId"),
+    c.req.param("objectId"),
+  );
+  if (!object.ok) return c.json(object.body, object.status);
+  return new Response(bytesToArrayBuffer(object.content), {
+    status: 200,
+    headers: {
+      "content-type": "application/octet-stream",
+      "x-takos-git-object-id": object.objectId,
+      "x-takos-git-object-type": object.type,
+      "x-takos-git-object-size": String(object.size),
+    },
+  });
 });
 
 app.all(TAKOS_GIT_INTERNAL_PATHS.objects, async (c) => {
@@ -186,7 +225,7 @@ app.all("/internal/objects/*", async (c) => {
 app.all("*", (c) => {
   const pathname = new URL(c.req.url).pathname;
   if (isGitSmartHttpPath(pathname)) {
-    return c.json(notImplemented("git_smart_http_not_implemented"), 501);
+    return handleSmartHttp(c.req.raw);
   }
   return c.json({ error: "not found" }, 404);
 });
@@ -296,6 +335,56 @@ function refResolutionCandidates(
   return [...candidates];
 }
 
+async function resolveConfiguredGitRef(
+  repositoryId: string,
+  defaultBranch: string,
+  sourceRef: string,
+): Promise<{ name: string; target: string } | undefined> {
+  const refs = await readConfiguredGitRefs(repositoryId);
+  if (!refs.ok) return undefined;
+  const candidates = refResolutionCandidatesForBranch(defaultBranch, sourceRef);
+  for (const candidate of candidates) {
+    const ref = refs.refs.find((entry) => entry.name === candidate);
+    if (!ref) continue;
+    const commit = await runGit([
+      "--git-dir",
+      refs.repositoryPath,
+      "rev-parse",
+      "--verify",
+      "--end-of-options",
+      `${ref.name}^{commit}`,
+    ]);
+    if (commit.success) {
+      return {
+        name: ref.name,
+        target: textDecoder.decode(commit.stdout).trim(),
+      };
+    }
+    return { name: ref.name, target: ref.target };
+  }
+}
+
+function refResolutionCandidatesForBranch(
+  defaultBranch: string,
+  sourceRef: string,
+): string[] {
+  const trimmed = sourceRef.trim();
+  const candidates = new Set<string>([trimmed]);
+  if (!trimmed.startsWith("refs/")) {
+    candidates.add(`refs/heads/${trimmed}`);
+    candidates.add(`refs/tags/${trimmed}`);
+  }
+  if (trimmed === defaultBranch) candidates.add(`refs/heads/${defaultBranch}`);
+  return [...candidates].filter(isSafeRefInput);
+}
+
+function repositoryRefs(repository: StoredGitRepository): GitRefSummary[] {
+  return [...repository.refs.entries()].map(([name, target]) => ({
+    name,
+    target,
+  }));
+}
+
 function repositorySummary(
   repository: StoredGitRepository,
 ): GitRepositorySummary {
@@ -312,10 +401,7 @@ function repositoryDetail(
 ): GitRepositoryDetail {
   return {
     ...repositorySummary(repository),
-    refs: [...repository.refs.entries()].map(([name, target]) => ({
-      name,
-      target,
-    })),
+    refs: repositoryRefs(repository),
     createdAt: repository.createdAt,
     updatedAt: repository.updatedAt,
   };
@@ -331,13 +417,331 @@ function repositoryNotFound(repositoryId: string) {
 
 function notImplemented(code: string) {
   return {
-    error: "not implemented in takos-git compatibility shell",
+    error: "not implemented or not configured in takos-git",
     code,
   };
 }
 
 function isGitSmartHttpPath(pathname: string): boolean {
   return pathname.endsWith(".git") || pathname.includes(".git/");
+}
+
+const textDecoder = new TextDecoder();
+
+type GitJsonError = {
+  body: {
+    error: string;
+    code: string;
+    repositoryId?: string;
+    objectId?: string;
+  };
+  status: 400 | 404 | 501;
+};
+
+async function readConfiguredGitRefs(
+  repositoryId: string,
+): Promise<
+  | { ok: true; refs: GitRefSummary[]; repositoryPath: string }
+  | ({ ok: false } & GitJsonError)
+> {
+  const repositoryPath = configuredRepositoryPath(repositoryId);
+  if (!repositoryPath) {
+    return {
+      ok: false,
+      status: 501,
+      body: notImplemented("git_repository_root_not_configured"),
+    };
+  }
+  if (!isSafeRepositoryId(repositoryId)) {
+    return {
+      ok: false,
+      status: 400,
+      body: {
+        error: "repositoryId must be a safe relative bare repository path",
+        code: "invalid_git_repository_id",
+        repositoryId,
+      },
+    };
+  }
+  if (!(await directoryExists(repositoryPath))) {
+    return {
+      ok: false,
+      status: 404,
+      body: repositoryNotFound(repositoryId),
+    };
+  }
+
+  const output = await runGit([
+    "--git-dir",
+    repositoryPath,
+    "for-each-ref",
+    "--format=%(refname)%00%(objectname)",
+  ]);
+  if (!output.success) {
+    return {
+      ok: false,
+      status: 404,
+      body: repositoryNotFound(repositoryId),
+    };
+  }
+
+  const refs = textDecoder.decode(output.stdout).trimEnd().split("\n")
+    .filter(Boolean)
+    .map((line) => {
+      const [name, target] = line.split("\0");
+      return { name, target };
+    });
+  return { ok: true, refs, repositoryPath };
+}
+
+async function readConfiguredGitObject(
+  repositoryId: string,
+  objectId: string,
+): Promise<
+  | {
+    ok: true;
+    objectId: string;
+    type: string;
+    size: number;
+    content: Uint8Array;
+  }
+  | ({ ok: false } & GitJsonError)
+> {
+  const refs = await readConfiguredGitRefs(repositoryId);
+  if (!refs.ok) return refs;
+  if (!isLiteralCommitId(objectId)) {
+    return {
+      ok: false,
+      status: 400,
+      body: {
+        error: "objectId must be a literal SHA-1 or SHA-256 object id",
+        code: "invalid_git_object_id",
+        repositoryId,
+        objectId,
+      },
+    };
+  }
+
+  const baseArgs = ["--git-dir", refs.repositoryPath] as const;
+  const type = await runGit([...baseArgs, "cat-file", "-t", objectId]);
+  if (!type.success) {
+    return {
+      ok: false,
+      status: 404,
+      body: {
+        error: "git object not found",
+        code: "git_object_not_found",
+        repositoryId,
+        objectId,
+      },
+    };
+  }
+  const size = await runGit([...baseArgs, "cat-file", "-s", objectId]);
+  if (!size.success) {
+    return {
+      ok: false,
+      status: 404,
+      body: {
+        error: "git object not found",
+        code: "git_object_not_found",
+        repositoryId,
+        objectId,
+      },
+    };
+  }
+  const content = await runGit([...baseArgs, "cat-file", "-p", objectId]);
+  if (!content.success) {
+    return {
+      ok: false,
+      status: 404,
+      body: {
+        error: "git object not found",
+        code: "git_object_not_found",
+        repositoryId,
+        objectId,
+      },
+    };
+  }
+  return {
+    ok: true,
+    objectId,
+    type: textDecoder.decode(type.stdout).trim(),
+    size: Number(textDecoder.decode(size.stdout).trim()),
+    content: content.stdout,
+  };
+}
+
+async function handleSmartHttp(request: Request): Promise<Response> {
+  const root = configuredRepositoryRoot();
+  if (!root) {
+    return Response.json(notImplemented("git_smart_http_not_implemented"), {
+      status: 501,
+    });
+  }
+
+  const url = new URL(request.url);
+  if (!isSafeSmartHttpPath(url.pathname)) {
+    return Response.json({
+      error: "invalid Git Smart HTTP path",
+      code: "invalid_git_smart_http_path",
+    }, { status: 400 });
+  }
+
+  const body = new Uint8Array(await request.arrayBuffer());
+  const contentType = request.headers.get("content-type");
+  const output = await runGit(["http-backend"], body, {
+    GIT_PROJECT_ROOT: root,
+    GIT_HTTP_EXPORT_ALL: "1",
+    PATH_INFO: url.pathname,
+    QUERY_STRING: url.search.startsWith("?") ? url.search.slice(1) : "",
+    REQUEST_METHOD: request.method,
+    CONTENT_TYPE: contentType ?? "",
+    CONTENT_LENGTH: String(body.byteLength),
+    REMOTE_USER: "takos-git",
+  });
+  if (!output.success) {
+    return Response.json({
+      error: "git http-backend failed",
+      code: "git_smart_http_backend_failed",
+    }, { status: 500 });
+  }
+  return cgiResponse(output.stdout);
+}
+
+function cgiResponse(output: Uint8Array): Response {
+  const boundary = findHeaderBoundary(output);
+  if (!boundary) {
+    return Response.json({
+      error: "git http-backend returned an invalid CGI response",
+      code: "git_smart_http_invalid_backend_response",
+    }, { status: 500 });
+  }
+
+  const headersText = textDecoder.decode(output.slice(0, boundary.headerEnd));
+  const headers = new Headers();
+  let status = 200;
+  for (const line of headersText.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    const separator = line.indexOf(":");
+    if (separator < 0) continue;
+    const name = line.slice(0, separator).trim();
+    const value = line.slice(separator + 1).trim();
+    if (name.toLowerCase() === "status") {
+      status = Number(value.split(/\s+/, 1)[0]) || status;
+    } else {
+      headers.append(name, value);
+    }
+  }
+  return new Response(bytesToArrayBuffer(output.slice(boundary.bodyStart)), {
+    status,
+    headers,
+  });
+}
+
+function findHeaderBoundary(
+  output: Uint8Array,
+): { headerEnd: number; bodyStart: number } | undefined {
+  for (let index = 0; index < output.length - 3; index++) {
+    if (
+      output[index] === 13 && output[index + 1] === 10 &&
+      output[index + 2] === 13 && output[index + 3] === 10
+    ) {
+      return { headerEnd: index, bodyStart: index + 4 };
+    }
+  }
+  for (let index = 0; index < output.length - 1; index++) {
+    if (output[index] === 10 && output[index + 1] === 10) {
+      return { headerEnd: index, bodyStart: index + 2 };
+    }
+  }
+}
+
+function configuredRepositoryPath(repositoryId: string): string | undefined {
+  const root = configuredRepositoryRoot();
+  if (!root) return undefined;
+  const relative = repositoryId.endsWith(".git")
+    ? repositoryId
+    : `${repositoryId}.git`;
+  return `${root}/${relative}`;
+}
+
+function configuredRepositoryRoot(): string | undefined {
+  const root = Deno.env.get("TAKOS_GIT_REPOSITORY_ROOT")?.trim();
+  if (!root) return undefined;
+  return root.replace(/\/+$/, "") || "/";
+}
+
+function isSafeRepositoryId(repositoryId: string): boolean {
+  return repositoryId.length > 0 &&
+    !repositoryId.startsWith("/") &&
+    repositoryId.split("/").every(isSafePathSegment);
+}
+
+function isSafeSmartHttpPath(pathname: string): boolean {
+  if (!pathname.startsWith("/") || !pathname.includes(".git")) return false;
+  return pathname.slice(1).split("/").every(isSafePathSegment);
+}
+
+function isSafePathSegment(segment: string): boolean {
+  return segment.length > 0 &&
+    segment !== "." &&
+    segment !== ".." &&
+    !segment.includes("\\") &&
+    /^[A-Za-z0-9._-]+$/.test(segment);
+}
+
+function isSafeRefInput(ref: string): boolean {
+  return ref.length > 0 &&
+    !ref.includes("\0") &&
+    !ref.includes("..") &&
+    !ref.includes("@{") &&
+    !ref.includes("\\") &&
+    !ref.startsWith("/") &&
+    !ref.endsWith("/") &&
+    /^[A-Za-z0-9._/-]+$/.test(ref);
+}
+
+async function directoryExists(path: string): Promise<boolean> {
+  try {
+    return (await Deno.stat(path)).isDirectory;
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) return false;
+    throw error;
+  }
+}
+
+async function runGit(
+  args: string[],
+  stdin?: Uint8Array,
+  env?: Record<string, string>,
+): Promise<Deno.CommandOutput> {
+  if (!stdin) {
+    return await new Deno.Command("git", {
+      args,
+      stdout: "piped",
+      stderr: "piped",
+      env,
+    }).output();
+  }
+
+  const child = new Deno.Command("git", {
+    args,
+    stdin: "piped",
+    stdout: "piped",
+    stderr: "piped",
+    env,
+  }).spawn();
+  const writer = child.stdin.getWriter();
+  await writer.write(stdin);
+  await writer.close();
+  return await child.output();
+}
+
+function bytesToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  return bytes.buffer.slice(
+    bytes.byteOffset,
+    bytes.byteOffset + bytes.byteLength,
+  ) as ArrayBuffer;
 }
 
 function readInternalAuth(
