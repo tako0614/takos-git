@@ -17,6 +17,9 @@
   },
   "tasks": {
     "check": "deno check apps/git/src/index.ts packages/git-contract/src/index.ts",
+    "lint": "deno lint",
+    "fmt": "deno fmt",
+    "test": "deno test --allow-all apps/git/src/index_test.ts packages/git-contract/src/internal-api_test.ts",
     "dev": "deno run --allow-net --allow-env apps/git/src/index.ts"
   }
 }
