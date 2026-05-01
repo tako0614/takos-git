@@ -1,9 +1,15 @@
-import { readInternalAuth } from "./auth.ts";
+import {
+  canAccessRepositoryOwner,
+  readInternalAuth,
+  repositoryAccessDenied,
+} from "./auth.ts";
 import {
   bytesToArrayBuffer,
+  configuredRepositoryIsActive,
   configuredRepositoryRoot,
   isSafeSmartHttpPath,
   notImplemented,
+  readConfiguredRepositoryRecord,
   runGit,
 } from "./git.ts";
 
@@ -31,9 +37,31 @@ export async function handleSmartHttp(request: Request): Promise<Response> {
       code: "invalid_git_smart_http_path",
     }, { status: 400 });
   }
+  const repositoryId = repositoryIdFromSmartHttpPath(url.pathname);
+  const active = await configuredRepositoryIsActive(repositoryId);
+  if (active === false) {
+    return Response.json({
+      error: "repository not found",
+      code: "git_repository_not_found",
+      repositoryId,
+    }, { status: 404 });
+  }
+  const repository = await readConfiguredRepositoryRecord(repositoryId);
+  const access = isReceivePack(url.pathname, url.searchParams)
+    ? "write"
+    : "read";
+  if (
+    repository &&
+    !canAccessRepositoryOwner(auth, repository.ownerSpaceId, access)
+  ) {
+    return Response.json(repositoryAccessDenied(repositoryId), {
+      status: 403,
+    });
+  }
 
   const body = new Uint8Array(await request.arrayBuffer());
   const contentType = request.headers.get("content-type");
+  const gitProtocol = request.headers.get("git-protocol");
   const output = await runGit(["http-backend"], body, {
     GIT_PROJECT_ROOT: root,
     GIT_HTTP_EXPORT_ALL: "1",
@@ -43,6 +71,7 @@ export async function handleSmartHttp(request: Request): Promise<Response> {
     CONTENT_TYPE: contentType ?? "",
     CONTENT_LENGTH: String(body.byteLength),
     REMOTE_USER: "takos-git",
+    ...(gitProtocol ? { GIT_PROTOCOL: gitProtocol } : {}),
   });
   if (!output.success) {
     return Response.json({
@@ -51,6 +80,20 @@ export async function handleSmartHttp(request: Request): Promise<Response> {
     }, { status: 500 });
   }
   return cgiResponse(output.stdout);
+}
+
+function isReceivePack(path: string, params: URLSearchParams): boolean {
+  return path.endsWith("/git-receive-pack") ||
+    params.get("service") === "git-receive-pack";
+}
+
+function repositoryIdFromSmartHttpPath(pathname: string): string {
+  const withoutPrefix = pathname.startsWith("/git/")
+    ? pathname.slice("/git/".length)
+    : pathname.slice(1);
+  const gitIndex = withoutPrefix.indexOf(".git");
+  const raw = gitIndex >= 0 ? withoutPrefix.slice(0, gitIndex) : withoutPrefix;
+  return decodeURIComponent(raw);
 }
 
 function cgiResponse(output: Uint8Array): Response {

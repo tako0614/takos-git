@@ -6,6 +6,8 @@ import {
   TAKOS_INTERNAL_CAPABILITIES_HEADER,
   TAKOS_INTERNAL_SIGNATURE_HEADER,
   TAKOS_INTERNAL_TIMESTAMP_HEADER,
+  type TakosActorContext,
+  type VerifiedTakosInternalRpc,
   verifyTakosInternalRequestFromHeaders,
 } from "takos-paas-contract/internal-rpc";
 import { TAKOS_GIT_CAPABILITIES } from "takos-git-contract";
@@ -19,15 +21,37 @@ const TAKOS_GIT_DEFAULT_INTERNAL_CALLERS = [
 
 export function readInternalAuth(
   request: Request,
-): Promise<{ ok: true } | { ok: false; error: string }> {
+): Promise<TakosGitInternalAuth | { ok: false; error: string }> {
   const secret = Deno.env.get("TAKOS_INTERNAL_SERVICE_SECRET");
   return readInternalAuthWithSecret(request, secret);
+}
+
+export type TakosGitInternalAuth = { ok: true } & VerifiedTakosInternalRpc;
+
+export type RepositoryAccess = "read" | "write";
+
+export function canAccessRepositoryOwner(
+  auth: TakosGitInternalAuth,
+  ownerSpaceId: string,
+  access: RepositoryAccess,
+): boolean {
+  if (auth.actor.spaceId !== ownerSpaceId) return false;
+  if (access === "read") return true;
+  return hasWriteRole(auth.actor);
+}
+
+export function repositoryAccessDenied(repositoryId: string) {
+  return {
+    error: "repository access denied",
+    code: "git_repository_access_denied",
+    repositoryId,
+  };
 }
 
 async function readInternalAuthWithSecret(
   request: Request,
   secret: string | undefined,
-): Promise<{ ok: true } | { ok: false; error: string }> {
+): Promise<TakosGitInternalAuth | { ok: false; error: string }> {
   if (!secret) return { ok: false, error: "internal service secret missing" };
   const signature = request.headers.get(TAKOS_INTERNAL_SIGNATURE_HEADER);
   if (!signature) {
@@ -39,8 +63,9 @@ async function readInternalAuthWithSecret(
   }
   const actorHeader = request.headers.get(TAKOS_INTERNAL_ACTOR_HEADER);
   if (!actorHeader) return { ok: false, error: "missing actor context" };
+  let actor: TakosActorContext;
   try {
-    decodeActorContext(actorHeader);
+    actor = decodeActorContext(actorHeader);
   } catch {
     return { ok: false, error: "invalid actor context" };
   }
@@ -60,7 +85,7 @@ async function readInternalAuthWithSecret(
       return { ok: false, error: "missing internal capability" };
     }
   }
-  const body = await request.clone().text();
+  const body = new Uint8Array(await request.clone().arrayBuffer());
   const url = new URL(request.url);
   const verified = await verifyTakosInternalRequestFromHeaders({
     method: request.method,
@@ -74,7 +99,7 @@ async function readInternalAuthWithSecret(
     requiredCapabilities,
   });
   if (!verified) return { ok: false, error: "invalid internal signature" };
-  return { ok: true };
+  return { ok: true, ...verified, actor };
 }
 
 function allowedInternalCallers(): string[] {
@@ -100,6 +125,20 @@ function requiredGitCapabilities(request: Request): string[] {
   if (path === "/internal/source/resolve") {
     return [TAKOS_GIT_CAPABILITIES.refResolve];
   }
+  if (path === "/internal/source/snapshot") {
+    return [TAKOS_GIT_CAPABILITIES.sourceSnapshot];
+  }
+  if (
+    path === "/internal/repositories/import-external" ||
+    path.endsWith("/fetch-external")
+  ) {
+    return [TAKOS_GIT_CAPABILITIES.repoImport];
+  }
+  if (path.includes("/pull-requests")) {
+    if (method === "GET") return [TAKOS_GIT_CAPABILITIES.prRead];
+    if (path.endsWith("/merge")) return [TAKOS_GIT_CAPABILITIES.prMerge];
+    return [TAKOS_GIT_CAPABILITIES.prWrite];
+  }
   if (path.includes("/refs")) {
     return [TAKOS_GIT_CAPABILITIES.repoRead];
   }
@@ -119,4 +158,10 @@ function isUploadPack(path: string, params: URLSearchParams): boolean {
 function isReceivePack(path: string, params: URLSearchParams): boolean {
   return path.endsWith("/git-receive-pack") ||
     params.get("service") === "git-receive-pack";
+}
+
+function hasWriteRole(actor: TakosActorContext): boolean {
+  return actor.roles.some((role) =>
+    ["owner", "admin", "maintainer", "write"].includes(role)
+  );
 }

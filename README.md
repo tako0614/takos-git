@@ -1,16 +1,13 @@
 # takos-git
 
-Takos Git hosting service shell.
+Takos-owned internal Git hosting.
 
-`takos-git` currently provides Git DTOs/path contracts and a small internal
-service shell for compatibility routes. Internal request signing is owned by
-`takos-paas-contract/internal-rpc`; the Git contract only publishes Git-owned
-routes and capabilities. The service has a process-local in-memory repository
-metadata store, basic repository CRUD-ish internal endpoints, and branch/tag ref
-source resolution for refs already present in that store. Literal 40-hex and
-64-hex commit IDs are accepted directly only when no repository root is
-configured; with `TAKOS_GIT_REPOSITORY_ROOT`, literal IDs must exist in the
-target bare repository and resolve as commits.
+`takos-git` is not a generic forge and does not own public profile, catalog,
+billing, or OAuth semantics. It is the Takos Git substrate: bare repository
+storage, refs, objects, Smart HTTP, source snapshots, and Takos PR metadata.
+Browsers and CLI users reach it through `takos-app`, which authenticates the
+user and forwards signed internal RPC requests with Git-specific capabilities.
+Deploy lifecycle code reaches it through `takos-paas` source snapshot calls.
 
 When `TAKOS_GIT_REPOSITORY_ROOT` points at a directory of bare repositories, the
 service also reads real refs and objects with the Git CLI and serves Smart HTTP
@@ -18,11 +15,23 @@ through `git http-backend`. Repository IDs map to
 `${TAKOS_GIT_REPOSITORY_ROOT}/<repositoryId>.git`; IDs that already end in
 `.git` are used as-is under the configured root.
 
-This checkout still does not implement repository creation on disk, pull request
-repository data, durable metadata persistence, or Takos-specific Git
-authorization. Unconfigured Git storage paths return `501` with a stable
-not-implemented code. `POST /internal/repositories` creates process-local
-metadata only; it does not initialize or mutate a bare repository on disk.
+Production `takos-git` requires durable storage. When
+`TAKOS_GIT_REPOSITORY_ROOT` is configured, `POST /internal/repositories`
+initializes a bare repository on disk and persists repository metadata in
+SQLite. The default database path is
+`${TAKOS_GIT_REPOSITORY_ROOT}/.takos/git.sqlite`; `TAKOS_GIT_DATABASE_URL` can
+override it with a `sqlite:///absolute/path.sqlite` URL. The legacy
+`${TAKOS_GIT_REPOSITORY_ROOT}/.takos/repositories.json` file is read once as a
+migration source when the SQLite store is empty. Schema migrations are recorded
+in `schema_migrations`. Process-local metadata exists only for dev/test when
+`TAKOS_GIT_DEV_IN_MEMORY_METADATA=true`; production unconfigured storage paths
+return stable not-configured errors.
+
+Takos-specific Git authorization is enforced in two layers: every internal route
+must carry a valid Takos internal RPC signature with the route's required Git
+capability, and repository-scoped routes also require the signed actor account
+or space to match the repository `ownerSpaceId`. Write operations require a
+write-capable role such as `owner`, `admin`, `maintainer`, or `write`.
 
 Browser and CLI clients do not call internal routes directly; `takos-app`
 verifies the user and forwards signed internal requests. Lifecycle-facing
@@ -43,18 +52,27 @@ packages/git-contract    internal/public Git DTOs, paths, and capabilities
 - `TAKOS_GIT_REPOSITORY_ROOT` enables bare-repository ref/object reads and Smart
   HTTP hosting. Smart HTTP requests still require valid Takos internal signed
   request headers; normal Git clients cannot call these paths directly.
-- `TAKOS_GIT_DATABASE_URL` is reserved for a future full Git service and is not
-  used by the current stub implementation.
+- `TAKOS_GIT_DATABASE_URL` optionally points at the SQLite metadata database
+  with `sqlite:///absolute/path.sqlite`. When unset, the database lives under
+  the repository root.
+- `TAKOS_GIT_DEV_IN_MEMORY_METADATA=true` enables process-local metadata for
+  dev/test only. Do not use it for production.
 
 ## Current Internal API Shape
 
-- `GET /internal/repositories` lists in-memory repository summaries.
-- `POST /internal/repositories` creates in-memory repository metadata with
-  optional refs.
+- `GET /internal/repositories` lists repository summaries from the configured
+  SQLite metadata store, or from process memory when no repository root/database
+  is configured.
+- `POST /internal/repositories` creates repository metadata and initializes the
+  mapped bare repository. The default initialization creates an empty initial
+  commit, `refs/heads/<defaultBranch>`, and `HEAD`. Use
+  `initialization.mode: "bare"` for an empty bare repository.
 - `GET /internal/repositories/:repositoryId` reads repository metadata and refs.
-- `PATCH /internal/repositories/:repositoryId` updates metadata and replaces
-  refs when `refs` is provided.
-- `DELETE /internal/repositories/:repositoryId` removes the in-memory record.
+- `PATCH /internal/repositories/:repositoryId` updates metadata and replaces Git
+  refs with `git update-ref` when `refs` is provided.
+- `DELETE /internal/repositories/:repositoryId` removes the metadata record. It
+  does not delete the bare repository directory, but refs/object/Smart HTTP
+  access is gated by active metadata.
 - `POST /internal/source/resolve` resolves literal commit IDs directly when no
   repository root is configured. When a repository root is configured and the
   repository exists, literal IDs are verified with Git as commits before
@@ -66,17 +84,38 @@ packages/git-contract    internal/public Git DTOs, paths, and capabilities
 - `GET /internal/repositories/:repositoryId/refs` lists refs from the configured
   bare repository, or from in-memory metadata when no repository root is
   configured and metadata exists.
+- `GET /internal/repositories/:repositoryId/tree?ref=<ref>&path=<path>` lists a
+  tree from the configured bare repository.
+- `GET /internal/repositories/:repositoryId/blob?ref=<ref>&path=<path>` returns
+  blob content as UTF-8 or base64.
+- `GET /internal/repositories/:repositoryId/commits?ref=<ref>&limit=<n>` lists
+  commit summaries from the configured bare repository.
 - `GET /internal/objects/:repositoryId/:objectId` reads a Git object from the
   configured bare repository and returns `git cat-file -p` pretty output, not
   raw loose-object storage bytes. Responses include `x-takos-git-object-*`
   headers and `x-takos-git-object-format: git-cat-file-pretty`.
+- `GET /internal/objects/:repositoryId/:objectId/raw` reads a Git object from
+  the configured bare repository and returns `git cat-file <type>` content with
+  `x-takos-git-object-format: git-cat-file-raw`.
+- `GET /internal/repositories/:repositoryId/pull-requests` lists SQLite-backed
+  pull request records, optionally filtered with `?status=open|closed|merged`.
+- `POST /internal/repositories/:repositoryId/pull-requests` creates PR metadata
+  for a head/base branch pair.
+- `GET` / `PATCH /internal/repositories/:repositoryId/pull-requests/:number`
+  reads or updates PR metadata, including closed/merged status.
+- `POST /internal/repositories/:repositoryId/pull-requests/:number/comments` and
+  `/reviews` append PR discussion/review metadata.
+- `POST /internal/source/snapshot` resolves a ref to an immutable Git source
+  snapshot with commit SHA, tree file list, optional manifest content, digest,
+  and capture time. This is the PaaS-facing source snapshot primitive.
 - Smart HTTP-shaped paths such as `/owner/repo.git/info/refs`,
   `/owner/repo.git/git-upload-pack`, and `/owner/repo.git/git-receive-pack` are
   served by `git http-backend` when `TAKOS_GIT_REPOSITORY_ROOT` is configured
-  and the request carries a valid v3 Takos internal RPC envelope. Unsigned
-  clone, fetch, and push requests are rejected with `401`. The public Git client
-  entry point is `takos-app`, which authenticates the user and forwards with
-  `git.repo.read` or `git.repo.write`.
+  and the request carries a valid v3 Takos internal RPC envelope. Smart HTTP is
+  also gated by active repository metadata and forwards Git protocol v2 headers
+  to `git http-backend`. Unsigned clone, fetch, and push requests are rejected
+  with `401`. The public Git client entry point is `takos-app`, which
+  authenticates the user and forwards with `git.repo.read` or `git.repo.write`.
 
 ## Local Commands
 
@@ -86,4 +125,10 @@ deno task lint
 deno task fmt
 deno task test
 deno task dev
+deno task smoke:live
 ```
+
+`deno task smoke:live` is opt-in for a deployed or otherwise running service. It
+skips when `TAKOS_GIT_INTERNAL_URL` is unset, checks `GET /health` when it is
+set, and also performs a signed `GET /internal/repositories` when
+`TAKOS_INTERNAL_SERVICE_SECRET` is present.
