@@ -10,9 +10,8 @@
     "types": ["node"]
   },
   "imports": {
-    "takosumi-contract": "../../takosumi-contract/src/index.ts",
-    "takosumi-contract/internal-rpc": "../../takosumi-contract/src/internal-rpc.ts",
-    "takosumi-contract/": "../../takosumi-contract/src/",
+    "takosumi-contract": "jsr:@takos/takosumi-contract@^1.0.0",
+    "takosumi-contract/internal-rpc": "jsr:@takos/takosumi-contract@^1.0.0/internal-rpc",
     "takos-git-contract": "./packages/git-contract/src/index.ts",
     "takos-git-contract/": "./packages/git-contract/src/",
     "hono": "npm:hono@^4.12.4",
