@@ -10,9 +10,9 @@
     "types": ["node"]
   },
   "imports": {
-    "takos-paas-contract": "../paas/packages/paas-contract/src/index.ts",
-    "takos-paas-contract/internal-rpc": "../paas/packages/paas-contract/src/internal-rpc.ts",
-    "takos-paas-contract/": "../paas/packages/paas-contract/src/",
+    "takosumi-contract": "../paas/packages/paas-contract/src/index.ts",
+    "takosumi-contract/internal-rpc": "../paas/packages/paas-contract/src/internal-rpc.ts",
+    "takosumi-contract/": "../paas/packages/paas-contract/src/",
     "takos-git-contract": "./packages/git-contract/src/index.ts",
     "takos-git-contract/": "./packages/git-contract/src/",
     "hono": "npm:hono@^4.12.4",

@@ -7,7 +7,7 @@ billing, or OAuth semantics. It is the Takos Git substrate: bare repository
 storage, refs, objects, Smart HTTP, source snapshots, and Takos PR metadata.
 Browsers and CLI users reach it through `takos-app`, which authenticates the
 user and forwards signed internal RPC requests with Git-specific capabilities.
-Deploy lifecycle code reaches it through `takos-paas` source snapshot calls.
+Deploy lifecycle code reaches it through `takosumi` source snapshot calls.
 
 When `TAKOS_GIT_REPOSITORY_ROOT` points at a directory of bare repositories, the
 service also reads real refs and objects with the Git CLI and serves Smart HTTP
@@ -47,7 +47,7 @@ packages/git-contract    internal/public Git DTOs, paths, and capabilities
 ## Env
 
 - `TAKOS_INTERNAL_SERVICE_SECRET` is required for signed internal endpoints.
-- `TAKOS_GIT_INTERNAL_CALLERS` defaults to `takos-app,takos-paas,takos-agent`.
+- `TAKOS_GIT_INTERNAL_CALLERS` defaults to `takos-app,takosumi,takos-agent`.
 - `TAKOS_GIT_INTERNAL_URL` is consumed by callers when they route to this shell.
 - `TAKOS_GIT_REPOSITORY_ROOT` enables bare-repository ref/object reads and Smart
   HTTP hosting. Smart HTTP requests still require valid Takos internal signed

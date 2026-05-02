@@ -9,7 +9,7 @@ import {
   type TakosActorContext,
   type VerifiedTakosInternalRpc,
   verifyTakosInternalRequestFromHeaders,
-} from "takos-paas-contract/internal-rpc";
+} from "takosumi-contract/internal-rpc";
 import { TAKOS_GIT_CAPABILITIES } from "takos-git-contract";
 
 const TAKOS_GIT_EXPECTED_AUDIENCE = "takos-git";

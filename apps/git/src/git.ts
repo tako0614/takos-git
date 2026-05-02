@@ -10,7 +10,7 @@ import type {
   GitRefSummary,
   GitUpdatePullRequestRequest,
 } from "takos-git-contract";
-import type { TakosActorContext } from "takos-paas-contract/internal-rpc";
+import type { TakosActorContext } from "takosumi-contract/internal-rpc";
 
 const textDecoder = new TextDecoder();
 const textEncoder = new TextEncoder();

@@ -6,7 +6,7 @@ import {
   TAKOS_GIT_INTERNAL_PATHS,
   type TakosActorContext,
 } from "takos-git-contract";
-import { signTakosInternalRequest } from "takos-paas-contract/internal-rpc";
+import { signTakosInternalRequest } from "takosumi-contract/internal-rpc";
 
 const SERVICE_ID = "takos-git";
 const DEFAULT_TIMEOUT_MS = 10_000;
