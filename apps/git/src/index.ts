@@ -69,6 +69,8 @@ import { handleSmartHttp, isGitSmartHttpPath } from "./smart-http.ts";
 const app: Hono = new Hono();
 const repositories = new Map<string, StoredGitRepository>();
 const DEFAULT_MAX_BLOB_BYTES = 1024 * 1024;
+const DEFAULT_MAX_SOURCE_SNAPSHOT_FILES = 5000;
+const DEFAULT_MAX_SOURCE_SNAPSHOT_MANIFEST_BYTES = 256 * 1024;
 
 interface StoredGitRepository {
   id: string;
@@ -1598,14 +1600,19 @@ async function buildSourceSnapshot(input: {
     repositoryPath,
     commitSha,
     snapshotPath,
+    configuredSourceSnapshotFileLimit(),
   );
   if (!filesResult.ok) {
+    const tooLarge =
+      filesResult.code === "git_source_snapshot_file_limit_exceeded";
     return {
       ok: false,
       status: 422,
       body: {
-        error: "failed to read source tree",
-        code: "git_source_tree_unreadable",
+        error: tooLarge
+          ? "source snapshot exceeds configured file limit"
+          : "failed to read source tree",
+        code: filesResult.code,
         repositoryId: input.repositoryId,
         sourceRef: input.sourceRef,
       },
@@ -1615,6 +1622,20 @@ async function buildSourceSnapshot(input: {
   const manifestFile = filesResult.files.find((file) =>
     file.path === manifestPath
   );
+  const maxManifestBytes = configuredSourceSnapshotManifestByteLimit();
+  if (manifestFile && manifestFile.size > maxManifestBytes) {
+    return {
+      ok: false,
+      status: 422,
+      body: {
+        error: "source snapshot manifest exceeds configured byte limit",
+        code: "git_source_snapshot_manifest_too_large",
+        repositoryId: input.repositoryId,
+        sourceRef: input.sourceRef,
+        objectId: manifestFile.objectId,
+      },
+    };
+  }
   const manifest = manifestFile
     ? await readManifest(repositoryPath, manifestFile)
     : undefined;
@@ -1649,7 +1670,16 @@ async function readTreeFiles(
   repositoryPath: string,
   commitSha: string,
   snapshotPath: string,
-): Promise<{ ok: true; files: GitSourceSnapshotFile[] } | { ok: false }> {
+  maxFiles: number,
+): Promise<
+  | { ok: true; files: GitSourceSnapshotFile[] }
+  | { ok: false; code: "git_source_tree_unreadable" }
+  | {
+    ok: false;
+    code: "git_source_snapshot_file_limit_exceeded";
+    maxFiles: number;
+  }
+> {
   const args = [
     "--git-dir",
     repositoryPath,
@@ -1662,8 +1692,15 @@ async function readTreeFiles(
     ...(snapshotPath === "." ? [] : [snapshotPath]),
   ];
   const output = await runGit(args);
-  if (!output.success) return { ok: false };
+  if (!output.success) return { ok: false, code: "git_source_tree_unreadable" };
   const entries = textDecoder.decode(output.stdout).split("\0").filter(Boolean);
+  if (entries.length > maxFiles) {
+    return {
+      ok: false,
+      code: "git_source_snapshot_file_limit_exceeded",
+      maxFiles,
+    };
+  }
   const files: GitSourceSnapshotFile[] = [];
   for (const entry of entries) {
     const tab = entry.indexOf("\t");
@@ -1766,6 +1803,22 @@ function maxGitBlobBytes(): number {
   const configured = Number(Deno.env.get("TAKOS_GIT_MAX_BLOB_BYTES"));
   if (Number.isInteger(configured) && configured > 0) return configured;
   return DEFAULT_MAX_BLOB_BYTES;
+}
+
+function configuredSourceSnapshotFileLimit(): number {
+  const configured = Number(
+    Deno.env.get("TAKOS_GIT_MAX_SOURCE_SNAPSHOT_FILES"),
+  );
+  if (Number.isInteger(configured) && configured >= 0) return configured;
+  return DEFAULT_MAX_SOURCE_SNAPSHOT_FILES;
+}
+
+function configuredSourceSnapshotManifestByteLimit(): number {
+  const configured = Number(
+    Deno.env.get("TAKOS_GIT_MAX_SOURCE_SNAPSHOT_MANIFEST_BYTES"),
+  );
+  if (Number.isInteger(configured) && configured >= 0) return configured;
+  return DEFAULT_MAX_SOURCE_SNAPSHOT_MANIFEST_BYTES;
 }
 
 async function importExternalRemoteIntoConfiguredRepository(input: {

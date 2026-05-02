@@ -899,6 +899,61 @@ Deno.test("source snapshot pins refs to commit and tree digest", async () => {
   });
 });
 
+Deno.test("source snapshot enforces configured file and manifest limits", async () => {
+  await withBareRepository(async (fixture) => {
+    const originalRoot = Deno.env.get("TAKOS_GIT_REPOSITORY_ROOT");
+    const originalFileLimit = Deno.env.get(
+      "TAKOS_GIT_MAX_SOURCE_SNAPSHOT_FILES",
+    );
+    const originalManifestLimit = Deno.env.get(
+      "TAKOS_GIT_MAX_SOURCE_SNAPSHOT_MANIFEST_BYTES",
+    );
+    Deno.env.set("TAKOS_GIT_REPOSITORY_ROOT", fixture.root);
+    try {
+      Deno.env.set("TAKOS_GIT_MAX_SOURCE_SNAPSHOT_FILES", "0");
+      const tooManyFiles = await signedRequest({
+        method: "POST",
+        path: TAKOS_GIT_INTERNAL_PATHS.sourceSnapshot,
+        capabilities: [TAKOS_GIT_CAPABILITIES.sourceSnapshot],
+        body: JSON.stringify({
+          repositoryId: fixture.repositoryId,
+          sourceRef: "main",
+        }),
+      });
+      assert.equal(tooManyFiles.status, 422);
+      assert.equal(
+        (await tooManyFiles.json()).code,
+        "git_source_snapshot_file_limit_exceeded",
+      );
+
+      restoreEnv("TAKOS_GIT_MAX_SOURCE_SNAPSHOT_FILES", originalFileLimit);
+      Deno.env.set("TAKOS_GIT_MAX_SOURCE_SNAPSHOT_MANIFEST_BYTES", "1");
+      const manifestTooLarge = await signedRequest({
+        method: "POST",
+        path: TAKOS_GIT_INTERNAL_PATHS.sourceSnapshot,
+        capabilities: [TAKOS_GIT_CAPABILITIES.sourceSnapshot],
+        body: JSON.stringify({
+          repositoryId: fixture.repositoryId,
+          sourceRef: "main",
+          manifestPath: "README.md",
+        }),
+      });
+      assert.equal(manifestTooLarge.status, 422);
+      assert.equal(
+        (await manifestTooLarge.json()).code,
+        "git_source_snapshot_manifest_too_large",
+      );
+    } finally {
+      restoreEnv("TAKOS_GIT_REPOSITORY_ROOT", originalRoot);
+      restoreEnv("TAKOS_GIT_MAX_SOURCE_SNAPSHOT_FILES", originalFileLimit);
+      restoreEnv(
+        "TAKOS_GIT_MAX_SOURCE_SNAPSHOT_MANIFEST_BYTES",
+        originalManifestLimit,
+      );
+    }
+  });
+});
+
 Deno.test("smart HTTP rejects unauthenticated clone/fetch discovery", async () => {
   await withBareRepository(async (fixture) => {
     const originalRoot = Deno.env.get("TAKOS_GIT_REPOSITORY_ROOT");
