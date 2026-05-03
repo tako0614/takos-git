@@ -1108,12 +1108,12 @@ Deno.test("source resolver rejects wrong internal caller", async () => {
   assert.deepEqual(body, { error: "invalid internal caller" });
 });
 
-Deno.test("source resolver accepts takos-paas internal caller", async () => {
+Deno.test("source resolver accepts takosumi internal caller", async () => {
   const sourceRef = "0123456789abcdef0123456789abcdef01234567";
   const response = await signedResolveRequest({
     repositoryId: "repo_1",
     sourceRef,
-    caller: "takos-paas",
+    caller: "takosumi",
   });
   const body = await response.json();
 
@@ -1129,7 +1129,7 @@ Deno.test("source resolver rejects wrong internal audience", async () => {
   const response = await signedResolveRequest({
     repositoryId: "repo_1",
     sourceRef: "0123456789abcdef0123456789abcdef01234567",
-    audience: "takos-paas",
+    audience: "takosumi",
   });
   const body = await response.json();
 
@@ -1178,7 +1178,7 @@ async function signedRequest(input: {
   const originalCallers = Deno.env.get("TAKOS_GIT_INTERNAL_CALLERS");
   const originalDevInMemory = Deno.env.get("TAKOS_GIT_DEV_IN_MEMORY_METADATA");
   Deno.env.set("TAKOS_INTERNAL_SERVICE_SECRET", "test-secret");
-  Deno.env.set("TAKOS_GIT_INTERNAL_CALLERS", "takos-app,takos-paas");
+  Deno.env.set("TAKOS_GIT_INTERNAL_CALLERS", "takos-app,takosumi");
   if (input.devInMemoryMetadata ?? true) {
     Deno.env.set("TAKOS_GIT_DEV_IN_MEMORY_METADATA", "true");
   } else {

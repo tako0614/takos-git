@@ -71,7 +71,7 @@ async function checkSignedRepositoryList(secret: string): Promise<void> {
     query: "",
     body: "",
     actor,
-    caller: Deno.env.get("TAKOS_LIVE_SMOKE_CALLER")?.trim() || "takos-paas",
+    caller: Deno.env.get("TAKOS_LIVE_SMOKE_CALLER")?.trim() || "takosumi",
     audience: SERVICE_ID,
     capabilities: [TAKOS_GIT_CAPABILITIES.repoRead],
     requestId,

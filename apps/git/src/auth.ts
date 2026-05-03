@@ -15,7 +15,7 @@ import { TAKOS_GIT_CAPABILITIES } from "takos-git-contract";
 const TAKOS_GIT_EXPECTED_AUDIENCE = "takos-git";
 const TAKOS_GIT_DEFAULT_INTERNAL_CALLERS = [
   "takos-app",
-  "takos-paas",
+  "takosumi",
   "takos-agent",
 ];
 
