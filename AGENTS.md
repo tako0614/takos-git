@@ -7,6 +7,6 @@ This repository is the Takos Git hosting service root.
 - Do not implement account/auth/profile/billing/OAuth behavior here; those
   belong to `../app`.
 - Do not implement tenant runtime/deploy/container orchestration here; that
-  belongs to `../paas`.
+  belongs to `../../takosumi`.
 - Public browser/CLI auth is verified by `takos-app`; this service accepts
   signed internal actor context only.

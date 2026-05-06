@@ -58,6 +58,38 @@ packages/git-contract    internal/public Git DTOs, paths, and capabilities
 - `TAKOS_GIT_DEV_IN_MEMORY_METADATA=true` enables process-local metadata for
   dev/test only. Do not use it for production.
 
+## Production Storage Ramp-Up
+
+1. Install the `git` CLI in the runtime image. Smart HTTP shells out to
+   `git http-backend`, and repository reads use `git for-each-ref`,
+   `git cat-file`, `git ls-tree`, and related plumbing commands.
+2. Provision a durable filesystem path for bare repositories, for example
+   `/var/lib/takos-git/repositories`, owned by the `takos-git` process user.
+3. Set `TAKOS_GIT_REPOSITORY_ROOT=/var/lib/takos-git/repositories`. Leave
+   `TAKOS_GIT_DEV_IN_MEMORY_METADATA` unset in production.
+4. Either leave `TAKOS_GIT_DATABASE_URL` unset to use
+   `${TAKOS_GIT_REPOSITORY_ROOT}/.takos/git.sqlite`, or set an absolute SQLite
+   URL such as `sqlite:///var/lib/takos-git/metadata/git.sqlite`.
+5. Start `takos-git` and create repositories through the signed internal API
+   (`POST /internal/repositories`) via `takos-app`. The service initializes the
+   mapped bare repo and records metadata in SQLite.
+6. Verify the first repository with
+   `git --git-dir "$TAKOS_GIT_REPOSITORY_ROOT/<id>.git" fsck --no-dangling` and
+   a signed `GET /internal/repositories/<id>/refs` call.
+
+For local storage experiments without an API caller, run:
+
+```sh
+deno task seed:dev local/demo
+export TAKOS_GIT_REPOSITORY_ROOT="$PWD/.takos-git/repositories"
+unset TAKOS_GIT_DATABASE_URL
+deno task dev
+```
+
+The seed task creates a bare repository and writes `.takos/repositories.json`;
+on first startup with an empty SQLite database, `takos-git` imports that
+metadata and serves the repository as active.
+
 ## Current Internal API Shape
 
 - `GET /internal/repositories` lists repository summaries from the configured
