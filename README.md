@@ -57,6 +57,9 @@ packages/git-contract    internal/public Git DTOs, paths, and capabilities
   the repository root.
 - `TAKOS_GIT_DEV_IN_MEMORY_METADATA=true` enables process-local metadata for
   dev/test only. Do not use it for production.
+- The production `Dockerfile` installs the `git` CLI and runs the service with
+  `--allow-run=git`; do not remove that binary dependency while Smart HTTP and
+  Git object reads shell out to Git.
 
 ## Production Storage Ramp-Up
 

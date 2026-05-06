@@ -1063,6 +1063,72 @@ Deno.test("smart HTTP rejects normal git clients because they cannot sign intern
   });
 });
 
+Deno.test("smart HTTP supports git CLI clone, push, and fetch through a signed app proxy", async () => {
+  await withBareRepository(async (fixture) => {
+    const originalRoot = Deno.env.get("TAKOS_GIT_REPOSITORY_ROOT");
+    const originalSecret = Deno.env.get("TAKOS_INTERNAL_SERVICE_SECRET");
+    Deno.env.set("TAKOS_GIT_REPOSITORY_ROOT", fixture.root);
+    Deno.env.set("TAKOS_INTERNAL_SERVICE_SECRET", "test-secret");
+    const server = signedSmartHttpProxy();
+    try {
+      const addr = server.addr as Deno.NetAddr;
+      const remoteUrl =
+        `http://127.0.0.1:${addr.port}/${fixture.repositoryId}.git`;
+      const cloneDir = await Deno.makeTempDir();
+      const fetchDir = await Deno.makeTempDir();
+      try {
+        await git(["clone", remoteUrl, cloneDir]);
+        assert.equal(
+          await Deno.readTextFile(`${cloneDir}/README.md`),
+          "hello from takos-git\n",
+        );
+
+        await git(["-C", cloneDir, "config", "user.email", "test@example.com"]);
+        await git(["-C", cloneDir, "config", "user.name", "Takos Test"]);
+        await Deno.writeTextFile(
+          `${cloneDir}/README.md`,
+          "hello from takos-git\nupdated through smart http\n",
+        );
+        await git(["-C", cloneDir, "add", "README.md"]);
+        await git(["-C", cloneDir, "commit", "-m", "update over smart http"]);
+        await git(["-C", cloneDir, "push", "origin", "main"]);
+
+        await git(["-C", fetchDir, "init"]);
+        await git(["-C", fetchDir, "remote", "add", "origin", remoteUrl]);
+        await git(["-C", fetchDir, "fetch", "origin", "main"]);
+        const fetchedCommit = (await git([
+          "-C",
+          fetchDir,
+          "rev-parse",
+          "FETCH_HEAD",
+        ])).trim();
+        const remoteCommit = (await git([
+          "--git-dir",
+          `${fixture.root}/${fixture.repositoryId}.git`,
+          "rev-parse",
+          "refs/heads/main",
+        ])).trim();
+        assert.equal(fetchedCommit, remoteCommit);
+      } finally {
+        await Deno.remove(cloneDir, { recursive: true });
+        await Deno.remove(fetchDir, { recursive: true });
+      }
+    } finally {
+      await server.shutdown();
+      restoreEnv("TAKOS_GIT_REPOSITORY_ROOT", originalRoot);
+      restoreEnv("TAKOS_INTERNAL_SERVICE_SECRET", originalSecret);
+    }
+  });
+});
+
+Deno.test("production Dockerfile installs git CLI for Smart HTTP", async () => {
+  const dockerfile = await Deno.readTextFile(
+    new URL("../../../Dockerfile", import.meta.url),
+  );
+  assert.match(dockerfile, /apt-get install[^\n]+ git(?:\s|$)/);
+  assert.match(dockerfile, /--allow-run=git/);
+});
+
 Deno.test("source resolver still requires internal signature auth", async () => {
   const originalSecret = Deno.env.get("TAKOS_INTERNAL_SERVICE_SECRET");
   Deno.env.set("TAKOS_INTERNAL_SERVICE_SECRET", "test-secret");
@@ -1248,6 +1314,55 @@ function defaultCapabilities(method: string, path: string): readonly string[] {
     return [TAKOS_GIT_CAPABILITIES.repoRead];
   }
   return [TAKOS_GIT_CAPABILITIES.repoWrite];
+}
+
+function signedSmartHttpProxy(): Deno.HttpServer {
+  return Deno.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    onListen() {},
+  }, async (request) => {
+    const url = new URL(request.url);
+    const body = new Uint8Array(await request.arrayBuffer());
+    const signed = await signTakosInternalRequest({
+      method: request.method,
+      path: url.pathname,
+      query: url.search,
+      body,
+      actor,
+      caller: "takos-app",
+      audience: "takos-git",
+      capabilities: smartHttpCapabilities(url),
+      timestamp: new Date().toISOString(),
+      secret: "test-secret",
+    });
+    const headers = new Headers(signed.headers);
+    copyHeader(request.headers, headers, "content-type");
+    copyHeader(request.headers, headers, "accept");
+    copyHeader(request.headers, headers, "git-protocol");
+    return await app.fetch(
+      new Request(request.url, {
+        method: request.method,
+        headers,
+        body: body.byteLength > 0 ? body : undefined,
+      }),
+    );
+  });
+}
+
+function smartHttpCapabilities(url: URL): readonly string[] {
+  if (
+    url.pathname.endsWith("/git-receive-pack") ||
+    url.searchParams.get("service") === "git-receive-pack"
+  ) {
+    return [TAKOS_GIT_CAPABILITIES.repoWrite];
+  }
+  return [TAKOS_GIT_CAPABILITIES.repoRead];
+}
+
+function copyHeader(source: Headers, target: Headers, name: string): void {
+  const value = source.get(name);
+  if (value) target.set(name, value);
 }
 
 async function withBareRepository(
