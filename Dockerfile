@@ -9,6 +9,8 @@ WORKDIR /app
 COPY --chown=deno:deno deno.json deno.lock ./
 COPY --chown=deno:deno apps ./apps
 COPY --chown=deno:deno packages ./packages
+RUN mkdir -p node_modules /workspace/node_modules \
+  && chown -R deno:deno node_modules /workspace
 
 USER deno
 RUN deno cache apps/git/src/index.ts
