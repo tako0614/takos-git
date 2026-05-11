@@ -413,11 +413,13 @@ app.get(
     );
     if (!access.ok) return c.json(access.body, access.status);
     const limit = Number(c.req.query("limit") ?? "50");
+    const offset = Number(c.req.query("offset") ?? "0");
     const result = await buildCommitsResponse({
       repository: access.repository,
       sourceRef: c.req.query("ref") || access.repository.defaultBranch,
       path: c.req.query("path") || undefined,
       limit: Number.isInteger(limit) ? Math.min(Math.max(limit, 1), 100) : 50,
+      offset: Number.isInteger(offset) ? Math.max(offset, 0) : 0,
     });
     if (!result.ok) return c.json(result.body, result.status);
     return c.json(result.response);
@@ -1493,6 +1495,7 @@ async function buildCommitsResponse(input: {
   sourceRef: string;
   path?: string;
   limit: number;
+  offset?: number;
 }): Promise<
   | { ok: true; response: GitListCommitsResponse }
   | {
@@ -1527,6 +1530,7 @@ async function buildCommitsResponse(input: {
     repositoryPath,
     "log",
     `-${input.limit}`,
+    ...(input.offset ? [`--skip=${input.offset}`] : []),
     "--format=%H%x1f%T%x1f%P%x1f%an%x1f%ae%x1f%aI%x1f%cn%x1f%ce%x1f%cI%x1f%s%x1e",
     resolved.commit,
     ...(input.path ? ["--", input.path] : []),

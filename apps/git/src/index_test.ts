@@ -593,6 +593,19 @@ Deno.test("repository browsing APIs return tree, blob, and commits", async () =>
       assert.equal(commitsBody.commits[0].sha, fixture.commit);
       assert.equal(commitsBody.commits[0].message, "initial");
 
+      const pagedCommits = await signedRequest({
+        method: "GET",
+        path: TAKOS_GIT_INTERNAL_PATHS.repositoryCommits(fixture.repositoryId),
+        requestPath: `${
+          TAKOS_GIT_INTERNAL_PATHS.repositoryCommits(fixture.repositoryId)
+        }?ref=feature/docs&limit=1&offset=1`,
+      });
+      assert.equal(pagedCommits.status, 200);
+      const pagedCommitsBody = await pagedCommits.json();
+      assert.equal(pagedCommitsBody.commits.length, 1);
+      assert.equal(pagedCommitsBody.commits[0].sha, fixture.commit);
+      assert.equal(pagedCommitsBody.commits[0].message, "initial");
+
       const branches = await signedRequest({
         method: "GET",
         path: TAKOS_GIT_INTERNAL_PATHS.repositoryBranches(
