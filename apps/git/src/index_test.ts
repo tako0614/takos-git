@@ -775,6 +775,56 @@ Deno.test("pull request metadata persists comments and reviews in sqlite", async
   }
 });
 
+Deno.test("pull request diff returns hunked file changes", async () => {
+  await withBareRepository(async (fixture) => {
+    const originalRoot = Deno.env.get("TAKOS_GIT_REPOSITORY_ROOT");
+    Deno.env.set("TAKOS_GIT_REPOSITORY_ROOT", fixture.root);
+    try {
+      const createPr = await signedRequest({
+        method: "POST",
+        path: TAKOS_GIT_INTERNAL_PATHS.pullRequests(fixture.repositoryId),
+        body: JSON.stringify({
+          title: "Add guide",
+          headBranch: "feature/docs",
+          baseBranch: "main",
+        }),
+      });
+      assert.equal(createPr.status, 201);
+
+      const diff = await signedRequest({
+        method: "GET",
+        path: TAKOS_GIT_INTERNAL_PATHS.pullRequestDiff(
+          fixture.repositoryId,
+          1,
+        ),
+      });
+      assert.equal(diff.status, 200);
+      const body = await diff.json();
+      assert.equal(body.repositoryId, fixture.repositoryId);
+      assert.equal(body.pullRequestNumber, 1);
+      assert.equal(body.baseCommit, fixture.commit);
+      assert.equal(body.headCommit, fixture.featureCommit);
+      assert.deepEqual(body.stats, {
+        totalAdditions: 1,
+        totalDeletions: 0,
+        filesChanged: 1,
+      });
+      assert.equal(body.files.length, 1);
+      assert.equal(body.files[0].path, "GUIDE.md");
+      assert.equal(body.files[0].status, "added");
+      assert.equal(body.files[0].additions, 1);
+      assert.equal(body.files[0].deletions, 0);
+      assert.deepEqual(body.files[0].hunks[0].lines, [{
+        type: "addition",
+        content: "guide",
+        newLine: 1,
+      }]);
+    } finally {
+      restoreEnv("TAKOS_GIT_REPOSITORY_ROOT", originalRoot);
+    }
+  });
+});
+
 Deno.test("pull request merge fast-forwards base branch and marks PR merged", async () => {
   await withBareRepository(async (fixture) => {
     const originalRoot = Deno.env.get("TAKOS_GIT_REPOSITORY_ROOT");

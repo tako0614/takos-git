@@ -199,6 +199,42 @@ export interface GitCompareResponse {
   files: GitCompareFileSummary[];
 }
 
+export interface GitPullRequestDiffLine {
+  type: "context" | "addition" | "deletion";
+  content: string;
+  oldLine?: number;
+  newLine?: number;
+}
+
+export interface GitPullRequestDiffHunk {
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  lines: GitPullRequestDiffLine[];
+}
+
+export interface GitPullRequestDiffFile extends GitCompareFileSummary {
+  additions: number;
+  deletions: number;
+  hunks: GitPullRequestDiffHunk[];
+}
+
+export interface GitPullRequestDiffResponse {
+  repositoryId: string;
+  pullRequestNumber: number;
+  baseRef: string;
+  headRef: string;
+  baseCommit: string;
+  headCommit: string;
+  files: GitPullRequestDiffFile[];
+  stats: {
+    totalAdditions: number;
+    totalDeletions: number;
+    filesChanged: number;
+  };
+}
+
 export interface GitCreatePullRequestRequest {
   title: string;
   description?: string;
@@ -329,6 +365,10 @@ export const TAKOS_GIT_INTERNAL_PATHS = {
     `/internal/repositories/${encodeURIComponent(repositoryId)}/pull-requests/${
       encodeURIComponent(String(number))
     }`,
+  pullRequestDiff: (repositoryId: string, number: number): string =>
+    `/internal/repositories/${encodeURIComponent(repositoryId)}/pull-requests/${
+      encodeURIComponent(String(number))
+    }/diff`,
   pullRequestComments: (repositoryId: string, number: number): string =>
     `/internal/repositories/${encodeURIComponent(repositoryId)}/pull-requests/${
       encodeURIComponent(String(number))

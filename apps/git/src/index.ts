@@ -14,6 +14,10 @@ import {
   type GitListRefsResponse,
   type GitMergePullRequestRequest,
   type GitMergePullRequestResponse,
+  type GitPullRequestDiffFile,
+  type GitPullRequestDiffHunk,
+  type GitPullRequestDiffLine,
+  type GitPullRequestDiffResponse,
   type GitPullRequestReviewStatus,
   type GitPullRequestStatus,
   type GitReadBlobResponse,
@@ -756,6 +760,36 @@ app.get(
   },
 );
 
+app.get(
+  "/internal/repositories/:repositoryId/pull-requests/:number/diff",
+  async (c) => {
+    const auth = await readInternalAuth(c.req.raw);
+    if (!auth.ok) return c.json({ error: auth.error }, 401);
+    const access = await requireRepositoryRead(
+      auth,
+      c.req.param("repositoryId"),
+    );
+    if (!access.ok) return c.json(access.body, access.status);
+    const number = parsePullRequestNumber(c.req.param("number"));
+    if (!number.ok) return c.json(number.body, 400);
+    const pullRequestResult = await readConfiguredPullRequest(
+      c.req.param("repositoryId"),
+      number.value,
+    );
+    if (!pullRequestResult.ok) {
+      return c.json(pullRequestResult.body, pullRequestResult.status);
+    }
+    const diff = await buildPullRequestDiffResponse({
+      repository: access.repository,
+      pullRequestNumber: number.value,
+      baseRef: pullRequestResult.pullRequest.baseBranch,
+      headRef: pullRequestResult.pullRequest.headBranch,
+    });
+    if (!diff.ok) return c.json(diff.body, diff.status);
+    return c.json(diff.response);
+  },
+);
+
 app.patch(
   "/internal/repositories/:repositoryId/pull-requests/:number",
   async (c) => {
@@ -1379,6 +1413,81 @@ async function buildCompareResponse(input: {
   };
 }
 
+async function buildPullRequestDiffResponse(input: {
+  repository: StoredGitRepository;
+  pullRequestNumber: number;
+  baseRef: string;
+  headRef: string;
+}): Promise<
+  | { ok: true; response: GitPullRequestDiffResponse }
+  | {
+    ok: false;
+    body: {
+      error: string;
+      code: string;
+      repositoryId?: string;
+      sourceRef?: string;
+    };
+    status: 400 | 404 | 409 | 422 | 501;
+  }
+> {
+  const compare = await buildCompareResponse({
+    repository: input.repository,
+    baseRef: input.baseRef,
+    headRef: input.headRef,
+  });
+  if (!compare.ok) return compare;
+  const repositoryPath = configuredRepositoryPath(input.repository.id);
+  if (!repositoryPath) {
+    return {
+      ok: false,
+      status: 501,
+      body: notImplemented("git_repository_root_not_configured"),
+    };
+  }
+  const diffOutput = await runGit([
+    "--git-dir",
+    repositoryPath,
+    "diff",
+    "--unified=3",
+    "--no-color",
+    "--no-ext-diff",
+    `${compare.response.baseCommit}..${compare.response.headCommit}`,
+  ]);
+  if (!diffOutput.success) {
+    return {
+      ok: false,
+      status: 422,
+      body: {
+        error: "failed to build pull request diff",
+        code: "git_pull_request_diff_unreadable",
+        repositoryId: input.repository.id,
+      },
+    };
+  }
+  const files = parsePullRequestUnifiedDiff(
+    textDecoder.decode(diffOutput.stdout),
+    compare.response.files,
+  );
+  return {
+    ok: true,
+    response: {
+      repositoryId: input.repository.id,
+      pullRequestNumber: input.pullRequestNumber,
+      baseRef: input.baseRef,
+      headRef: input.headRef,
+      baseCommit: compare.response.baseCommit,
+      headCommit: compare.response.headCommit,
+      files,
+      stats: {
+        totalAdditions: files.reduce((sum, file) => sum + file.additions, 0),
+        totalDeletions: files.reduce((sum, file) => sum + file.deletions, 0),
+        filesChanged: files.length,
+      },
+    },
+  };
+}
+
 async function buildCommitsResponse(input: {
   repository: StoredGitRepository;
   sourceRef: string;
@@ -1787,6 +1896,97 @@ function parseNameStatus(output: Uint8Array): GitCompareFileSummary[] {
     if (path) files.push({ path, status });
   }
   return files;
+}
+
+function parsePullRequestUnifiedDiff(
+  diffText: string,
+  summaries: readonly GitCompareFileSummary[],
+): GitPullRequestDiffFile[] {
+  const files = summaries.map((summary) => ({
+    ...summary,
+    additions: 0,
+    deletions: 0,
+    hunks: [] as GitPullRequestDiffHunk[],
+  }));
+  const filesByPath = new Map(files.map((file) => [file.path, file]));
+  let currentFile: GitPullRequestDiffFile | undefined;
+  let currentHunk: GitPullRequestDiffHunk | undefined;
+  let oldLine = 0;
+  let newLine = 0;
+
+  for (const line of diffText.split("\n")) {
+    if (line.startsWith("diff --git ")) {
+      const path = parseDiffGitNewPath(line);
+      currentFile = path ? filesByPath.get(path) : undefined;
+      currentHunk = undefined;
+      continue;
+    }
+    if (!currentFile) continue;
+    if (line.startsWith("@@ ")) {
+      const header = parseUnifiedHunkHeader(line);
+      if (!header) {
+        currentHunk = undefined;
+        continue;
+      }
+      oldLine = header.oldStart;
+      newLine = header.newStart;
+      currentHunk = {
+        oldStart: header.oldStart,
+        oldLines: header.oldLines,
+        newStart: header.newStart,
+        newLines: header.newLines,
+        lines: [],
+      };
+      currentFile.hunks.push(currentHunk);
+      continue;
+    }
+    if (!currentHunk || line.length === 0 || line.startsWith("\\")) continue;
+    const marker = line[0];
+    const content = line.slice(1);
+    if (marker === " ") {
+      currentHunk.lines.push({
+        type: "context",
+        content,
+        oldLine,
+        newLine,
+      });
+      oldLine++;
+      newLine++;
+    } else if (marker === "-") {
+      currentFile.deletions++;
+      currentHunk.lines.push({ type: "deletion", content, oldLine });
+      oldLine++;
+    } else if (marker === "+") {
+      currentFile.additions++;
+      currentHunk.lines.push({ type: "addition", content, newLine });
+      newLine++;
+    }
+  }
+
+  return files;
+}
+
+function parseDiffGitNewPath(line: string): string | undefined {
+  const match = /^diff --git a\/(.+) b\/(.+)$/.exec(line);
+  return match?.[2];
+}
+
+function parseUnifiedHunkHeader(line: string):
+  | {
+    oldStart: number;
+    oldLines: number;
+    newStart: number;
+    newLines: number;
+  }
+  | undefined {
+  const match = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(line);
+  if (!match) return undefined;
+  return {
+    oldStart: Number(match[1]),
+    oldLines: match[2] ? Number(match[2]) : 1,
+    newStart: Number(match[3]),
+    newLines: match[4] ? Number(match[4]) : 1,
+  };
 }
 
 function nameStatus(status: string): GitCompareFileSummary["status"] {

@@ -67,6 +67,10 @@ Deno.test("Git contract exposes only Git-owned paths and capabilities", () => {
     "/internal/repositories/repo%2Fone/pull-requests/12",
   );
   assert.equal(
+    TAKOS_GIT_INTERNAL_PATHS.pullRequestDiff("repo/one", 12),
+    "/internal/repositories/repo%2Fone/pull-requests/12/diff",
+  );
+  assert.equal(
     TAKOS_GIT_INTERNAL_PATHS.pullRequestComments("repo/one", 12),
     "/internal/repositories/repo%2Fone/pull-requests/12/comments",
   );
