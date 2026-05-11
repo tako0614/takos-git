@@ -35,7 +35,8 @@ write-capable role such as `owner`, `admin`, `maintainer`, or `write`.
 
 Browser and CLI clients do not call internal routes directly; `takos-app`
 verifies the user and forwards signed internal requests. Lifecycle-facing
-canonical source semantics are owned by the PaaS control plane in `../paas`.
+canonical deploy semantics are owned by `takosumi`; `takos-git` only exposes the
+source and snapshot primitives that the deploy layer consumes.
 
 ## Layout
 
@@ -119,12 +120,21 @@ metadata and serves the repository as active.
 - `GET /internal/repositories/:repositoryId/refs` lists refs from the configured
   bare repository, or from in-memory metadata when no repository root is
   configured and metadata exists.
+- `GET /internal/repositories/:repositoryId/branches` lists local branch refs
+  with commit IDs and timestamps.
+- `GET /internal/repositories/:repositoryId/tags` lists tag refs with commit IDs
+  and timestamps.
 - `GET /internal/repositories/:repositoryId/tree?ref=<ref>&path=<path>` lists a
   tree from the configured bare repository.
 - `GET /internal/repositories/:repositoryId/blob?ref=<ref>&path=<path>` returns
   blob content as UTF-8 or base64.
-- `GET /internal/repositories/:repositoryId/commits?ref=<ref>&limit=<n>` lists
-  commit summaries from the configured bare repository.
+- `GET /internal/repositories/:repositoryId/commits?ref=<ref>&limit=<n>&offset=<n>&path=<path>`
+  lists commit summaries from the configured bare repository. `offset` is
+  translated to `git log --skip=<n>` and is clamped to zero when invalid.
+- `GET /internal/repositories/:repositoryId/commits/:commitish` reads one commit
+  summary at a ref or commit ID.
+- `GET /internal/repositories/:repositoryId/compare?base=<ref>&head=<ref>`
+  compares two refs and returns ahead/behind counts plus changed file metadata.
 - `GET /internal/objects/:repositoryId/:objectId` reads a Git object from the
   configured bare repository and returns `git cat-file -p` pretty output, not
   raw loose-object storage bytes. Responses include `x-takos-git-object-*`
@@ -138,6 +148,8 @@ metadata and serves the repository as active.
   for a head/base branch pair.
 - `GET` / `PATCH /internal/repositories/:repositoryId/pull-requests/:number`
   reads or updates PR metadata, including closed/merged status.
+- `GET /internal/repositories/:repositoryId/pull-requests/:number/diff` returns
+  a hunked PR diff with per-file additions/deletions and aggregate stats.
 - `POST /internal/repositories/:repositoryId/pull-requests/:number/comments` and
   `/reviews` append PR discussion/review metadata.
 - `POST /internal/source/snapshot` resolves a ref to an immutable Git source
