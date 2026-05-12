@@ -1,9 +1,9 @@
 # AGENTS.md — takos-git (Takos Git hosting service)
 
-`takos-git` は Takos の **Git hosting service** で、 Git Smart HTTP / repository
-metadata / refs / object storage / source resolution / repository API contracts
-を所有する。 ecosystem の上位 sibling product である `takosumi-git` (workflow /
-git bridge to takosumi kernel) とは別物 — 名前が紛らわしいが domain が異なる。
+`takos-git` は Takos の **Git hosting service** で、 Git Smart HTTP / repository metadata / refs / object storage /
+source resolution / repository API contracts を所有する。 ecosystem sibling の `takosumi-git` (Git URL install /
+`.takosumi/` convention / workflow bridge to takosumi kernel の canonical installer implementation) とは別物 —
+名前が紛らわしいが domain が異なる。
 
 ## 責務
 
@@ -19,22 +19,19 @@ git bridge to takosumi kernel) とは別物 — 名前が紛らわしいが doma
 
 - account / auth / profile / billing / OAuth behavior (`../app/` の責務)
 - tenant runtime / deploy / container orchestration (`../../takosumi/` の責務)
-- browser / CLI auth verify そのもの (`takos-app` が verify した後 signed
-  internal actor context として受ける)
+- browser / CLI auth verify そのもの (`takos-app` が verify した後 signed internal actor context として受ける)
 
 ## 隣接 product との contract
 
 - **Upstream**: 直接の upstream なし (Takos product 内の self-contained service)
-- **Downstream**: Takos product (`../app/` が browser / CLI auth を verify
-  した後の signed internal RPC で接続)、 Takosumi kernel (control plane が
-  source snapshot 取得のため呼ぶ)
-- **Sibling**: `../app/` (auth verify 委譲先)、 `../agent/` (independent
-  service)
+- **Downstream**: Takos product (`../app/` が browser / CLI auth を verify した後の signed internal RPC で接続)、
+  Takosumi kernel (control plane が source snapshot 取得のため呼ぶ)
+- **Sibling**: `../app/` (auth verify 委譲先)、 `../agent/` (independent service)
 
 ## Substitutability
 
-代替実装可: bare repository storage を持つ Git HTTP server なら replace 可能。
-ただし signed internal RPC protocol は Takos contract に従う必要がある。
+代替実装可: bare repository storage を持つ Git HTTP server なら replace 可能。 ただし signed internal RPC protocol は
+Takos contract に従う必要がある。
 
 ## Workflow
 
