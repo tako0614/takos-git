@@ -16,7 +16,6 @@ import {
   type GitMergePullRequestResponse,
   type GitPullRequestDiffFile,
   type GitPullRequestDiffHunk,
-  type GitPullRequestDiffLine,
   type GitPullRequestDiffResponse,
   type GitPullRequestReviewStatus,
   type GitPullRequestStatus,
