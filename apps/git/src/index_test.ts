@@ -142,6 +142,50 @@ Deno.test("source resolver requires configured storage outside dev in-memory mod
   });
 });
 
+Deno.test("repository metadata rejects account-owned request shape", async () => {
+  const create = await signedRequest({
+    method: "POST",
+    path: TAKOS_GIT_INTERNAL_PATHS.repositories,
+    body: JSON.stringify({
+      id: `metadata-${crypto.randomUUID()}`,
+      name: "Account Owned",
+      ownerAccountId: "space_1",
+    }),
+  });
+
+  assert.equal(create.status, 400);
+  assert.deepEqual(await create.json(), {
+    error: "ownerAccountId is not supported; use ownerSpaceId",
+    code: "invalid_repository_metadata_request",
+  });
+
+  const repositoryId = `metadata-${crypto.randomUUID()}`;
+  const current = await signedRequest({
+    method: "POST",
+    path: TAKOS_GIT_INTERNAL_PATHS.repositories,
+    body: JSON.stringify({
+      id: repositoryId,
+      name: "Space Owned",
+      ownerSpaceId: "space_1",
+    }),
+  });
+  assert.equal(current.status, 201);
+
+  const update = await signedRequest({
+    method: "PATCH",
+    path: TAKOS_GIT_INTERNAL_PATHS.repository(repositoryId),
+    body: JSON.stringify({
+      ownerAccountId: "space_1",
+    }),
+  });
+
+  assert.equal(update.status, 400);
+  assert.deepEqual(await update.json(), {
+    error: "ownerAccountId is not supported; use ownerSpaceId",
+    code: "invalid_repository_metadata_request",
+  });
+});
+
 Deno.test("repository metadata creation initializes an on-disk bare repository", async () => {
   const root = await Deno.makeTempDir();
   const originalRoot = Deno.env.get("TAKOS_GIT_REPOSITORY_ROOT");

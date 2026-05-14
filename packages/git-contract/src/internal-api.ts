@@ -70,8 +70,6 @@ export interface GitCreateRepositoryRequest {
   id: string;
   name: string;
   ownerSpaceId: string;
-  /** @deprecated use ownerSpaceId */
-  ownerAccountId?: string;
   defaultBranch?: string;
   refs?: GitRefSummary[] | Record<string, string>;
   initialization?: {
@@ -82,8 +80,6 @@ export interface GitCreateRepositoryRequest {
 export interface GitUpdateRepositoryRequest {
   name?: string;
   ownerSpaceId?: string;
-  /** @deprecated use ownerSpaceId */
-  ownerAccountId?: string;
   defaultBranch?: string;
   refs?: GitRefSummary[] | Record<string, string>;
 }

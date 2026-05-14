@@ -2270,6 +2270,12 @@ function validateRepositoryMetadata(
       code: "invalid_repository_metadata_request",
     };
   }
+  if ("ownerAccountId" in request) {
+    return {
+      error: "ownerAccountId is not supported; use ownerSpaceId",
+      code: "invalid_repository_metadata_request",
+    };
+  }
   const checks: Array<[string, unknown, boolean]> = [
     ["id", "id" in request ? request.id : undefined, requireAll],
     ["name", request.name, requireAll],
@@ -2359,7 +2365,7 @@ function validateExternalFetchRequest(
 function repositoryOwnerSpaceId(
   request: Partial<GitCreateRepositoryRequest | GitUpdateRepositoryRequest>,
 ): string | undefined {
-  const value = request.ownerSpaceId ?? request.ownerAccountId;
+  const value = request.ownerSpaceId;
   return typeof value === "string" && value.trim().length > 0
     ? value.trim()
     : undefined;

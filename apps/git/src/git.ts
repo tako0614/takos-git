@@ -107,8 +107,6 @@ export interface GitRepositoryMetadataRecord {
   id: string;
   name: string;
   ownerSpaceId: string;
-  /** @deprecated migrated legacy metadata may still carry this name */
-  ownerAccountId?: string;
   defaultBranch: string;
   refs: GitRefSummary[];
   state?: "active" | "deleted" | "initializing" | "failed";
@@ -346,9 +344,7 @@ export async function readConfiguredRepositoryMetadata(): Promise<
   try {
     const parsed = JSON.parse(await Deno.readTextFile(metadataPath));
     if (!Array.isArray(parsed.repositories)) return [];
-    return parsed.repositories.filter(isRepositoryMetadataRecord).map(
-      normalizeRepositoryMetadataRecord,
-    );
+    return parsed.repositories.filter(isRepositoryMetadataRecord);
   } catch (error) {
     if (error instanceof Deno.errors.NotFound) return [];
     throw error;
@@ -1007,9 +1003,7 @@ function migrateJsonMetadataToDatabase(database: DatabaseSync): void {
   if (!Array.isArray(repositories)) return;
   writeDatabaseRepositoryMetadata(
     database,
-    repositories.filter(isRepositoryMetadataRecord).map(
-      normalizeRepositoryMetadataRecord,
-    ),
+    repositories.filter(isRepositoryMetadataRecord),
   );
   cachedDatabase = cachedDatabase
     ? { ...cachedDatabase, migratedJsonPath: jsonPath }
@@ -1416,8 +1410,7 @@ function isRepositoryMetadataRecord(
   const record = value as Partial<GitRepositoryMetadataRecord>;
   return typeof record.id === "string" &&
     typeof record.name === "string" &&
-    (typeof record.ownerSpaceId === "string" ||
-      typeof record.ownerAccountId === "string") &&
+    typeof record.ownerSpaceId === "string" &&
     typeof record.defaultBranch === "string" &&
     typeof record.createdAt === "string" &&
     typeof record.updatedAt === "string" &&
@@ -1427,15 +1420,6 @@ function isRepositoryMetadataRecord(
       typeof (ref as GitRefSummary).name === "string" &&
       typeof (ref as GitRefSummary).target === "string"
     );
-}
-
-function normalizeRepositoryMetadataRecord(
-  record: GitRepositoryMetadataRecord,
-): GitRepositoryMetadataRecord {
-  return {
-    ...record,
-    ownerSpaceId: record.ownerSpaceId ?? record.ownerAccountId!,
-  };
 }
 
 function isSafePathSegment(segment: string): boolean {
