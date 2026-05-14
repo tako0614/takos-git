@@ -1,5 +1,8 @@
 # takos-git
 
+> Internal service of [Takos](../README.md). 公開 product overview と Quickstart
+> は親 README を参照してください。
+
 Takos 所有の内部 Git ホスティングサービスです。
 
 `takos-git` は汎用フォージではありません。公開プロフィール、カタログ、課金、
