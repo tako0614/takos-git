@@ -8,10 +8,7 @@ import {
   type GitFetchExternalRepositoryResponse,
   type GitImportExternalRepositoryRequest,
   type GitImportExternalRepositoryResponse,
-  type GitListRefsResponse,
   type GitMergePullRequestRequest,
-  type GitRefSummary,
-  type GitRepositoryDetail,
   type GitRepositorySummary,
   type GitResolveSourceRequest,
   type GitResolveSourceResponse,
@@ -24,7 +21,6 @@ import {
   canAccessRepositoryOwner,
   readInternalAuth,
   repositoryAccessDenied,
-  type TakosGitInternalAuth,
 } from "./auth.ts";
 import {
   bytesToArrayBuffer,
@@ -33,8 +29,6 @@ import {
   createConfiguredPullRequest,
   createConfiguredPullRequestComment,
   createConfiguredPullRequestReview,
-  devInMemoryMetadataEnabled,
-  type GitRepositoryMetadataRecord,
   isLiteralObjectId,
   notImplemented,
   readConfiguredGitPrettyObject,
@@ -42,12 +36,27 @@ import {
   readConfiguredGitRefs,
   readConfiguredPullRequest,
   readConfiguredPullRequests,
-  readConfiguredRepositoryMetadata,
   repositoryNotFound,
   updateConfiguredPullRequest,
   writeConfiguredGitRefs,
-  writeConfiguredRepositoryMetadata,
 } from "./git.ts";
+import {
+  canReadRepository,
+  canWriteRepository,
+  createRepositoryStorage,
+  findRepository,
+  listRepositoryRefs,
+  normalizeRefs,
+  readRepositories,
+  repositoryDetail,
+  repositoryRefs,
+  repositorySummary,
+  requireRepositoryRead,
+  requireRepositoryWrite,
+  resolveStoredRef,
+  type StoredGitRepository,
+  writeRepositories,
+} from "./repo-store.ts";
 import {
   buildBlobResponse,
   buildCommitResponse,
@@ -56,7 +65,6 @@ import {
   buildPullRequestDiffResponse,
   buildSourceSnapshot,
   buildTreeResponse,
-  canonicalRefName,
   gitObjectTooLarge,
   maxGitBlobBytes,
   mergePullRequestFastForward,
@@ -83,18 +91,6 @@ import {
 } from "./validation.ts";
 
 const app: Hono = new Hono();
-const repositories = new Map<string, StoredGitRepository>();
-
-interface StoredGitRepository {
-  id: string;
-  name: string;
-  ownerSpaceId: string;
-  defaultBranch: string;
-  refs: Map<string, string>;
-  createdAt: string;
-  updatedAt: string;
-}
-
 app.get("/health", (c) => c.json({ ok: true, service: "takos-git" }));
 
 app.get("/ready", (c) => {
@@ -931,178 +927,6 @@ app.all("*", (c) => {
   return c.json({ error: "not found" }, 404);
 });
 
-async function readRepositories(): Promise<StoredGitRepository[]> {
-  const persisted = await readConfiguredRepositoryMetadata();
-  if (persisted) return persisted.map(metadataToStoredRepository);
-  if (!devInMemoryMetadataEnabled()) return [];
-  return [...repositories.values()];
-}
-
-async function findRepository(
-  repositoryId: string,
-): Promise<StoredGitRepository | undefined> {
-  return (await readRepositories()).find((repository) =>
-    repository.id === repositoryId
-  );
-}
-
-async function writeRepositories(
-  updatedRepositories: StoredGitRepository[],
-): Promise<void> {
-  const persisted = await readConfiguredRepositoryMetadata();
-  if (persisted) {
-    await writeConfiguredRepositoryMetadata(
-      updatedRepositories.map(storedRepositoryToMetadata),
-    );
-    return;
-  }
-  if (!devInMemoryMetadataEnabled()) return;
-  repositories.clear();
-  for (const repository of updatedRepositories) {
-    repositories.set(repository.id, repository);
-  }
-}
-
-function canReadRepository(
-  auth: TakosGitInternalAuth,
-  repository: StoredGitRepository,
-): boolean {
-  return canAccessRepositoryOwner(auth, repository.ownerSpaceId, "read");
-}
-
-function canWriteRepository(
-  auth: TakosGitInternalAuth,
-  repository: StoredGitRepository,
-): boolean {
-  return canAccessRepositoryOwner(auth, repository.ownerSpaceId, "write");
-}
-
-async function requireRepositoryRead(
-  auth: TakosGitInternalAuth,
-  repositoryId: string,
-): Promise<
-  | { ok: true; repository: StoredGitRepository }
-  | {
-    ok: false;
-    body: { error: string; code: string; repositoryId: string };
-    status: 403 | 404;
-  }
-> {
-  const repository = await findRepository(repositoryId);
-  if (!repository) {
-    return { ok: false, body: repositoryNotFound(repositoryId), status: 404 };
-  }
-  if (!canReadRepository(auth, repository)) {
-    return {
-      ok: false,
-      body: repositoryAccessDenied(repositoryId),
-      status: 403,
-    };
-  }
-  return { ok: true, repository };
-}
-
-async function requireRepositoryWrite(
-  auth: TakosGitInternalAuth,
-  repositoryId: string,
-): Promise<
-  | { ok: true; repository: StoredGitRepository }
-  | {
-    ok: false;
-    body: { error: string; code: string; repositoryId: string };
-    status: 403 | 404;
-  }
-> {
-  const access = await requireRepositoryRead(auth, repositoryId);
-  if (!access.ok) return access;
-  if (!canWriteRepository(auth, access.repository)) {
-    return {
-      ok: false,
-      body: repositoryAccessDenied(repositoryId),
-      status: 403,
-    };
-  }
-  return access;
-}
-
-async function createRepositoryStorage(
-  repositoryId: string,
-  options: { defaultBranch: string; mode: "default" | "bare" },
-): Promise<
-  | { ok: true }
-  | {
-    ok: false;
-    body: { error: string; code: string; repositoryId?: string };
-    status: 400 | 404 | 409 | 422 | 500 | 501;
-  }
-> {
-  const result = await createConfiguredBareRepository(repositoryId, options);
-  if (result.ok) return { ok: true };
-  if (
-    result.status === 501 &&
-    result.body.code === "git_repository_root_not_configured" &&
-    devInMemoryMetadataEnabled()
-  ) {
-    return { ok: true };
-  }
-  return result;
-}
-
-function metadataToStoredRepository(
-  repository: GitRepositoryMetadataRecord,
-): StoredGitRepository {
-  return {
-    ...repository,
-    refs: normalizeRefs(repository.refs)!,
-  };
-}
-
-function storedRepositoryToMetadata(
-  repository: StoredGitRepository,
-): GitRepositoryMetadataRecord {
-  return {
-    ...repository,
-    refs: repositoryRefs(repository),
-  };
-}
-
-async function listRepositoryRefs(
-  repository: StoredGitRepository,
-  prefix: "refs/heads/" | "refs/tags/",
-): Promise<
-  | { ok: true; response: GitListRefsResponse }
-  | {
-    ok: false;
-    body: {
-      error: string;
-      code: string;
-      repositoryId?: string;
-    };
-    status: 400 | 404 | 409 | 413 | 422 | 501;
-  }
-> {
-  const configured = await readConfiguredGitRefs(repository.id);
-  if (configured.ok) {
-    return {
-      ok: true,
-      response: {
-        repositoryId: repository.id,
-        refs: configured.refs.filter((ref) => ref.name.startsWith(prefix)),
-      },
-    };
-  }
-  if (configured.status !== 501) return configured;
-  return {
-    ok: true,
-    response: {
-      repositoryId: repository.id,
-      refs: repositoryRefs(repository).filter((ref) =>
-        ref.name.startsWith(prefix)
-      ),
-    },
-  };
-}
-
 function validateRepositoryMetadata(
   request: Partial<GitCreateRepositoryRequest | GitUpdateRepositoryRequest>,
   requireAll: boolean,
@@ -1114,95 +938,6 @@ function validateExternalImportRequest(
   request: Partial<GitImportExternalRepositoryRequest> | undefined,
 ): { error: string; code: string } | undefined {
   return validateExternalImportRequestBase(request, normalizeRefs);
-}
-
-function normalizeRefs(
-  refs: GitCreateRepositoryRequest["refs"],
-): Map<string, string> | undefined {
-  const normalized = new Map<string, string>();
-  if (refs === undefined) return normalized;
-  if (Array.isArray(refs)) {
-    for (const ref of refs) {
-      if (!isValidRefSummary(ref)) return undefined;
-      normalized.set(canonicalRefName(ref.name), ref.target);
-    }
-    return normalized;
-  }
-  if (!refs || typeof refs !== "object") return undefined;
-  for (const [name, target] of Object.entries(refs)) {
-    if (
-      typeof name !== "string" || name.trim().length === 0 ||
-      typeof target !== "string" || !isLiteralObjectId(target)
-    ) {
-      return undefined;
-    }
-    normalized.set(canonicalRefName(name), target);
-  }
-  return normalized;
-}
-
-function isValidRefSummary(ref: unknown): ref is GitRefSummary {
-  return !!ref && typeof ref === "object" &&
-    typeof (ref as GitRefSummary).name === "string" &&
-    (ref as GitRefSummary).name.trim().length > 0 &&
-    typeof (ref as GitRefSummary).target === "string" &&
-    isLiteralObjectId((ref as GitRefSummary).target);
-}
-
-function resolveStoredRef(
-  repository: StoredGitRepository,
-  sourceRef: string,
-): { name: string; target: string } | undefined {
-  const candidates = refResolutionCandidates(repository, sourceRef);
-  for (const candidate of candidates) {
-    const target = repository.refs.get(candidate);
-    if (target) return { name: candidate, target };
-  }
-}
-
-function refResolutionCandidates(
-  repository: StoredGitRepository,
-  sourceRef: string,
-): string[] {
-  const trimmed = sourceRef.trim();
-  const candidates = new Set<string>([trimmed]);
-  if (!trimmed.startsWith("refs/")) {
-    candidates.add(`refs/heads/${trimmed}`);
-    candidates.add(`refs/tags/${trimmed}`);
-  }
-  if (trimmed === repository.defaultBranch) {
-    candidates.add(`refs/heads/${repository.defaultBranch}`);
-  }
-  return [...candidates];
-}
-
-function repositoryRefs(repository: StoredGitRepository): GitRefSummary[] {
-  return [...repository.refs.entries()].map(([name, target]) => ({
-    name,
-    target,
-  }));
-}
-
-function repositorySummary(
-  repository: StoredGitRepository,
-): GitRepositorySummary {
-  return {
-    id: repository.id,
-    name: repository.name,
-    ownerSpaceId: repository.ownerSpaceId,
-    defaultBranch: repository.defaultBranch,
-  };
-}
-
-function repositoryDetail(
-  repository: StoredGitRepository,
-): GitRepositoryDetail {
-  return {
-    ...repositorySummary(repository),
-    refs: repositoryRefs(repository),
-    createdAt: repository.createdAt,
-    updatedAt: repository.updatedAt,
-  };
 }
 
 if (import.meta.main) {
