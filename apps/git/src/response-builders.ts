@@ -39,26 +39,34 @@ export interface StoredGitRepositoryView {
   defaultBranch: string;
 }
 
+function envIntegerOr(
+  name: string,
+  fallback: number,
+  minimum: number,
+): number {
+  const configured = Number(Deno.env.get(name));
+  if (Number.isInteger(configured) && configured >= minimum) return configured;
+  return fallback;
+}
+
 export function maxGitBlobBytes(): number {
-  const configured = Number(Deno.env.get("TAKOS_GIT_MAX_BLOB_BYTES"));
-  if (Number.isInteger(configured) && configured > 0) return configured;
-  return DEFAULT_MAX_BLOB_BYTES;
+  return envIntegerOr("TAKOS_GIT_MAX_BLOB_BYTES", DEFAULT_MAX_BLOB_BYTES, 1);
 }
 
 export function configuredSourceSnapshotFileLimit(): number {
-  const configured = Number(
-    Deno.env.get("TAKOS_GIT_MAX_SOURCE_SNAPSHOT_FILES"),
+  return envIntegerOr(
+    "TAKOS_GIT_MAX_SOURCE_SNAPSHOT_FILES",
+    DEFAULT_MAX_SOURCE_SNAPSHOT_FILES,
+    0,
   );
-  if (Number.isInteger(configured) && configured >= 0) return configured;
-  return DEFAULT_MAX_SOURCE_SNAPSHOT_FILES;
 }
 
 export function configuredSourceSnapshotManifestByteLimit(): number {
-  const configured = Number(
-    Deno.env.get("TAKOS_GIT_MAX_SOURCE_SNAPSHOT_MANIFEST_BYTES"),
+  return envIntegerOr(
+    "TAKOS_GIT_MAX_SOURCE_SNAPSHOT_MANIFEST_BYTES",
+    DEFAULT_MAX_SOURCE_SNAPSHOT_MANIFEST_BYTES,
+    0,
   );
-  if (Number.isInteger(configured) && configured >= 0) return configured;
-  return DEFAULT_MAX_SOURCE_SNAPSHOT_MANIFEST_BYTES;
 }
 
 export function gitObjectTooLarge(objectId: string, size: number) {
