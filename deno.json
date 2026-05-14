@@ -1,4 +1,8 @@
 {
+  "takosRelease": {
+    "name": "takos-git",
+    "version": "0.9.0"
+  },
   "workspace": [
     "./apps/git",
     "./packages/git-contract"
