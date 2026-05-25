@@ -1,15 +1,16 @@
 import {
   decodeActorContext,
-  TAKOS_INTERNAL_ACTOR_HEADER,
-  TAKOS_INTERNAL_AUDIENCE_HEADER,
-  TAKOS_INTERNAL_CALLER_HEADER,
-  TAKOS_INTERNAL_CAPABILITIES_HEADER,
-  TAKOS_INTERNAL_SIGNATURE_HEADER,
-  TAKOS_INTERNAL_TIMESTAMP_HEADER,
-  type TakosActorContext,
-  type VerifiedTakosInternalRpc,
-  verifyTakosInternalRequestFromHeaders,
-} from "takosumi-contract/internal-rpc";
+  TAKOSUMI_INTERNAL_ACTOR_HEADER as TAKOS_INTERNAL_ACTOR_HEADER,
+  TAKOSUMI_INTERNAL_AUDIENCE_HEADER as TAKOS_INTERNAL_AUDIENCE_HEADER,
+  TAKOSUMI_INTERNAL_CALLER_HEADER as TAKOS_INTERNAL_CALLER_HEADER,
+  TAKOSUMI_INTERNAL_CAPABILITIES_HEADER as TAKOS_INTERNAL_CAPABILITIES_HEADER,
+  TAKOSUMI_INTERNAL_SIGNATURE_HEADER as TAKOS_INTERNAL_SIGNATURE_HEADER,
+  TAKOSUMI_INTERNAL_TIMESTAMP_HEADER as TAKOS_INTERNAL_TIMESTAMP_HEADER,
+  type TakosumiActorContext as TakosActorContext,
+  type VerifiedTakosumiInternalRpc as VerifiedTakosInternalRpc,
+  verifyTakosumiInternalRequestFromHeaders
+    as verifyTakosInternalRequestFromHeaders,
+} from "takosumi-contract/internal/rpc";
 import { TAKOS_GIT_CAPABILITIES } from "takos-git-contract";
 
 const TAKOS_GIT_EXPECTED_AUDIENCE = "takos-git";

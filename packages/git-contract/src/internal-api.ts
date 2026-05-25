@@ -1,4 +1,6 @@
-export type { TakosActorContext } from "takosumi-contract/internal-rpc";
+export type {
+  TakosumiActorContext as TakosActorContext,
+} from "takosumi-contract/internal/rpc";
 
 export interface GitRepositorySummary {
   id: string;

@@ -4,9 +4,9 @@ import app from "./index.ts";
 import {
   TAKOS_GIT_CAPABILITIES,
   TAKOS_GIT_INTERNAL_PATHS,
-  type TakosActorContext,
+  type TakosumiActorContext as TakosActorContext,
 } from "takos-git-contract";
-import { signTakosInternalRequest } from "takosumi-contract/internal-rpc";
+import { signTakosumiInternalRequest as signTakosInternalRequest } from "takosumi-contract/internal/rpc";
 
 const actor: TakosActorContext = {
   actorAccountId: "acct_1",

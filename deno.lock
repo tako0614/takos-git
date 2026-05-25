@@ -2,12 +2,16 @@
   "version": "5",
   "specifiers": {
     "jsr:@takos/takosumi-contract@1": "1.0.0",
+    "jsr:@takos/takosumi-contract@^2.5.0": "2.5.0",
     "npm:hono@^4.12.4": "4.12.15",
     "npm:zod@^3.25.32": "3.25.76"
   },
   "jsr": {
     "@takos/takosumi-contract@1.0.0": {
       "integrity": "405b1ff6a9e394090b6d5ece6750159fdf7cbc177e7639d877a67f5da7517374"
+    },
+    "@takos/takosumi-contract@2.5.0": {
+      "integrity": "1aa0bbcff69afd9d7773fed649641ec9705246d12a26ea5932fbdfb962c13707"
     }
   },
   "npm": {
@@ -21,6 +25,7 @@
   "workspace": {
     "dependencies": [
       "jsr:@takos/takosumi-contract@1",
+      "jsr:@takos/takosumi-contract@^2.5.0",
       "npm:hono@^4.12.4",
       "npm:zod@^3.25.32"
     ]
