@@ -60,7 +60,6 @@ export async function handleSmartHttp(request: Request): Promise<Response> {
 
   const contentType = request.headers.get("content-type");
   const contentLength = request.headers.get("content-length") ?? "0";
-  const gitProtocol = request.headers.get("git-protocol");
   const env: Record<string, string> = {
     GIT_PROJECT_ROOT: root,
     GIT_HTTP_EXPORT_ALL: "1",
@@ -70,7 +69,6 @@ export async function handleSmartHttp(request: Request): Promise<Response> {
     CONTENT_TYPE: contentType ?? "",
     CONTENT_LENGTH: contentLength,
     REMOTE_USER: "takos-git",
-    ...(gitProtocol ? { GIT_PROTOCOL: gitProtocol } : {}),
   };
 
   const child = new Deno.Command("git", {

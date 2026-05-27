@@ -15,7 +15,7 @@
   },
   "imports": {
     "takosumi-contract": "jsr:@takos/takosumi-contract@^2.6.0",
-    "takosumi-contract/internal/rpc": "jsr:@takos/takosumi-contract@^2.6.0/internal-rpc",
+    "takosumi-contract/internal/rpc": "jsr:@takos/takosumi-contract@^2.6.0/internal/rpc",
     "takos-git-contract": "./packages/git-contract/src/index.ts",
     "takos-git-contract/": "./packages/git-contract/src/",
     "hono": "npm:hono@^4.12.4"

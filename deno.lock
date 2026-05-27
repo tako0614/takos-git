@@ -1,33 +1,23 @@
 {
   "version": "5",
   "specifiers": {
-    "jsr:@takos/takosumi-contract@1": "1.0.0",
-    "jsr:@takos/takosumi-contract@^2.5.0": "2.5.0",
-    "npm:hono@^4.12.4": "4.12.15",
-    "npm:zod@^3.25.32": "3.25.76"
+    "jsr:@takos/takosumi-contract@^2.6.0": "2.6.0",
+    "npm:hono@^4.12.4": "4.12.15"
   },
   "jsr": {
-    "@takos/takosumi-contract@1.0.0": {
-      "integrity": "405b1ff6a9e394090b6d5ece6750159fdf7cbc177e7639d877a67f5da7517374"
-    },
-    "@takos/takosumi-contract@2.5.0": {
-      "integrity": "1aa0bbcff69afd9d7773fed649641ec9705246d12a26ea5932fbdfb962c13707"
+    "@takos/takosumi-contract@2.6.0": {
+      "integrity": "53e74963e617583ac319e8edaaf7ea627aba19036e8fc7707dc07a5ea80eef75"
     }
   },
   "npm": {
     "hono@4.12.15": {
       "integrity": "sha512-qM0jDhFEaCBb4TxoW7f53Qrpv9RBiayUHo0S52JudprkhvpjIrGoU1mnnr29Fvd1U335ZFPZQY1wlkqgfGXyLg=="
-    },
-    "zod@3.25.76": {
-      "integrity": "sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ=="
     }
   },
   "workspace": {
     "dependencies": [
-      "jsr:@takos/takosumi-contract@1",
-      "jsr:@takos/takosumi-contract@^2.5.0",
-      "npm:hono@^4.12.4",
-      "npm:zod@^3.25.32"
+      "jsr:@takos/takosumi-contract@^2.6.0",
+      "npm:hono@^4.12.4"
     ]
   }
 }

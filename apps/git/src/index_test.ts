@@ -4,7 +4,7 @@ import app from "./index.ts";
 import {
   TAKOS_GIT_CAPABILITIES,
   TAKOS_GIT_INTERNAL_PATHS,
-  type TakosumiActorContext as TakosActorContext,
+  type TakosActorContext,
 } from "takos-git-contract";
 import { signTakosumiInternalRequest as signTakosInternalRequest } from "takosumi-contract/internal/rpc";
 
@@ -1446,7 +1446,7 @@ function signedSmartHttpProxy(): Deno.HttpServer {
     const headers = new Headers(signed.headers);
     copyHeader(request.headers, headers, "content-type");
     copyHeader(request.headers, headers, "accept");
-    copyHeader(request.headers, headers, "git-protocol");
+    headers.set("content-length", String(body.byteLength));
     return await app.fetch(
       new Request(request.url, {
         method: request.method,
