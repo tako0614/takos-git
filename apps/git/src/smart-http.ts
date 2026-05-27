@@ -10,7 +10,6 @@ import {
   isSafeSmartHttpPath,
   notImplemented,
   readConfiguredRepositoryRecord,
-  runGit,
 } from "./git.ts";
 
 const textDecoder = new TextDecoder();
@@ -59,20 +58,44 @@ export async function handleSmartHttp(request: Request): Promise<Response> {
     });
   }
 
-  const body = new Uint8Array(await request.arrayBuffer());
   const contentType = request.headers.get("content-type");
+  const contentLength = request.headers.get("content-length") ?? "0";
   const gitProtocol = request.headers.get("git-protocol");
-  const output = await runGit(["http-backend"], body, {
+  const env: Record<string, string> = {
     GIT_PROJECT_ROOT: root,
     GIT_HTTP_EXPORT_ALL: "1",
     PATH_INFO: url.pathname,
     QUERY_STRING: url.search.startsWith("?") ? url.search.slice(1) : "",
     REQUEST_METHOD: request.method,
     CONTENT_TYPE: contentType ?? "",
-    CONTENT_LENGTH: String(body.byteLength),
+    CONTENT_LENGTH: contentLength,
     REMOTE_USER: "takos-git",
     ...(gitProtocol ? { GIT_PROTOCOL: gitProtocol } : {}),
-  });
+  };
+
+  const child = new Deno.Command("git", {
+    args: ["http-backend"],
+    stdin: "piped",
+    stdout: "piped",
+    stderr: "piped",
+    env,
+  }).spawn();
+
+  // Stream request body to subprocess stdin without buffering the entire payload
+  if (request.body) {
+    const writer = child.stdin.getWriter();
+    try {
+      for await (const chunk of request.body) {
+        await writer.write(chunk);
+      }
+    } finally {
+      await writer.close();
+    }
+  } else {
+    await child.stdin.getWriter().close();
+  }
+
+  const output = await child.output();
   if (!output.success) {
     return Response.json({
       error: "git http-backend failed",

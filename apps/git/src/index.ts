@@ -560,6 +560,7 @@ app.delete("/internal/repositories/:repositoryId", async (c) => {
     return c.json(repositoryNotFound(repositoryId), 404);
   }
   await writeRepositories(remainingRepositories);
+  await removeConfiguredRepositoryDirectory(repositoryId);
   return new Response(null, { status: 204 });
 });
 

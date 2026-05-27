@@ -19,6 +19,11 @@ Smart HTTP を配信します。リポジトリ ID は
 `${TAKOS_GIT_REPOSITORY_ROOT}/<repositoryId>.git` にマップされ、`.git` で終わる
 ID はそのまま root 下で使われます。
 
+Git objects are stored directly on the filesystem under
+`TAKOS_GIT_REPOSITORY_ROOT/<repositoryId>.git`. The service does not use an
+object-store component binding; all object operations use Git CLI plumbing
+commands against the bare repository on disk.
+
 本番の `takos-git` は永続ストレージが必須です。 `TAKOS_GIT_REPOSITORY_ROOT`
 が設定されている場合、`POST /internal/repositories` は bare
 リポジトリをディスク上に初期化し、SQLite にメタデータを保存します。 デフォルトの

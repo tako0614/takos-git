@@ -14,12 +14,11 @@
     "types": ["node"]
   },
   "imports": {
-    "takosumi-contract": "jsr:@takos/takosumi-contract@^1.0.0",
-    "takosumi-contract/internal/rpc": "jsr:@takos/takosumi-contract@^2.5.0/internal-rpc",
+    "takosumi-contract": "jsr:@takos/takosumi-contract@^2.6.0",
+    "takosumi-contract/internal/rpc": "jsr:@takos/takosumi-contract@^2.6.0/internal-rpc",
     "takos-git-contract": "./packages/git-contract/src/index.ts",
     "takos-git-contract/": "./packages/git-contract/src/",
-    "hono": "npm:hono@^4.12.4",
-    "zod": "npm:zod@^3.25.32"
+    "hono": "npm:hono@^4.12.4"
   },
   "tasks": {
     "check": "deno check apps/git/src/index.ts packages/git-contract/src/index.ts",

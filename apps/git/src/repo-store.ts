@@ -22,6 +22,26 @@ import {
 } from "./git.ts";
 import { canonicalRefName } from "./response-builders.ts";
 
+/**
+ * In-memory mutex to serialize writeRepositories calls and prevent
+ * concurrent reads/writes from corrupting the JSON metadata file.
+ */
+let writeLock = Promise.resolve();
+
+async function withWriteLock<T>(fn: () => Promise<T>): Promise<T> {
+  const prev = writeLock;
+  let resolve: () => void;
+  writeLock = new Promise<void>((r) => {
+    resolve = r;
+  });
+  await prev;
+  try {
+    return await fn();
+  } finally {
+    resolve!();
+  }
+}
+
 export interface StoredGitRepository {
   id: string;
   name: string;
@@ -52,18 +72,20 @@ export async function findRepository(
 export async function writeRepositories(
   updatedRepositories: StoredGitRepository[],
 ): Promise<void> {
-  const persisted = await readConfiguredRepositoryMetadata();
-  if (persisted) {
-    await writeConfiguredRepositoryMetadata(
-      updatedRepositories.map(storedRepositoryToMetadata),
-    );
-    return;
-  }
-  if (!devInMemoryMetadataEnabled()) return;
-  repositories.clear();
-  for (const repository of updatedRepositories) {
-    repositories.set(repository.id, repository);
-  }
+  await withWriteLock(async () => {
+    const persisted = await readConfiguredRepositoryMetadata();
+    if (persisted) {
+      await writeConfiguredRepositoryMetadata(
+        updatedRepositories.map(storedRepositoryToMetadata),
+      );
+      return;
+    }
+    if (!devInMemoryMetadataEnabled()) return;
+    repositories.clear();
+    for (const repository of updatedRepositories) {
+      repositories.set(repository.id, repository);
+    }
+  });
 }
 
 export function canReadRepository(

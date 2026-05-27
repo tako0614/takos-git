@@ -34,7 +34,7 @@ const SQLITE_MIGRATIONS: Array<{ version: number; sql: string }> = [{
     CREATE TABLE IF NOT EXISTS repositories (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
-      owner_account_id TEXT NOT NULL,
+      owner_account_id TEXT NOT NULL, -- historical; API uses ownerSpaceId
       default_branch TEXT NOT NULL,
       refs_json TEXT NOT NULL DEFAULT '[]',
       state TEXT NOT NULL DEFAULT 'active',
@@ -1096,7 +1096,7 @@ function databaseRepositoryRecord(row: unknown): GitRepositoryMetadataRecord {
   return {
     id: record.id,
     name: record.name,
-    ownerSpaceId: record.owner_account_id,
+    ownerSpaceId: record.owner_account_id, // historical column name
     defaultBranch: record.default_branch,
     refs: parseRefsJson(record.refs_json),
     state: record.state,
