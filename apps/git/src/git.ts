@@ -24,6 +24,25 @@ const INITIAL_COMMIT_ENV = {
   GIT_COMMITTER_EMAIL: "git@takos.local",
   GIT_COMMITTER_DATE: "2000-01-01T00:00:00Z",
 };
+
+// Bare-repo config entries we apply to every Takos-owned repository:
+//   - receive.denyNonFastForwards: refuse non-fast-forward pushes
+//   - receive.denyDeletes: refuse branch/tag deletion via push
+//   - transfer.fsckObjects: validate object integrity on receive/fetch
+//   - core.hooksPath: /dev/null routes hook lookups at a path that
+//     contains no executables, so a poisoned object or template cannot
+//     install a callable hook in this bare repo.
+const HARDENED_BARE_REPO_CONFIG: ReadonlyArray<readonly [string, string]> = [
+  ["receive.denyNonFastForwards", "true"],
+  ["receive.denyDeletes", "true"],
+  ["transfer.fsckObjects", "true"],
+  ["core.hooksPath", "/dev/null"],
+];
+
+// Marker file dropped into a bare repo after the hardened config has
+// been applied. Presence of this file lets the startup backfill skip
+// re-running `git config` on every repo on every startup.
+const HARDENING_MARKER_FILENAME = ".takos-hardening-applied";
 let cachedDatabase:
   | { path: string; database: DatabaseSync; migratedJsonPath?: string }
   | undefined;
@@ -310,6 +329,32 @@ export async function createConfiguredBareRepository(
       },
     };
   }
+  // Harden the new bare repository before any push can land. See
+  // HARDENED_BARE_REPO_CONFIG for what each entry does.
+  for (const [key, value] of HARDENED_BARE_REPO_CONFIG) {
+    const configResult = await runGit([
+      "--git-dir",
+      repositoryPath,
+      "config",
+      key,
+      value,
+    ]);
+    if (!configResult.success) {
+      await removeDirectoryIfExists(repositoryPath);
+      return {
+        ok: false,
+        status: 500,
+        body: {
+          error: "failed to harden bare repository config",
+          code: "git_repository_init_failed",
+          repositoryId,
+        },
+      };
+    }
+  }
+  // Mark this repo as already-hardened so the startup backfill can skip
+  // it on subsequent runs.
+  await writeHardeningMarker(repositoryPath).catch(() => {});
   if (options.mode !== "bare") {
     const initialized = await initializeDefaultBranch(
       repositoryPath,
@@ -850,12 +895,14 @@ export async function runGit(
   stdin?: Uint8Array,
   env?: Record<string, string>,
 ): Promise<Deno.CommandOutput> {
+  const scrubbedEnv = buildScrubbedGitEnv(env);
   if (!stdin) {
     return await new Deno.Command("git", {
       args,
       stdout: "piped",
       stderr: "piped",
-      env,
+      clearEnv: true,
+      env: scrubbedEnv,
     }).output();
   }
 
@@ -864,12 +911,238 @@ export async function runGit(
     stdin: "piped",
     stdout: "piped",
     stderr: "piped",
-    env,
+    clearEnv: true,
+    env: scrubbedEnv,
   }).spawn();
   const writer = child.stdin.getWriter();
   await writer.write(stdin);
   await writer.close();
   return await child.output();
+}
+
+/**
+ * Apply HARDENED_BARE_REPO_CONFIG to an existing bare repository.
+ *
+ * Used by the startup backfill migration so that bare repositories
+ * that were created before the hardening config existed pick up the
+ * same `receive.deny*` / `transfer.fsckObjects` / `core.hooksPath`
+ * settings as freshly-created repositories. Idempotent: writing a
+ * config key that already has the desired value is a no-op for git.
+ *
+ * Returns true if the config was applied (or already had been). A
+ * false return means at least one `git config` invocation failed and
+ * the caller should log the path for follow-up.
+ */
+export async function applyHardenedConfigToExistingRepo(
+  repoPath: string,
+): Promise<boolean> {
+  if (await hardeningMarkerExists(repoPath)) return true;
+  for (const [key, value] of HARDENED_BARE_REPO_CONFIG) {
+    const result = await runGit([
+      "--git-dir",
+      repoPath,
+      "config",
+      key,
+      value,
+    ]);
+    if (!result.success) return false;
+  }
+  await writeHardeningMarker(repoPath).catch(() => {});
+  return true;
+}
+
+async function writeHardeningMarker(repoPath: string): Promise<void> {
+  await Deno.writeTextFile(
+    `${repoPath}/${HARDENING_MARKER_FILENAME}`,
+    `${new Date().toISOString()}\n`,
+  );
+}
+
+async function hardeningMarkerExists(repoPath: string): Promise<boolean> {
+  try {
+    await Deno.stat(`${repoPath}/${HARDENING_MARKER_FILENAME}`);
+    return true;
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) return false;
+    throw error;
+  }
+}
+
+/**
+ * Startup migration: walk every bare repository under
+ * `TAKOS_GIT_REPOSITORY_ROOT` and ensure it has the hardened receive /
+ * transfer / hooks config. This is intended to run once at server boot
+ * (via `runRepositoryHardeningBackfillOnce`) so that any repositories
+ * that pre-date `HARDENED_BARE_REPO_CONFIG` get retro-fixed. Each repo
+ * gets a `.takos-hardening-applied` marker file so the walk skips
+ * already-fixed repos on subsequent restarts.
+ *
+ * Subdirectories named ending in `.git` are treated as bare repos.
+ * Errors are returned per-repo so the caller can log them without
+ * aborting boot.
+ */
+export async function runRepositoryHardeningBackfill(
+  options: { root?: string } = {},
+): Promise<{
+  scanned: number;
+  applied: number;
+  skipped: number;
+  failed: Array<{ path: string }>;
+}> {
+  const root = options.root ?? configuredRepositoryRoot();
+  const summary = {
+    scanned: 0,
+    applied: 0,
+    skipped: 0,
+    failed: [] as Array<{ path: string }>,
+  };
+  if (!root) return summary;
+  try {
+    await Deno.stat(root);
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) return summary;
+    throw error;
+  }
+  for await (const candidate of walkBareRepositories(root)) {
+    summary.scanned += 1;
+    if (await hardeningMarkerExists(candidate)) {
+      summary.skipped += 1;
+      continue;
+    }
+    const ok = await applyHardenedConfigToExistingRepo(candidate);
+    if (ok) summary.applied += 1;
+    else summary.failed.push({ path: candidate });
+  }
+  return summary;
+}
+
+let hardeningBackfillPromise: Promise<unknown> | undefined;
+
+/**
+ * Run the hardening backfill exactly once per process. Subsequent
+ * callers receive the same promise so we do not race when multiple
+ * request handlers fire in parallel during cold start.
+ */
+export function runRepositoryHardeningBackfillOnce(): Promise<unknown> {
+  if (hardeningBackfillPromise) return hardeningBackfillPromise;
+  hardeningBackfillPromise = runRepositoryHardeningBackfill().catch((error) => {
+    console.error(
+      "takos-git: repository hardening backfill failed",
+      error instanceof Error ? error.message : error,
+    );
+  });
+  return hardeningBackfillPromise;
+}
+
+async function* walkBareRepositories(root: string): AsyncIterable<string> {
+  // We only descend through `<owner>/<name>.git` style layouts. Any
+  // directory whose name ends in `.git` is treated as a candidate bare
+  // repository. We do not follow symlinks to avoid escaping the root.
+  const queue: Array<{ path: string; depth: number }> = [{
+    path: root,
+    depth: 0,
+  }];
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    if (current.depth > 4) continue;
+    let entries: Deno.DirEntry[];
+    try {
+      entries = await collectDirEntries(current.path);
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (entry.isSymlink) continue;
+      const childPath = `${current.path}/${entry.name}`;
+      if (!entry.isDirectory) continue;
+      if (entry.name.endsWith(".git")) {
+        // Treat as a bare repo iff it has a `HEAD` file at the top
+        // level (cheap sanity check that we are looking at git data).
+        if (await fileExists(`${childPath}/HEAD`)) {
+          yield childPath;
+        }
+        continue;
+      }
+      queue.push({ path: childPath, depth: current.depth + 1 });
+    }
+  }
+}
+
+async function collectDirEntries(path: string): Promise<Deno.DirEntry[]> {
+  const entries: Deno.DirEntry[] = [];
+  for await (const entry of Deno.readDir(path)) entries.push(entry);
+  return entries;
+}
+
+async function fileExists(path: string): Promise<boolean> {
+  try {
+    const stat = await Deno.stat(path);
+    return stat.isFile;
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) return false;
+    throw error;
+  }
+}
+
+/**
+ * Build a minimal environment for `git` subprocess invocations.
+ *
+ * The parent Deno process inherits whatever `GIT_*`, `SSH_*`, `LD_*`,
+ * `XDG_*`, and other env vars are present in its launch environment.
+ * Many of those are dangerous for `git`:
+ *   - `GIT_DIR`, `GIT_WORK_TREE`, `GIT_CONFIG_*` redirect git at our
+ *     intended bare repo and let an attacker swap in a hostile config.
+ *   - `GIT_SSH_COMMAND`, `SSH_AUTH_SOCK`, `SSH_*` change how SSH-shorthand
+ *     URLs authenticate and which keys they use.
+ *   - `LD_PRELOAD`, `LD_LIBRARY_PATH` can swap shared libraries under git.
+ *   - `HTTP_PROXY` / `HTTPS_PROXY` can redirect outbound traffic.
+ *
+ * We pass a closed-shape env containing only PATH (constrained to known
+ * system dirs), HOME (a dedicated temp dir so git cannot pick up an
+ * operator's ~/.gitconfig), LANG=C / LC_ALL=C for deterministic output,
+ * and whatever explicit overrides the caller asked for. The caller's
+ * env wins, so per-invocation overrides (e.g. INITIAL_COMMIT_ENV) still
+ * work.
+ */
+function buildScrubbedGitEnv(
+  caller: Record<string, string> | undefined,
+): Record<string, string> {
+  // Restrict PATH to system locations that are expected to hold `git`.
+  // If the operator's git lives elsewhere we let TAKOS_GIT_PATH override.
+  const overridePath = Deno.env.get("TAKOS_GIT_PATH")?.trim();
+  const path = overridePath && overridePath.length > 0
+    ? overridePath
+    : "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+  const home = takosGitTempHome();
+  const base: Record<string, string> = {
+    PATH: path,
+    HOME: home,
+    LANG: "C",
+    LC_ALL: "C",
+    // Prevent git from prompting interactively if a fetch hits an
+    // auth-required remote; we want it to fail fast.
+    GIT_TERMINAL_PROMPT: "0",
+  };
+  if (!caller) return base;
+  // Caller-supplied env overrides (e.g. GIT_AUTHOR_* for the initial
+  // commit) are applied on top of the scrubbed base. Caller cannot
+  // re-introduce SSH / LD vars unless they explicitly choose to.
+  return { ...base, ...caller };
+}
+
+let cachedTakosGitTempHome: string | undefined;
+
+function takosGitTempHome(): string {
+  if (cachedTakosGitTempHome !== undefined) return cachedTakosGitTempHome;
+  try {
+    cachedTakosGitTempHome = Deno.makeTempDirSync({
+      prefix: "takos-git-home-",
+    });
+  } catch {
+    // Fallback for permission-restricted runtimes: use /tmp directly.
+    cachedTakosGitTempHome = "/tmp";
+  }
+  return cachedTakosGitTempHome;
 }
 
 export function bytesToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
@@ -1429,5 +1702,8 @@ function isSafePathSegment(segment: string): boolean {
     segment !== "." &&
     segment !== ".." &&
     !segment.includes("\\") &&
-    /^[A-Za-z0-9._-]+$/.test(segment);
+    // Reject leading-dot segments: prevents `.git`, `..` traversal,
+    // hidden-directory tricks, and `.something/` paths in repository
+    // ids or smart HTTP routes.
+    /^[A-Za-z0-9_-][A-Za-z0-9._-]*$/.test(segment);
 }

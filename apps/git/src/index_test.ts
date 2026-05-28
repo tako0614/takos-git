@@ -7,6 +7,8 @@ import {
   type TakosActorContext,
 } from "takos-git-contract";
 import { signTakosumiInternalRequest as signTakosInternalRequest } from "takosumi-contract/internal/rpc";
+import { applyHardenedConfigToExistingRepo } from "./git.ts";
+import { isSafeAuthHeader } from "./validation.ts";
 
 const actor: TakosActorContext = {
   actorAccountId: "acct_1",
@@ -291,7 +293,13 @@ Deno.test("repository metadata creation can initialize an empty bare repository"
 Deno.test("external import creates a Git-owned bare repository from a remote", async () => {
   const root = await Deno.makeTempDir();
   const originalRoot = Deno.env.get("TAKOS_GIT_REPOSITORY_ROOT");
+  const originalAllowLocal = Deno.env.get(
+    "TAKOS_GIT_DEV_ALLOW_LOCAL_REMOTE_URL",
+  );
   Deno.env.set("TAKOS_GIT_REPOSITORY_ROOT", root);
+  // The fixture uses an on-disk bare repository as the remote, which is
+  // rejected by the protocol allowlist by default. Opt in for the test.
+  Deno.env.set("TAKOS_GIT_DEV_ALLOW_LOCAL_REMOTE_URL", "true");
   try {
     const remote = await createRemoteFixture(root);
     const repositoryId = `imported-${crypto.randomUUID()}`;
@@ -329,6 +337,85 @@ Deno.test("external import creates a Git-owned bare repository from a remote", a
     );
   } finally {
     restoreEnv("TAKOS_GIT_REPOSITORY_ROOT", originalRoot);
+    restoreEnv(
+      "TAKOS_GIT_DEV_ALLOW_LOCAL_REMOTE_URL",
+      originalAllowLocal,
+    );
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("external import rejects unsupported remote protocols", async () => {
+  const root = await Deno.makeTempDir();
+  const originalRoot = Deno.env.get("TAKOS_GIT_REPOSITORY_ROOT");
+  Deno.env.set("TAKOS_GIT_REPOSITORY_ROOT", root);
+  try {
+    const cases = [
+      "file:///tmp/evil.git",
+      "ext::sh -c id",
+      "git://example.com/path",
+      "ssh://example.com/path",
+      "http://example.com/repo.git",
+    ];
+    for (const remoteUrl of cases) {
+      const response = await signedRequest({
+        method: "POST",
+        path: TAKOS_GIT_INTERNAL_PATHS.importExternalRepository,
+        capabilities: [TAKOS_GIT_CAPABILITIES.repoImport],
+        body: JSON.stringify({
+          id: `rejected-${crypto.randomUUID()}`,
+          name: "Rejected Repository",
+          ownerSpaceId: "space_1",
+          remoteUrl,
+        }),
+      });
+      const body = await response.json();
+      assert.equal(
+        response.status,
+        400,
+        `${remoteUrl}: ${JSON.stringify(body)}`,
+      );
+      assert.match(body.code, /^unsupported_remote_protocol/);
+    }
+  } finally {
+    restoreEnv("TAKOS_GIT_REPOSITORY_ROOT", originalRoot);
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("external import rejects remoteUrl hosts that resolve to private IPs", async () => {
+  const root = await Deno.makeTempDir();
+  const originalRoot = Deno.env.get("TAKOS_GIT_REPOSITORY_ROOT");
+  Deno.env.set("TAKOS_GIT_REPOSITORY_ROOT", root);
+  try {
+    const cases = [
+      "https://10.0.0.1/repo.git",
+      "https://192.168.1.1/repo.git",
+      "https://169.254.169.254/latest/meta-data/",
+      "https://[::1]/repo.git",
+    ];
+    for (const remoteUrl of cases) {
+      const response = await signedRequest({
+        method: "POST",
+        path: TAKOS_GIT_INTERNAL_PATHS.importExternalRepository,
+        capabilities: [TAKOS_GIT_CAPABILITIES.repoImport],
+        body: JSON.stringify({
+          id: `rejected-${crypto.randomUUID()}`,
+          name: "Rejected Repository",
+          ownerSpaceId: "space_1",
+          remoteUrl,
+        }),
+      });
+      const body = await response.json();
+      assert.equal(
+        response.status,
+        400,
+        `${remoteUrl}: ${JSON.stringify(body)}`,
+      );
+      assert.equal(body.code, "unsupported_remote_protocol_host");
+    }
+  } finally {
+    restoreEnv("TAKOS_GIT_REPOSITORY_ROOT", originalRoot);
     await Deno.remove(root, { recursive: true });
   }
 });
@@ -336,7 +423,11 @@ Deno.test("external import creates a Git-owned bare repository from a remote", a
 Deno.test("external fetch updates Git-owned refs from a remote", async () => {
   const root = await Deno.makeTempDir();
   const originalRoot = Deno.env.get("TAKOS_GIT_REPOSITORY_ROOT");
+  const originalAllowLocal = Deno.env.get(
+    "TAKOS_GIT_DEV_ALLOW_LOCAL_REMOTE_URL",
+  );
   Deno.env.set("TAKOS_GIT_REPOSITORY_ROOT", root);
+  Deno.env.set("TAKOS_GIT_DEV_ALLOW_LOCAL_REMOTE_URL", "true");
   try {
     const remote = await createRemoteFixture(root);
     const repositoryId = `fetch-${crypto.randomUUID()}`;
@@ -383,6 +474,10 @@ Deno.test("external fetch updates Git-owned refs from a remote", async () => {
     );
   } finally {
     restoreEnv("TAKOS_GIT_REPOSITORY_ROOT", originalRoot);
+    restoreEnv(
+      "TAKOS_GIT_DEV_ALLOW_LOCAL_REMOTE_URL",
+      originalAllowLocal,
+    );
     await Deno.remove(root, { recursive: true });
   }
 });
@@ -1309,6 +1404,67 @@ Deno.test("source resolver rejects wrong internal audience", async () => {
   assert.equal(response.status, 401);
   assert.deepEqual(body, { error: "invalid internal signature" });
 });
+
+Deno.test("isSafeAuthHeader rejects Unicode line separators", () => {
+  // U+0085 NEL, U+2028 LINE SEPARATOR, U+2029 PARAGRAPH SEPARATOR are
+  // header-smuggling vectors that bypass ASCII-only control filters.
+  assert.equal(isSafeAuthHeader("tokenextra"), false);
+  assert.equal(isSafeAuthHeader("token extra"), false);
+  assert.equal(isSafeAuthHeader("token extra"), false);
+  // Clean ASCII tokens still pass.
+  assert.equal(isSafeAuthHeader("Bearer abc123"), true);
+});
+
+Deno.test(
+  "applyHardenedConfigToExistingRepo backfills receive/transfer/hooks config",
+  async () => {
+    const root = await Deno.makeTempDir();
+    try {
+      const repoPath = `${root}/legacy.git`;
+      await git(["init", "--bare", repoPath]);
+      // Confirm the legacy repo starts without our hardening keys.
+      const before = await gitOutput([
+        "--git-dir",
+        repoPath,
+        "config",
+        "--get",
+        "receive.denyNonFastForwards",
+      ]);
+      assert.equal(before.success, false);
+
+      const applied = await applyHardenedConfigToExistingRepo(repoPath);
+      assert.equal(applied, true);
+
+      for (
+        const [key, expected] of [
+          ["receive.denyNonFastForwards", "true"],
+          ["receive.denyDeletes", "true"],
+          ["transfer.fsckObjects", "true"],
+          ["core.hooksPath", "/dev/null"],
+        ] as const
+      ) {
+        const got = await gitOutput([
+          "--git-dir",
+          repoPath,
+          "config",
+          "--get",
+          key,
+        ]);
+        assert.equal(got.success, true, `missing config ${key}`);
+        assert.equal(got.stdout.trim(), expected);
+      }
+
+      // Marker file records that backfill ran so the boot walk can skip
+      // this repository on subsequent restarts.
+      const markerStat = await Deno.stat(
+        `${repoPath}/.takos-hardening-applied`,
+      );
+      assert.equal(markerStat.isFile, true);
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  },
+);
 
 async function signedResolveRequest(input: {
   readonly repositoryId: string;

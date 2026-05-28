@@ -25,6 +25,29 @@ export function isSafeTreePath(path: string): boolean {
   );
 }
 
+// Reject CR / LF / NUL and other control characters in caller-supplied
+// `authHeader` values so they cannot inject extra HTTP headers or git
+// `-c http.extraHeader=...` lines via header smuggling. We also reject
+// the Unicode line-separator code points (NEL U+0085, LS U+2028, PS
+// U+2029) because some downstream HTTP / TLS stacks (notably libcurl
+// when fed via git http.extraHeader) treat them as line terminators
+// and would let a header value smuggle a new header line through
+// otherwise-ASCII control filtering.
+export function isSafeAuthHeader(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  if (value.length === 0) return false;
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index);
+    // Reject ASCII control characters (0x00-0x1F) and DEL (0x7F).
+    // This covers \r, \n, \0, \t, and other smuggling vectors.
+    if (code < 0x20 || code === 0x7f) return false;
+    // Reject Unicode line separators: NEL (U+0085), LS (U+2028), PS
+    // (U+2029). Treat them as header-smuggling vectors as well.
+    if (code === 0x85 || code === 0x2028 || code === 0x2029) return false;
+  }
+  return true;
+}
+
 export function nonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
@@ -150,13 +173,21 @@ export function validateExternalImportRequest(
   }
   if (
     request.authHeader !== undefined &&
-    request.authHeader !== null &&
-    typeof request.authHeader !== "string"
+    request.authHeader !== null
   ) {
-    return {
-      error: "authHeader must be a string or null",
-      code: "invalid_external_import_request",
-    };
+    if (typeof request.authHeader !== "string") {
+      return {
+        error: "authHeader must be a string or null",
+        code: "invalid_external_import_request",
+      };
+    }
+    if (!isSafeAuthHeader(request.authHeader)) {
+      return {
+        error:
+          "authHeader must not contain CR, LF, NUL, or other control characters",
+        code: "invalid_external_import_request",
+      };
+    }
   }
 }
 
@@ -177,13 +208,21 @@ export function validateExternalFetchRequest(
   }
   if (
     request.authHeader !== undefined &&
-    request.authHeader !== null &&
-    typeof request.authHeader !== "string"
+    request.authHeader !== null
   ) {
-    return {
-      error: "authHeader must be a string or null",
-      code: "invalid_external_fetch_request",
-    };
+    if (typeof request.authHeader !== "string") {
+      return {
+        error: "authHeader must be a string or null",
+        code: "invalid_external_fetch_request",
+      };
+    }
+    if (!isSafeAuthHeader(request.authHeader)) {
+      return {
+        error:
+          "authHeader must not contain CR, LF, NUL, or other control characters",
+        code: "invalid_external_fetch_request",
+      };
+    }
   }
 }
 

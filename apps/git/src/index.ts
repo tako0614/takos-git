@@ -27,6 +27,7 @@ import {
   readConfiguredGitRawObject,
   readConfiguredGitRefs,
   repositoryNotFound,
+  runRepositoryHardeningBackfillOnce,
   writeConfiguredGitRefs,
 } from "./git.ts";
 import {
@@ -728,6 +729,12 @@ function validateExternalImportRequest(
 
 if (import.meta.main) {
   const port = Number(Deno.env.get("PORT") ?? "8790");
+  // Backfill hardened bare-repo config (receive.denyNonFastForwards,
+  // receive.denyDeletes, transfer.fsckObjects, core.hooksPath=/dev/null)
+  // across every pre-existing repo under TAKOS_GIT_REPOSITORY_ROOT.
+  // Runs once per process and writes a `.takos-hardening-applied`
+  // marker file in each repo so the walk is cheap on restart.
+  runRepositoryHardeningBackfillOnce();
   Deno.serve({ port }, app.fetch);
 }
 
