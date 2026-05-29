@@ -24,7 +24,7 @@
     "check": "deno check apps/git/src/index.ts packages/git-contract/src/index.ts",
     "lint": "deno lint",
     "fmt": "deno fmt",
-    "test": "deno test --allow-all apps/git/src/index_test.ts packages/git-contract/src/internal-api_test.ts",
+    "test": "deno test --allow-all apps/git/src/index_test.ts apps/git/src/host-blocklist_test.ts packages/git-contract/src/internal-api_test.ts",
     "dev": "deno run --allow-net --allow-env --allow-read --allow-write --allow-run apps/git/src/index.ts",
     "seed:dev": "bash scripts/seed-dev-git.sh",
     "smoke:live": "deno run --allow-net --allow-env scripts/live-smoke.ts"

@@ -5,6 +5,7 @@ import {
   notImplemented,
   runGit,
 } from "./git.ts";
+import { classifyHost } from "./host-blocklist.ts";
 import { textDecoder } from "./response-builders.ts";
 
 // Opt-in escape hatch for tests that need to import / fetch from an
@@ -34,15 +35,18 @@ export type RemoteUrlValidationError = {
  *   - http:// to any host other than localhost / 127.0.0.1
  *   - any other scheme or naked filesystem path
  *
- * In addition, IP literals that resolve to loopback (for non-localhost
- * forms), RFC1918, link-local, multicast, or cloud metadata ranges are
- * rejected as `unsupported_remote_protocol_host`. DNS hostnames are not
- * resolved here — operators must constrain takos-git egress.
+ * In addition, the host is rejected as `unsupported_remote_protocol_host`
+ * when it is — or, for a DNS hostname, resolves to — a loopback, RFC1918,
+ * link-local, multicast, CGNAT, or cloud-metadata address. DNS hostnames are
+ * resolved (A + AAAA) and every resolved address is range-checked; a host
+ * that does not resolve is rejected (fail closed). See `host-blocklist.ts`
+ * for the classification rules and the DNS-rebinding caveat. This is async
+ * because of the DNS lookup.
  */
-export function validateRemoteUrl(
+export async function validateRemoteUrl(
   remoteUrl: string,
   repositoryId?: string,
-): { ok: true } | RemoteUrlValidationError {
+): Promise<{ ok: true } | RemoteUrlValidationError> {
   if (typeof remoteUrl !== "string" || remoteUrl.length === 0) {
     return remoteUrlError(
       "remoteUrl must be a non-empty string",
@@ -75,9 +79,10 @@ export function validateRemoteUrl(
         repositoryId,
       );
     }
-    if (!isHostAllowed(host)) {
+    const hostCheck = await classifyHost(host);
+    if (!hostCheck.ok) {
       return remoteUrlError(
-        `remoteUrl host is not allowed: ${host}`,
+        `remoteUrl host is not allowed: ${hostCheck.reason}`,
         "unsupported_remote_protocol_host",
         repositoryId,
       );
@@ -115,9 +120,10 @@ export function validateRemoteUrl(
         repositoryId,
       );
     }
-    if (!isHostAllowed(host)) {
+    const hostCheck = await classifyHost(host);
+    if (!hostCheck.ok) {
       return remoteUrlError(
-        `remoteUrl host is not allowed: ${host}`,
+        `remoteUrl host is not allowed: ${hostCheck.reason}`,
         "unsupported_remote_protocol_host",
         repositoryId,
       );
@@ -179,100 +185,6 @@ function extractSshShorthandHost(url: string): string | undefined {
   return url.slice(at + 1, colon).toLowerCase();
 }
 
-function isHostAllowed(host: string): boolean {
-  const literal = stripIpv6Brackets(host);
-  if (isIpv4Literal(literal)) return !isBlockedIpv4(literal);
-  if (isIpv6Literal(literal)) return !isBlockedIpv6(literal);
-  // DNS hostnames are not resolved here. Operators control egress.
-  return true;
-}
-
-function stripIpv6Brackets(host: string): string {
-  if (host.startsWith("[") && host.endsWith("]")) {
-    return host.slice(1, -1);
-  }
-  return host;
-}
-
-function isIpv4Literal(value: string): boolean {
-  return /^(\d{1,3}\.){3}\d{1,3}$/.test(value);
-}
-
-function isIpv6Literal(value: string): boolean {
-  return value.includes(":");
-}
-
-function isBlockedIpv4(value: string): boolean {
-  const parts = value.split(".").map((segment) => Number.parseInt(segment, 10));
-  if (
-    parts.length !== 4 || parts.some((p) => Number.isNaN(p) || p < 0 || p > 255)
-  ) {
-    return true;
-  }
-  const [a, b, , d] = parts;
-  if (a === 127) return true; // loopback 127.0.0.0/8
-  if (a === 10) return true; // RFC1918 10/8
-  if (a === 172 && b >= 16 && b <= 31) return true; // RFC1918 172.16/12
-  if (a === 192 && b === 168) return true; // RFC1918 192.168/16
-  if (a === 169 && b === 254) return true; // link-local + cloud metadata
-  if (a === 0) return true; // 0.0.0.0/8
-  if (a >= 224) return true; // multicast / reserved
-  if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT 100.64/10
-  if (a === 255 && b === 255 && parts[2] === 255 && d === 255) return true;
-  return false;
-}
-
-function isBlockedIpv6(value: string): boolean {
-  const lower = value.toLowerCase();
-  if (lower === "::1") return true;
-  if (lower === "::") return true;
-  if (/^f[cd][0-9a-f]{2}:/.test(lower)) return true;
-  if (/^fe[89ab][0-9a-f]?:/.test(lower)) return true;
-  if (lower.startsWith("ff")) return true;
-  const mappedDotted = lower.match(
-    /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/,
-  );
-  if (mappedDotted && isBlockedIpv4(mappedDotted[1])) return true;
-  const mappedHex = lower.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
-  if (mappedHex) {
-    const reconstructed = reconstructIpv4FromHexPair(
-      mappedHex[1],
-      mappedHex[2],
-    );
-    if (reconstructed && isBlockedIpv4(reconstructed)) return true;
-  }
-  const compatDotted = lower.match(
-    /^::(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/,
-  );
-  if (compatDotted && isBlockedIpv4(compatDotted[1])) return true;
-  const compatHex = lower.match(/^::([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
-  if (compatHex) {
-    const reconstructed = reconstructIpv4FromHexPair(
-      compatHex[1],
-      compatHex[2],
-    );
-    if (reconstructed && isBlockedIpv4(reconstructed)) return true;
-  }
-  return false;
-}
-
-function reconstructIpv4FromHexPair(
-  highHex: string,
-  lowHex: string,
-): string | undefined {
-  const high = Number.parseInt(highHex, 16);
-  const low = Number.parseInt(lowHex, 16);
-  if (
-    !Number.isFinite(high) || !Number.isFinite(low) ||
-    high < 0 || high > 0xffff || low < 0 || low > 0xffff
-  ) {
-    return undefined;
-  }
-  return `${(high >> 8) & 0xff}.${high & 0xff}.${(low >> 8) & 0xff}.${
-    low & 0xff
-  }`;
-}
-
 export async function importExternalRemoteIntoConfiguredRepository(input: {
   repositoryId: string;
   remoteUrl: string;
@@ -321,7 +233,10 @@ export async function importExternalRemoteIntoConfiguredRepository(input: {
     };
   }
 
-  const remoteUrlCheck = validateRemoteUrl(input.remoteUrl, input.repositoryId);
+  const remoteUrlCheck = await validateRemoteUrl(
+    input.remoteUrl,
+    input.repositoryId,
+  );
   if (!remoteUrlCheck.ok) return remoteUrlCheck;
 
   const commitCountBefore = await countConfiguredRepositoryCommits(

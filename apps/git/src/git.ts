@@ -124,6 +124,17 @@ export type GitJsonError = {
   status: 400 | 404 | 409 | 422 | 501;
 };
 
+export type GitObjectTooLargeError = {
+  body: {
+    error: string;
+    code: "git_object_too_large";
+    objectId: string;
+    size: number;
+    maxBytes: number;
+  };
+  status: 413;
+};
+
 export interface GitRepositoryMetadataRecord {
   id: string;
   name: string;
@@ -418,6 +429,139 @@ export async function writeConfiguredRepositoryMetadata(
   );
 }
 
+/**
+ * Create or update a single repository's metadata without read-modify-write of
+ * the whole repository set. On the SQLite path this is a targeted row upsert in
+ * its own transaction, so two concurrent requests creating different
+ * repositories cannot tombstone each other (the bug whole-set replacement had).
+ * On the JSON-file fallback path it still rewrites the file, but under a
+ * single-host advisory file lock so concurrent writers serialize instead of
+ * clobbering each other; that fallback remains single-host only (a shared
+ * filesystem across replicas is NOT supported — use sqlite:// there).
+ */
+export async function upsertConfiguredRepositoryMetadata(
+  repository: GitRepositoryMetadataRecord,
+): Promise<void> {
+  const database = await configuredDatabase();
+  if (database) {
+    upsertDatabaseRepositoryRecord(database, repository);
+    return;
+  }
+  const metadataPath = configuredMetadataPath();
+  if (!metadataPath) return;
+  await withJsonMetadataLock(metadataPath, async () => {
+    const existing = await readJsonRepositoryMetadata(metadataPath);
+    const next = existing.filter((entry) => entry.id !== repository.id);
+    next.push(repository);
+    await writeJsonRepositoryMetadata(metadataPath, next);
+  });
+}
+
+/**
+ * Soft-delete a single repository's metadata. Targets one row (SQLite) or
+ * rewrites the JSON file under the single-host lock (JSON fallback). Returns
+ * true when an active record existed and was tombstoned/removed.
+ */
+export async function deleteConfiguredRepositoryMetadata(
+  repositoryId: string,
+): Promise<boolean> {
+  const database = await configuredDatabase();
+  if (database) {
+    return deleteDatabaseRepositoryRecord(database, repositoryId);
+  }
+  const metadataPath = configuredMetadataPath();
+  if (!metadataPath) return false;
+  return await withJsonMetadataLock(metadataPath, async () => {
+    const existing = await readJsonRepositoryMetadata(metadataPath);
+    const next = existing.filter((entry) => entry.id !== repositoryId);
+    if (next.length === existing.length) return false;
+    await writeJsonRepositoryMetadata(metadataPath, next);
+    return true;
+  });
+}
+
+async function readJsonRepositoryMetadata(
+  metadataPath: string,
+): Promise<GitRepositoryMetadataRecord[]> {
+  try {
+    const parsed = JSON.parse(await Deno.readTextFile(metadataPath));
+    if (!Array.isArray(parsed.repositories)) return [];
+    return parsed.repositories.filter(isRepositoryMetadataRecord);
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) return [];
+    throw error;
+  }
+}
+
+async function writeJsonRepositoryMetadata(
+  metadataPath: string,
+  repositories: GitRepositoryMetadataRecord[],
+): Promise<void> {
+  await Deno.mkdir(parentDirectory(metadataPath), { recursive: true });
+  await Deno.writeFile(
+    metadataPath,
+    textEncoder.encode(`${JSON.stringify({ repositories }, null, 2)}\n`),
+  );
+}
+
+/**
+ * Single-host advisory file lock for the JSON-metadata fallback. Serializes the
+ * read-modify-write of the whole repositories.json on one host by atomically
+ * creating a `<path>.lock` file (createNew), retrying briefly on contention,
+ * and reclaiming a stale lock left by a crashed writer. This is a single-host
+ * guard only; it does NOT coordinate across machines that share the file over a
+ * network filesystem. Multi-replica deployments must use the SQLite path.
+ */
+const JSON_METADATA_LOCK_TIMEOUT_MS = 5_000;
+const JSON_METADATA_LOCK_STALE_MS = 30_000;
+
+async function withJsonMetadataLock<T>(
+  metadataPath: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  await Deno.mkdir(parentDirectory(metadataPath), { recursive: true });
+  const lockPath = `${metadataPath}.lock`;
+  const deadline = Date.now() + JSON_METADATA_LOCK_TIMEOUT_MS;
+  for (;;) {
+    try {
+      const handle = await Deno.open(lockPath, {
+        createNew: true,
+        write: true,
+      });
+      handle.close();
+      break;
+    } catch (error) {
+      if (!(error instanceof Deno.errors.AlreadyExists)) throw error;
+      if (await reclaimStaleLock(lockPath)) continue;
+      if (Date.now() >= deadline) {
+        throw new Error(
+          `timed out acquiring git metadata lock: ${lockPath}`,
+        );
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }
+  try {
+    return await fn();
+  } finally {
+    await Deno.remove(lockPath).catch(() => {});
+  }
+}
+
+async function reclaimStaleLock(lockPath: string): Promise<boolean> {
+  try {
+    const stat = await Deno.stat(lockPath);
+    const mtime = stat.mtime?.getTime() ?? 0;
+    if (Date.now() - mtime <= JSON_METADATA_LOCK_STALE_MS) return false;
+    // Older than the stale threshold: a previous writer likely crashed without
+    // releasing. Remove it so we (or another waiter) can re-acquire.
+    await Deno.remove(lockPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function readConfiguredRepositoryRecord(
   repositoryId: string,
 ): Promise<GitRepositoryMetadataRecord | undefined> {
@@ -514,6 +658,7 @@ export async function verifyConfiguredGitCommit(
 export async function readConfiguredGitPrettyObject(
   repositoryId: string,
   objectId: string,
+  maxBytes?: number,
 ): Promise<
   | {
     ok: true;
@@ -522,6 +667,7 @@ export async function readConfiguredGitPrettyObject(
     size: number;
     prettyContent: Uint8Array;
   }
+  | ({ ok: false } & GitObjectTooLargeError)
   | ({ ok: false } & GitJsonError)
 > {
   const repository = await readConfiguredGitRepository(repositoryId);
@@ -544,13 +690,20 @@ export async function readConfiguredGitPrettyObject(
   if (!type.success) return gitObjectNotFound(repositoryId, objectId);
   const size = await runGit([...baseArgs, "cat-file", "-s", objectId]);
   if (!size.success) return gitObjectNotFound(repositoryId, objectId);
+  const objectSize = Number(textDecoder.decode(size.stdout).trim());
+  // Short-circuit BEFORE materializing the object: when a byte cap is
+  // supplied and the object header size already exceeds it, return 413
+  // without buffering the whole object into memory via cat-file -p.
+  if (maxBytes !== undefined && objectSize > maxBytes) {
+    return gitObjectTooLargeError(objectId, objectSize, maxBytes);
+  }
   const prettyContent = await runGit([...baseArgs, "cat-file", "-p", objectId]);
   if (!prettyContent.success) return gitObjectNotFound(repositoryId, objectId);
   return {
     ok: true,
     objectId,
     type: textDecoder.decode(type.stdout).trim(),
-    size: Number(textDecoder.decode(size.stdout).trim()),
+    size: objectSize,
     prettyContent: prettyContent.stdout,
   };
 }
@@ -558,6 +711,7 @@ export async function readConfiguredGitPrettyObject(
 export async function readConfiguredGitRawObject(
   repositoryId: string,
   objectId: string,
+  maxBytes?: number,
 ): Promise<
   | {
     ok: true;
@@ -566,6 +720,7 @@ export async function readConfiguredGitRawObject(
     size: number;
     content: Uint8Array;
   }
+  | ({ ok: false } & GitObjectTooLargeError)
   | ({ ok: false } & GitJsonError)
 > {
   const repository = await readConfiguredGitRepository(repositoryId);
@@ -589,6 +744,13 @@ export async function readConfiguredGitRawObject(
   const objectType = textDecoder.decode(type.stdout).trim();
   const size = await runGit([...baseArgs, "cat-file", "-s", objectId]);
   if (!size.success) return gitObjectNotFound(repositoryId, objectId);
+  const objectSize = Number(textDecoder.decode(size.stdout).trim());
+  // Short-circuit BEFORE materializing the object: when a byte cap is
+  // supplied and the object header size already exceeds it, return 413
+  // without buffering the whole object into memory via cat-file <type>.
+  if (maxBytes !== undefined && objectSize > maxBytes) {
+    return gitObjectTooLargeError(objectId, objectSize, maxBytes);
+  }
   const content = await runGit([
     ...baseArgs,
     "cat-file",
@@ -600,7 +762,7 @@ export async function readConfiguredGitRawObject(
     ok: true,
     objectId,
     type: objectType,
-    size: Number(textDecoder.decode(size.stdout).trim()),
+    size: objectSize,
     content: content.stdout,
   };
 }
@@ -1355,6 +1517,57 @@ function writeDatabaseRepositoryMetadata(
   }
 }
 
+/**
+ * Upsert a single repository row without touching any other row. Unlike
+ * {@link writeDatabaseRepositoryMetadata}, this never reconciles (tombstones)
+ * rows that are absent from a caller's snapshot, so two concurrent requests
+ * each creating a different repository cannot delete each other's row.
+ */
+function upsertDatabaseRepositoryRecord(
+  database: DatabaseSync,
+  repository: GitRepositoryMetadataRecord,
+): void {
+  database.prepare(`
+    INSERT INTO repositories (
+      id, name, owner_account_id, default_branch, refs_json, state, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      name = excluded.name,
+      owner_account_id = excluded.owner_account_id,
+      default_branch = excluded.default_branch,
+      refs_json = excluded.refs_json,
+      state = excluded.state,
+      updated_at = excluded.updated_at
+  `).run(
+    repository.id,
+    repository.name,
+    repository.ownerSpaceId,
+    repository.defaultBranch,
+    JSON.stringify(repository.refs),
+    repository.state ?? "active",
+    repository.createdAt,
+    repository.updatedAt,
+  );
+}
+
+/**
+ * Soft-delete a single repository row (state = 'deleted'). Returns true when an
+ * active row was found and tombstoned. Targets one row only.
+ */
+function deleteDatabaseRepositoryRecord(
+  database: DatabaseSync,
+  repositoryId: string,
+): boolean {
+  const row = database.prepare(
+    "SELECT 1 FROM repositories WHERE id = ? AND state = 'active'",
+  ).get(repositoryId);
+  if (!row) return false;
+  database.prepare(
+    "UPDATE repositories SET state = 'deleted', updated_at = ? WHERE id = ?",
+  ).run(new Date().toISOString(), repositoryId);
+  return true;
+}
+
 function databaseRepositoryRecord(row: unknown): GitRepositoryMetadataRecord {
   const record = row as {
     id: string;
@@ -1585,6 +1798,28 @@ function gitObjectNotFound(
       code: "git_object_not_found",
       repositoryId,
       objectId,
+    },
+  };
+}
+
+// Produces the same 413 envelope shape as response-builders.gitObjectTooLarge
+// (error/code/objectId/size/maxBytes). Defined locally here so git.ts does not
+// need to import from response-builders.ts (which already imports from git.ts),
+// avoiding an import cycle.
+function gitObjectTooLargeError(
+  objectId: string,
+  size: number,
+  maxBytes: number,
+): { ok: false } & GitObjectTooLargeError {
+  return {
+    ok: false,
+    status: 413,
+    body: {
+      error: "git object exceeds configured response size limit",
+      code: "git_object_too_large",
+      objectId,
+      size,
+      maxBytes,
     },
   };
 }

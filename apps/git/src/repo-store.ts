@@ -12,19 +12,27 @@ import {
 } from "./auth.ts";
 import {
   createConfiguredBareRepository,
+  deleteConfiguredRepositoryMetadata,
   devInMemoryMetadataEnabled,
   type GitRepositoryMetadataRecord,
   isLiteralObjectId,
   readConfiguredGitRefs,
   readConfiguredRepositoryMetadata,
   repositoryNotFound,
+  upsertConfiguredRepositoryMetadata,
   writeConfiguredRepositoryMetadata,
 } from "./git.ts";
 import { canonicalRefName } from "./response-builders.ts";
 
 /**
- * In-memory mutex to serialize writeRepositories calls and prevent
- * concurrent reads/writes from corrupting the JSON metadata file.
+ * Process-local mutex that serializes whole-set writeRepositories calls and the
+ * dev in-memory map mutations. NOTE: this only serializes within one isolate;
+ * it does NOT coordinate across processes/replicas. Cross-process safety for
+ * the persistent store comes from the storage layer: targeted single-row
+ * upsert/delete on the SQLite path, or a single-host advisory file lock on the
+ * JSON fallback (see git.ts). Prefer {@link upsertRepository} /
+ * {@link deleteRepository} over the whole-set {@link writeRepositories}, which
+ * is retained only for the dev in-memory path and full-snapshot rewrites.
  */
 let writeLock = Promise.resolve();
 
@@ -85,6 +93,43 @@ export async function writeRepositories(
     for (const repository of updatedRepositories) {
       repositories.set(repository.id, repository);
     }
+  });
+}
+
+/**
+ * Create or update a single repository. Persists via a targeted single-row
+ * upsert (no whole-set reconciliation), so a concurrent request creating a
+ * different repository cannot tombstone this one. Falls back to the dev
+ * in-memory map when no persistent store is configured.
+ */
+export async function upsertRepository(
+  repository: StoredGitRepository,
+): Promise<void> {
+  await withWriteLock(async () => {
+    const persisted = await readConfiguredRepositoryMetadata();
+    if (persisted) {
+      await upsertConfiguredRepositoryMetadata(
+        storedRepositoryToMetadata(repository),
+      );
+      return;
+    }
+    if (!devInMemoryMetadataEnabled()) return;
+    repositories.set(repository.id, repository);
+  });
+}
+
+/**
+ * Soft-delete a single repository's metadata. Targets one row only. Returns
+ * true when a record existed and was removed.
+ */
+export async function deleteRepository(repositoryId: string): Promise<boolean> {
+  return await withWriteLock(async () => {
+    const persisted = await readConfiguredRepositoryMetadata();
+    if (persisted) {
+      return await deleteConfiguredRepositoryMetadata(repositoryId);
+    }
+    if (!devInMemoryMetadataEnabled()) return false;
+    return repositories.delete(repositoryId);
   });
 }
 

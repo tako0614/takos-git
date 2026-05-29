@@ -34,6 +34,7 @@ import {
   canReadRepository,
   canWriteRepository,
   createRepositoryStorage,
+  deleteRepository,
   findRepository,
   listRepositoryRefs,
   normalizeRefs,
@@ -45,7 +46,7 @@ import {
   requireRepositoryWrite,
   resolveStoredRef,
   type StoredGitRepository,
-  writeRepositories,
+  upsertRepository,
 } from "./repo-store.ts";
 import {
   buildBlobResponse,
@@ -151,7 +152,7 @@ app.post(TAKOS_GIT_INTERNAL_PATHS.repositories, async (c) => {
       return c.json(refsResult.body, refsResult.status);
     }
   }
-  await writeRepositories([...storedRepositories, repository]);
+  await upsertRepository(repository);
   return c.json({ repository: repositoryDetail(repository) }, 201);
 });
 
@@ -202,7 +203,7 @@ app.post(TAKOS_GIT_INTERNAL_PATHS.importExternalRepository, async (c) => {
     createdAt: now,
     updatedAt: now,
   };
-  await writeRepositories([...storedRepositories, pendingRepository]);
+  await upsertRepository(pendingRepository);
 
   try {
     const imported = await importExternalRemoteIntoConfiguredRepository({
@@ -214,7 +215,9 @@ app.post(TAKOS_GIT_INTERNAL_PATHS.importExternalRepository, async (c) => {
     });
     if (!imported.ok) {
       await removeConfiguredRepositoryDirectory(request!.id!);
-      await writeRepositories(storedRepositories);
+      // Roll back only the row we just created; leave other repositories
+      // (possibly created concurrently) untouched.
+      await deleteRepository(request!.id!);
       return c.json(imported.body, imported.status);
     }
 
@@ -224,7 +227,7 @@ app.post(TAKOS_GIT_INTERNAL_PATHS.importExternalRepository, async (c) => {
       refs: normalizeRefs(imported.refs)!,
       updatedAt: new Date().toISOString(),
     };
-    await writeRepositories([...storedRepositories, repository]);
+    await upsertRepository(repository);
 
     const response: GitImportExternalRepositoryResponse = {
       repository: repositoryDetail(repository),
@@ -237,7 +240,8 @@ app.post(TAKOS_GIT_INTERNAL_PATHS.importExternalRepository, async (c) => {
     return c.json(response, 201);
   } catch (error) {
     await removeConfiguredRepositoryDirectory(request!.id!);
-    await writeRepositories(storedRepositories);
+    // Roll back only the row we just created.
+    await deleteRepository(request!.id!);
     return c.json({
       error: error instanceof Error ? error.message : "external import failed",
       code: "git_external_import_failed",
@@ -292,18 +296,13 @@ app.post("/internal/repositories/:repositoryId/fetch-external", async (c) => {
   });
   if (!imported.ok) return c.json(imported.body, imported.status);
 
-  const repositories = await readRepositories();
-  const repositoryIndex = repositories.findIndex((repository) =>
-    repository.id === access.repository.id
-  );
-  const repository = repositories[repositoryIndex];
-  if (!repository) {
-    return c.json(repositoryNotFound(access.repository.id), 404);
-  }
-  repository.defaultBranch = imported.defaultBranch;
-  repository.refs = normalizeRefs(imported.refs)!;
-  repository.updatedAt = new Date().toISOString();
-  await writeRepositories(repositories);
+  const repository: StoredGitRepository = {
+    ...access.repository,
+    defaultBranch: imported.defaultBranch,
+    refs: normalizeRefs(imported.refs)!,
+    updatedAt: new Date().toISOString(),
+  };
+  await upsertRepository(repository);
 
   const response: GitFetchExternalRepositoryResponse = {
     repositoryId: repository.id,
@@ -466,11 +465,7 @@ app.patch("/internal/repositories/:repositoryId", async (c) => {
   if (!auth.ok) return c.json({ error: auth.error }, 401);
 
   const repositoryId = c.req.param("repositoryId");
-  const storedRepositories = await readRepositories();
-  const repositoryIndex = storedRepositories.findIndex((repository) =>
-    repository.id === repositoryId
-  );
-  const repository = storedRepositories[repositoryIndex];
+  const repository = await findRepository(repositoryId);
   if (!repository) return c.json(repositoryNotFound(repositoryId), 404);
   if (!canWriteRepository(auth, repository)) {
     return c.json(repositoryAccessDenied(repositoryId), 403);
@@ -505,7 +500,7 @@ app.patch("/internal/repositories/:repositoryId", async (c) => {
     }
   }
   repository.updatedAt = new Date().toISOString();
-  await writeRepositories(storedRepositories);
+  await upsertRepository(repository);
   return c.json({ repository: repositoryDetail(repository) });
 });
 
@@ -547,20 +542,14 @@ app.delete("/internal/repositories/:repositoryId", async (c) => {
   if (!auth.ok) return c.json({ error: auth.error }, 401);
 
   const repositoryId = c.req.param("repositoryId");
-  const storedRepositories = await readRepositories();
-  const repository = storedRepositories.find((candidate) =>
-    candidate.id === repositoryId
-  );
+  const repository = await findRepository(repositoryId);
   if (repository && !canWriteRepository(auth, repository)) {
     return c.json(repositoryAccessDenied(repositoryId), 403);
   }
-  const remainingRepositories = storedRepositories.filter((repository) =>
-    repository.id !== repositoryId
-  );
-  if (remainingRepositories.length === storedRepositories.length) {
+  const removed = await deleteRepository(repositoryId);
+  if (!removed) {
     return c.json(repositoryNotFound(repositoryId), 404);
   }
-  await writeRepositories(remainingRepositories);
   await removeConfiguredRepositoryDirectory(repositoryId);
   return new Response(null, { status: 204 });
 });
@@ -617,8 +606,12 @@ app.post(TAKOS_GIT_INTERNAL_PATHS.resolveSource, async (c) => {
       ? resolveStoredRef(repository, request.sourceRef)
       : undefined);
   if (!resolved) {
+    // Fail-closed guard: either the repository storage is not configured
+    // (configuredRef returned 501 and there is no in-memory fallback record)
+    // or the sourceRef matched no ref in this repository. Both are genuine
+    // resolution failures, not unimplemented behaviour.
     return c.json({
-      error: "real ref resolution is not implemented/configured for takos-git",
+      error: "sourceRef could not be resolved to a commit in this repository",
       code: "git_ref_resolution_not_configured",
       repositoryId: request.repositoryId,
       sourceRef: request.sourceRef,

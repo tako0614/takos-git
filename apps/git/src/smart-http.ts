@@ -182,52 +182,160 @@ export async function handleSmartHttp(request: Request): Promise<Response> {
     }, { status: 413 });
   }
 
-  // TODO(takos-git): switch to true streaming response (TransformStream-
-  // based header peel). Current implementation buffers stdout but caps the
-  // total buffered size to MAX_BUFFERED_RESPONSE_BYTES so a single git
-  // http-backend invocation cannot exhaust process memory.
-  return await collectAndRespond(child);
+  // Receive-pack (push) responses are small status reports, so keep the
+  // buffered path: it lets us surface a clean structured 500/502 before any
+  // bytes are flushed and preserves the push-size cap semantics above.
+  if (receivePack) {
+    return await collectAndRespond(child);
+  }
+  // Upload-pack (clone/fetch) is the hot path whose pack stream can dwarf any
+  // sane buffer cap. Stream child.stdout straight through to the response body
+  // so large clones succeed without buffering the whole pack in memory. Only
+  // the tiny CGI header block is pre-buffered (bounded below) to peel headers.
+  return await streamUploadPackResponse(child);
 }
 
-const MAX_BUFFERED_RESPONSE_BYTES = 500 * 1024 * 1024;
+// Hard ceiling on how many bytes we pre-buffer while searching for the CGI
+// header terminator. A `git http-backend` header block is a few hundred bytes;
+// 64 KiB leaves generous slack while ensuring a backend that never emits the
+// boundary cannot buffer unbounded into memory.
+const MAX_CGI_HEADER_PREBUFFER_BYTES = 64 * 1024;
 
-async function collectAndRespond(child: Deno.ChildProcess): Promise<Response> {
-  let buffered: Uint8Array = new Uint8Array(0);
-  let stderrChunks: Uint8Array[] = [];
-  let truncated = false;
+async function streamUploadPackResponse(
+  child: Deno.ChildProcess,
+): Promise<Response> {
   const reader = child.stdout.getReader();
+
+  // Pre-buffer just enough of stdout to locate the CGI header terminator. The
+  // boundary may span chunk boundaries, so accumulate and re-scan after each
+  // read. Bound the pre-buffer so a backend that never terminates its headers
+  // cannot exhaust memory here.
+  const prefixChunks: Uint8Array[] = [];
+  let prefixBytes = 0;
+  let header: ParsedCgiHeader | undefined;
+  let bodyStartChunk: Uint8Array | undefined;
+  let backendBroken = false;
+
   try {
     while (true) {
       const { value, done } = await reader.read();
       if (done) break;
-      if (!value) continue;
-      if (
-        buffered.byteLength + value.byteLength > MAX_BUFFERED_RESPONSE_BYTES
-      ) {
-        truncated = true;
+      if (!value || value.byteLength === 0) continue;
+      prefixChunks.push(value);
+      prefixBytes += value.byteLength;
+      const joined = concatChunks(prefixChunks, prefixBytes);
+      const boundary = findHeaderBoundary(joined);
+      if (boundary) {
+        header = parseCgiHeader(joined.slice(0, boundary.headerEnd));
+        bodyStartChunk = joined.slice(boundary.bodyStart);
         break;
       }
-      const next = new Uint8Array(buffered.byteLength + value.byteLength);
-      next.set(buffered, 0);
-      next.set(value, buffered.byteLength);
-      buffered = next;
+      if (prefixBytes > MAX_CGI_HEADER_PREBUFFER_BYTES) {
+        backendBroken = true;
+        break;
+      }
     }
-  } finally {
+  } catch (_error) {
+    backendBroken = true;
+  }
+
+  // No valid CGI header before stdout ended or the pre-buffer ceiling was hit:
+  // the backend failed before flushing anything, so we can still return a
+  // clean structured error envelope (no body bytes were sent to the client).
+  if (!header || !bodyStartChunk) {
     try {
       reader.releaseLock();
     } catch (_error) {
       // ignore
     }
+    await drainStderr(child);
+    if (backendBroken) {
+      try {
+        child.kill("SIGTERM");
+      } catch (_error) {
+        // process may already be gone
+      }
+    }
+    await child.status.catch(() => {});
+    return Response.json({
+      error: "git http-backend returned an invalid CGI response",
+      code: "git_smart_http_invalid_backend_response",
+    }, { status: 500 });
   }
 
-  // Drain stderr so the process can exit; capture for diagnostic logs.
+  // Drain stderr concurrently so the subprocess can make progress (a full
+  // stderr pipe would otherwise block git http-backend mid-stream).
+  const stderrDrained = drainStderr(child);
+
+  const firstChunk = bodyStartChunk;
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      if (firstChunk.byteLength > 0) controller.enqueue(firstChunk);
+    },
+    async pull(controller) {
+      try {
+        const { value, done } = await reader.read();
+        if (done) {
+          try {
+            reader.releaseLock();
+          } catch (_error) {
+            // ignore
+          }
+          // Surface a mid-stream backend failure by aborting the body. Headers
+          // are already flushed, so the client sees a truncated transfer (git
+          // treats an incomplete pack as a retryable error) rather than a
+          // clean envelope — an accepted tradeoff for unbuffered streaming.
+          await stderrDrained.catch(() => {});
+          const status = await child.status.catch(() => undefined);
+          if (status && !status.success) {
+            controller.error(
+              new Error("git http-backend exited with a non-zero status"),
+            );
+            return;
+          }
+          controller.close();
+          return;
+        }
+        if (value && value.byteLength > 0) controller.enqueue(value);
+      } catch (error) {
+        try {
+          reader.releaseLock();
+        } catch (_releaseError) {
+          // ignore
+        }
+        controller.error(error);
+      }
+    },
+    cancel() {
+      // Client hung up: stop the backend and release resources.
+      try {
+        child.kill("SIGTERM");
+      } catch (_error) {
+        // process may already be gone
+      }
+      try {
+        reader.releaseLock();
+      } catch (_error) {
+        // ignore
+      }
+      void stderrDrained.catch(() => {});
+      void child.status.catch(() => {});
+    },
+  });
+
+  return new Response(stream, {
+    status: header.status,
+    headers: header.headers,
+  });
+}
+
+async function drainStderr(child: Deno.ChildProcess): Promise<void> {
   try {
     const stderrReader = child.stderr.getReader();
     try {
       while (true) {
-        const { value, done } = await stderrReader.read();
+        const { done } = await stderrReader.read();
         if (done) break;
-        if (value) stderrChunks.push(value);
       }
     } finally {
       try {
@@ -237,8 +345,83 @@ async function collectAndRespond(child: Deno.ChildProcess): Promise<Response> {
       }
     }
   } catch (_error) {
-    stderrChunks = [];
+    // ignore: stderr drain is best-effort and never consumed.
   }
+}
+
+interface ParsedCgiHeader {
+  status: number;
+  headers: Headers;
+}
+
+function parseCgiHeader(headerBytes: Uint8Array): ParsedCgiHeader {
+  const headersText = textDecoder.decode(headerBytes);
+  const headers = new Headers();
+  let status = 200;
+  for (const line of headersText.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    const separator = line.indexOf(":");
+    if (separator < 0) continue;
+    const name = line.slice(0, separator).trim();
+    const value = line.slice(separator + 1).trim();
+    if (name.toLowerCase() === "status") {
+      status = Number(value.split(/\s+/, 1)[0]) || status;
+    } else {
+      headers.append(name, value);
+    }
+  }
+  return { status, headers };
+}
+
+const DEFAULT_MAX_BUFFERED_RESPONSE_BYTES = 500 * 1024 * 1024;
+
+function configuredMaxBufferedResponseBytes(): number {
+  const raw = Deno.env.get("TAKOS_GIT_MAX_RESPONSE_SIZE")?.trim();
+  if (!raw) return DEFAULT_MAX_BUFFERED_RESPONSE_BYTES;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_MAX_BUFFERED_RESPONSE_BYTES;
+  }
+  return Math.floor(parsed);
+}
+
+// Buffered response path, used only for receive-pack (push) whose response is
+// a small status report. Upload-pack (clone/fetch) streams instead (see
+// streamUploadPackResponse) so large packs are never buffered. Buffering here
+// lets us return a clean structured 500/502 before any bytes are flushed and
+// keeps the TAKOS_GIT_MAX_RESPONSE_SIZE per-request memory cap on this path.
+async function collectAndRespond(child: Deno.ChildProcess): Promise<Response> {
+  const maxBufferedBytes = configuredMaxBufferedResponseBytes();
+  // Collect stdout chunks into an array and concatenate once at the end, the
+  // same O(n) pattern used for stderr below. The previous grow-and-copy
+  // (allocate buffered+chunk and re-copy the whole accumulator per read) was
+  // O(n^2). The cap bounds memory per request.
+  const stdoutChunks: Uint8Array[] = [];
+  let bufferedBytes = 0;
+  let truncated = false;
+  const reader = child.stdout.getReader();
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      if (bufferedBytes + value.byteLength > maxBufferedBytes) {
+        truncated = true;
+        break;
+      }
+      stdoutChunks.push(value);
+      bufferedBytes += value.byteLength;
+    }
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch (_error) {
+      // ignore
+    }
+  }
+
+  // Drain stderr so the process can exit; output is not retained.
+  await drainStderr(child);
 
   if (truncated) {
     try {
@@ -260,7 +443,18 @@ async function collectAndRespond(child: Deno.ChildProcess): Promise<Response> {
       code: "git_smart_http_backend_failed",
     }, { status: 500 });
   }
+  const buffered = concatChunks(stdoutChunks, bufferedBytes);
   return cgiResponse(buffered);
+}
+
+function concatChunks(chunks: Uint8Array[], totalBytes: number): Uint8Array {
+  const out = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return out;
 }
 
 function configuredMaxPushSize(): number {
@@ -294,21 +488,9 @@ function cgiResponse(output: Uint8Array): Response {
     }, { status: 500 });
   }
 
-  const headersText = textDecoder.decode(output.slice(0, boundary.headerEnd));
-  const headers = new Headers();
-  let status = 200;
-  for (const line of headersText.split(/\r?\n/)) {
-    if (!line.trim()) continue;
-    const separator = line.indexOf(":");
-    if (separator < 0) continue;
-    const name = line.slice(0, separator).trim();
-    const value = line.slice(separator + 1).trim();
-    if (name.toLowerCase() === "status") {
-      status = Number(value.split(/\s+/, 1)[0]) || status;
-    } else {
-      headers.append(name, value);
-    }
-  }
+  const { status, headers } = parseCgiHeader(
+    output.slice(0, boundary.headerEnd),
+  );
   const body = output.slice(boundary.bodyStart);
   // Copy into a fresh ArrayBuffer so the response body type is stable.
   const copy = new Uint8Array(body.byteLength);

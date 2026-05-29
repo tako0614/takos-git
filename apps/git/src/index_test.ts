@@ -122,7 +122,7 @@ Deno.test("source resolver rejects branch or tag refs as unresolved", async () =
 
     assert.equal(response.status, 422);
     assert.deepEqual(body, {
-      error: "real ref resolution is not implemented/configured for takos-git",
+      error: "sourceRef could not be resolved to a commit in this repository",
       code: "git_ref_resolution_not_configured",
       repositoryId: "repo_1",
       sourceRef,
@@ -279,7 +279,7 @@ Deno.test("repository metadata creation can initialize an empty bare repository"
     });
     assert.equal(resolved.status, 422);
     assert.deepEqual(await resolved.json(), {
-      error: "real ref resolution is not implemented/configured for takos-git",
+      error: "sourceRef could not be resolved to a commit in this repository",
       code: "git_ref_resolution_not_configured",
       repositoryId,
       sourceRef: "main",
@@ -393,6 +393,13 @@ Deno.test("external import rejects remoteUrl hosts that resolve to private IPs",
       "https://192.168.1.1/repo.git",
       "https://169.254.169.254/latest/meta-data/",
       "https://[::1]/repo.git",
+      // DNS hostname that resolves to a loopback address. `localhost`
+      // resolves to 127.0.0.1 / ::1, so DNS-resolve-then-validate must
+      // reject it even though it is not an IP literal (SSRF guard).
+      "https://localhost/repo.git",
+      // SSH-shorthand IPv6 loopback in an abbreviated form: must be
+      // canonicalized before the loopback check (previously bypassed).
+      "git@[0::1]:repo.git",
     ];
     for (const remoteUrl of cases) {
       const response = await signedRequest({

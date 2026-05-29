@@ -33,6 +33,11 @@ const DEFAULT_MAX_SOURCE_SNAPSHOT_FILES = 5000;
 const DEFAULT_MAX_SOURCE_SNAPSHOT_MANIFEST_BYTES = 256 * 1024;
 
 export const textDecoder = new TextDecoder();
+// Strict decoder used to probe whether a NUL-free blob is genuinely valid
+// UTF-8. Unlike the non-fatal `textDecoder` above (which replaces invalid
+// sequences with U+FFFD), this throws on malformed input so we can route
+// non-UTF-8 content to base64 instead of silently corrupting it.
+const utf8FatalDecoder = new TextDecoder("utf-8", { fatal: true });
 
 export interface StoredGitRepositoryView {
   id: string;
@@ -358,6 +363,7 @@ export async function buildBlobResponse(input: {
   const object = await readConfiguredGitRawObject(
     input.repository.id,
     textDecoder.decode(objectId.stdout).trim(),
+    maxGitBlobBytes(),
   );
   if (!object.ok) return object;
   if (object.type !== "blob") {
@@ -379,9 +385,24 @@ export async function buildBlobResponse(input: {
       body: gitObjectTooLarge(object.objectId, object.size),
     };
   }
-  const encoding = object.content.some((byte) => byte === 0)
-    ? "base64"
-    : "utf-8";
+  // Classify text vs binary. The NUL-byte test is a cheap pre-filter; for
+  // NUL-free content we additionally attempt a strict (fatal) UTF-8 decode
+  // and fall back to base64 if it throws, so non-UTF-8 blobs are not silently
+  // corrupted with U+FFFD replacement characters.
+  let content: string;
+  let encoding: "utf-8" | "base64";
+  if (object.content.some((byte) => byte === 0)) {
+    encoding = "base64";
+    content = base64Encode(object.content);
+  } else {
+    try {
+      content = utf8FatalDecoder.decode(object.content);
+      encoding = "utf-8";
+    } catch {
+      encoding = "base64";
+      content = base64Encode(object.content);
+    }
+  }
   return {
     ok: true,
     response: {
@@ -392,9 +413,7 @@ export async function buildBlobResponse(input: {
       objectId: object.objectId,
       size: object.size,
       encoding,
-      content: encoding === "utf-8"
-        ? textDecoder.decode(object.content)
-        : base64Encode(object.content),
+      content,
     },
   };
 }
