@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "lib": ["ESNext"],
+    "module": "Preserve",
+    "moduleResolution": "bundler",
+    "target": "ESNext",
+    "types": ["bun", "node"],
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "noEmit": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "paths": {
+      "@std/assert": ["./shims/std/assert.ts"],
+      "@std/fmt/colors": ["./shims/std/colors.ts"],
+      "@std/testing/mock": ["./shims/std/mock.ts"],
+      "@takos/takosumi-contract": ["../../../../takosumi/src/contract/index.ts"]
+    }
+  },
+  "include": ["src", "shims"]
+}
