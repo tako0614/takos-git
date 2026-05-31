@@ -8,7 +8,7 @@ Takos 所有の内部 Git ホスティングサービスです。
 `takos-git` は汎用フォージではありません。公開プロフィール、カタログ、課金、
 OAuth セマンティクスは持たず、Takos の Git 基盤として bare リポジトリ
 ストレージ、refs、オブジェクト、Smart HTTP、source スナップショット、Takos PR
-メタデータを担当します。ブラウザ / CLI ユーザーは `takos-app` 経由でアクセスし、
+メタデータを担当します。ブラウザ / API client は `takos-app` 経由でアクセスし、
 `takos-app` がユーザーを認証した上で、Git 固有の capability を伴う署名付き 内部
 RPC 要求を転送します。デプロイライフサイクルは `takosumi` の source
 スナップショット API 経由でアクセスします。
@@ -41,7 +41,7 @@ Takos 固有の Git 認可は 2 層で行います。すべての内部ルート
 `ownerSpaceId` と一致する必要があります。書き込み操作は
 `owner`、`admin`、`maintainer`、`write` などの書き込み可能ロールを要します。
 
-ブラウザ / CLI クライアントは内部ルートを直接呼び出さず、`takos-app`
+ブラウザ / API client は内部ルートを直接呼び出さず、`takos-app`
 がユーザーを検証して署名付き内部要求を転送します。デプロイの正本セマンティクスは
 `takosumi` が所有し、`takos-git` はデプロイ層が消費する source / snapshot
 プリミティブだけを公開します。
@@ -50,7 +50,7 @@ Takos 固有の Git 認可は 2 層で行います。すべての内部ルート
 
 ```text
 apps/git                 内部 Git サービスのエントリポイント
-packages/git-contract    内部 / 公開 Git DTO, パス, capability
+packages/gittakosumi-contract    内部 / 公開 Git DTO, パス, capability
 ```
 
 ## 環境変数

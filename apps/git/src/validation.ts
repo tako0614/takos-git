@@ -10,7 +10,7 @@ import type {
   GitPullRequestStatus,
   GitUpdatePullRequestRequest,
   GitUpdateRepositoryRequest,
-} from "takos-git-contract";
+} from "takos-gittakosumi-contract";
 import { isLiteralObjectId, isSafeRefInput } from "./git.ts";
 
 export function isSafeTreePath(path: string): boolean {

@@ -20,15 +20,15 @@ implementation) とは別物。
 
 - account / auth / profile / billing / OAuth behavior (`../app/` の責務)
 - tenant runtime / deploy / container orchestration (`../../takosumi/` の責務)
-- browser / CLI auth verify そのもの (`takos-app` が verify した後 signed
+- browser / API-client auth verify そのもの (`takos-app` が verify した後 signed
   internal actor context として受ける)
 
 ## 隣接 product との contract
 
 - **Upstream**: 直接の upstream なし (Takos product 内の self-contained service)
-- **Downstream**: Takos product (`../app/` が browser / CLI auth を verify
-  した後の signed internal RPC で接続)、 Takosumi kernel (control plane が
-  source snapshot 取得のため呼ぶ)
+- **Downstream**: Takos product (`../app/` が browser / API-client auth を
+  verify した後の signed internal RPC で接続)、 Takosumi kernel (control plane
+  が source snapshot 取得のため呼ぶ)
 - **Sibling**: `../app/` (auth verify 委譲先)、 `../agent/` (independent
   service)
 

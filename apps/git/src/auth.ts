@@ -11,7 +11,7 @@ import {
   verifyTakosumiInternalRequestFromHeaders
     as verifyTakosInternalRequestFromHeaders,
 } from "takosumi-contract/internal/rpc";
-import { TAKOS_GIT_CAPABILITIES } from "takos-git-contract";
+import { TAKOS_GIT_CAPABILITIES } from "takos-gittakosumi-contract";
 
 const TAKOS_GIT_EXPECTED_AUDIENCE = "takos-git";
 const TAKOS_GIT_DEFAULT_INTERNAL_CALLERS = [

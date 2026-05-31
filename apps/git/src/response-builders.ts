@@ -12,7 +12,7 @@ import type {
   GitReadTreeResponse,
   GitSourceSnapshotFile,
   GitSourceSnapshotResponse,
-} from "takos-git-contract";
+} from "takos-gittakosumi-contract";
 import {
   configuredRepositoryPath,
   devInMemoryMetadataEnabled,

@@ -5,7 +5,7 @@ import type {
   GitCreatePullRequestReviewRequest,
   GitMergePullRequestRequest,
   GitUpdatePullRequestRequest,
-} from "takos-git-contract";
+} from "takos-gittakosumi-contract";
 import { readInternalAuth } from "./auth.ts";
 import {
   createConfiguredPullRequest,

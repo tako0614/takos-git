@@ -1,4 +1,4 @@
-import type { GitRefSummary } from "takos-git-contract";
+import type { GitRefSummary } from "takos-gittakosumi-contract";
 import {
   configuredRepositoryPath,
   isSafeRepositoryId,

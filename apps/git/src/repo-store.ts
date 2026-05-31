@@ -4,7 +4,7 @@ import type {
   GitRefSummary,
   GitRepositoryDetail,
   GitRepositorySummary,
-} from "takos-git-contract";
+} from "takos-gittakosumi-contract";
 import {
   canAccessRepositoryOwner,
   repositoryAccessDenied,

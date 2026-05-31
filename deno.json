@@ -5,7 +5,7 @@
   },
   "workspace": [
     "./apps/git",
-    "./packages/git-contract"
+    "./packages/gittakosumi-contract"
   ],
   "nodeModulesDir": "auto",
   "compilerOptions": {
@@ -16,15 +16,15 @@
   "imports": {
     "takosumi-contract": "jsr:@takos/takosumi-contract@^2.6.0",
     "takosumi-contract/internal/rpc": "jsr:@takos/takosumi-contract@^2.6.0/internal/rpc",
-    "takos-git-contract": "./packages/git-contract/src/index.ts",
-    "takos-git-contract/": "./packages/git-contract/src/",
+    "takos-gittakosumi-contract": "./packages/gittakosumi-contract/src/index.ts",
+    "takos-gittakosumi-contract/": "./packages/gittakosumi-contract/src/",
     "hono": "npm:hono@^4.12.4"
   },
   "tasks": {
-    "check": "deno check apps/git/src/index.ts packages/git-contract/src/index.ts",
+    "check": "deno check apps/git/src/index.ts packages/gittakosumi-contract/src/index.ts",
     "lint": "deno lint",
     "fmt": "deno fmt",
-    "test": "deno test --allow-all apps/git/src/index_test.ts apps/git/src/host-blocklist_test.ts packages/git-contract/src/internal-api_test.ts",
+    "test": "deno test --allow-all apps/git/src/index_test.ts apps/git/src/host-blocklist_test.ts packages/gittakosumi-contract/src/internal-api_test.ts",
     "dev": "deno run --allow-net --allow-env --allow-read --allow-write --allow-run apps/git/src/index.ts",
     "seed:dev": "bash scripts/seed-dev-git.sh",
     "smoke:live": "deno run --allow-net --allow-env scripts/live-smoke.ts"

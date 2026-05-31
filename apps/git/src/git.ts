@@ -15,7 +15,7 @@ import type {
   GitPullRequestStatus,
   GitRefSummary,
   GitUpdatePullRequestRequest,
-} from "takos-git-contract";
+} from "takos-gittakosumi-contract";
 import type {
   TakosumiActorContext as TakosActorContext,
 } from "takosumi-contract/internal/rpc";

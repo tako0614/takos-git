@@ -11,7 +11,7 @@ import {
   type GitSourceSnapshotRequest,
   type GitUpdateRepositoryRequest,
   TAKOS_GIT_INTERNAL_PATHS,
-} from "takos-git-contract";
+} from "takos-gittakosumi-contract";
 import {
   canAccessRepositoryOwner,
   readInternalAuth,

@@ -5,7 +5,7 @@ import {
   TAKOS_GIT_CAPABILITIES,
   TAKOS_GIT_INTERNAL_PATHS,
   type TakosumiActorContext as TakosActorContext,
-} from "takos-git-contract";
+} from "takos-gittakosumi-contract";
 import { signTakosumiInternalRequest as signTakosInternalRequest } from "takosumi-contract/internal/rpc";
 
 const SERVICE_ID = "takos-git";
