@@ -1,4 +1,10 @@
-import { DatabaseSync } from "node:sqlite";
+// Bun migration: node:sqlite is unavailable in Bun 1.3.14 (and the node:
+// prefix cannot be intercepted by tsconfig paths or Bun.plugin), so this
+// import is redirected to a bun:sqlite-backed DatabaseSync shim that is
+// behaviorally identical for the synchronous surface used here
+// (new/close/exec/prepare->get/run/all). Under Deno/Node this would point at
+// "node:sqlite"; the shim re-exports the same DatabaseSync class name.
+import { DatabaseSync } from "../shims/node-sqlite.ts";
 import type {
   GitCreatePullRequestCommentRequest,
   GitCreatePullRequestRequest,

@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { DatabaseSync } from "node:sqlite";
+// Bun migration: redirected from "node:sqlite" (unavailable in Bun 1.3.14) to
+// the bun:sqlite-backed DatabaseSync shim. Same class name and surface.
+import { DatabaseSync } from "../shims/node-sqlite.ts";
 import app from "./index.ts";
 import {
   TAKOS_GIT_CAPABILITIES,
