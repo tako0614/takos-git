@@ -14,8 +14,8 @@
       "@std/assert": ["./shims/std/assert.ts"],
       "@std/fmt/colors": ["./shims/std/colors.ts"],
       "@std/testing/mock": ["./shims/std/mock.ts"],
-      "takos-git-contract": ["../../packages/git-contract/src/index.ts"],
-      "takos-git-contract/*": ["../../packages/git-contract/src/*"],
+      "takos-gittakosumi-contract": ["../../packages/git-contract/src/index.ts"],
+      "takos-gittakosumi-contract/*": ["../../packages/git-contract/src/*"],
       "takosumi-contract/internal/rpc": ["../../../../takosumi/src/contract/internal-rpc.ts"],
       "@takos/takosumi-contract": ["../../../../takosumi/src/contract/index.ts"]
     }
