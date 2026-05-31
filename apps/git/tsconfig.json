@@ -14,6 +14,7 @@
       "@std/assert": ["./shims/std/assert.ts"],
       "@std/fmt/colors": ["./shims/std/colors.ts"],
       "@std/testing/mock": ["./shims/std/mock.ts"],
+      "node:sqlite": ["./shims/node-sqlite.ts"],
       "@takos/takosumi-contract": ["../../../../takosumi/src/contract/index.ts"]
     }
   },
