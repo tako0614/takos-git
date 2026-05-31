@@ -7,12 +7,14 @@
 // (no Node/Bun equivalent).
 //
 // This is the canonical pattern reused across the ecosystem's Bun migration.
-import { spawn, spawnSync } from "node:child_process";
+import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import process from "node:process";
+import { Readable, Writable } from "node:stream";
+import { createServer, type Server } from "node:http";
 
 type StdioStr = "piped" | "inherit" | "null";
 
@@ -96,24 +98,135 @@ class DenoCommand {
     };
   }
 
-  spawn() {
+  spawn(): DenoChildProcess {
     const o = this.#opts;
     const child = spawn(this.#cmd, o.args ?? [], {
       cwd: o.cwd instanceof URL ? o.cwd.pathname : o.cwd,
       env: buildEnv(o),
-      stdio: [mapStdio(o.stdin), mapStdio(o.stdout), mapStdio(o.stderr)],
-      detached: true,
+      stdio: [mapStdio(o.stdin), mapStdio(o.stdout ?? "piped"), mapStdio(o.stderr ?? "piped")],
       signal: o.signal,
     });
-    child.unref?.();
+    return new DenoChildProcess(child);
+  }
+}
+
+interface CommandStatus {
+  code: number;
+  success: boolean;
+  signal: string | null;
+}
+
+// Deno's ChildProcess exposes WEB streams for stdin/stdout/stderr, so call
+// sites use `child.stdin.getWriter()` / `child.stdout.getReader()`, plus
+// `status` and `output()`. Node's child_process exposes node streams. This
+// wrapper bridges the two so existing Deno-style call sites run unchanged.
+class DenoChildProcess {
+  #child: ChildProcess;
+  readonly pid: number;
+  readonly status: Promise<CommandStatus>;
+  #stdoutWeb?: ReadableStream<Uint8Array>;
+  #stderrWeb?: ReadableStream<Uint8Array>;
+  #stdin?: WritableStream<Uint8Array>;
+  // output() buffers stdout/stderr. Collectors are attached in the constructor
+  // (before any caller await) so no early `data` chunk is lost. If instead a
+  // caller reaches for the `.stdout`/`.stderr` web stream to read directly
+  // (smart-http path), that stream's buffering is disabled and the live node
+  // stream is handed to the web reader (the two styles are mutually exclusive
+  // per call site here).
+  #outChunks: Uint8Array[] = [];
+  #errChunks: Uint8Array[] = [];
+  #outClaimed = false;
+  #errClaimed = false;
+
+  constructor(child: ChildProcess) {
+    this.#child = child;
+    this.pid = child.pid ?? -1;
+    child.stdout?.on("data", (c: Buffer) => {
+      if (!this.#outClaimed) this.#outChunks.push(new Uint8Array(c));
+    });
+    child.stderr?.on("data", (c: Buffer) => {
+      if (!this.#errClaimed) this.#errChunks.push(new Uint8Array(c));
+    });
+    this.status = new Promise<CommandStatus>((res, rej) => {
+      child.on("error", rej);
+      child.on("close", (code, sig) =>
+        res({ code: code ?? 0, success: (code ?? 0) === 0, signal: sig })
+      );
+    });
+  }
+
+  get stdout(): ReadableStream<Uint8Array> {
+    if (!this.#stdoutWeb) {
+      this.#outClaimed = true;
+      this.#stdoutWeb = this.#child.stdout
+        ? (Readable.toWeb(this.#child.stdout) as ReadableStream<Uint8Array>)
+        : emptyReadable();
+    }
+    return this.#stdoutWeb;
+  }
+
+  get stderr(): ReadableStream<Uint8Array> {
+    if (!this.#stderrWeb) {
+      this.#errClaimed = true;
+      this.#stderrWeb = this.#child.stderr
+        ? (Readable.toWeb(this.#child.stderr) as ReadableStream<Uint8Array>)
+        : emptyReadable();
+    }
+    return this.#stderrWeb;
+  }
+
+  get stdin(): WritableStream<Uint8Array> {
+    if (!this.#stdin) {
+      this.#stdin = this.#child.stdin
+        ? (Writable.toWeb(this.#child.stdin) as WritableStream<Uint8Array>)
+        : new WritableStream<Uint8Array>();
+    }
+    return this.#stdin;
+  }
+
+  async output(): Promise<CommandOutput> {
+    const status = await this.status;
     return {
-      pid: child.pid,
-      status: new Promise<{ code: number; success: boolean; signal: string | null }>((res) =>
-        child.on("close", (code, sig) => res({ code: code ?? 0, success: (code ?? 0) === 0, signal: sig }))
-      ),
-      kill: (sig?: NodeJS.Signals) => child.kill(sig),
+      code: status.code,
+      signal: status.signal,
+      success: status.success,
+      stdout: concat(this.#outChunks),
+      stderr: concat(this.#errChunks),
     };
   }
+
+  kill(sig?: NodeJS.Signals): void {
+    this.#child.kill(sig);
+  }
+
+  ref(): void {
+    this.#child.ref?.();
+  }
+  unref(): void {
+    this.#child.unref?.();
+  }
+}
+
+function concat(chunks: Uint8Array[]): Uint8Array {
+  if (chunks.length === 0) return new Uint8Array();
+  if (chunks.length === 1) return chunks[0];
+  let total = 0;
+  for (const c of chunks) total += c.byteLength;
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const c of chunks) {
+    out.set(c, off);
+    off += c.byteLength;
+  }
+  return out;
+}
+
+function emptyReadable(): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.close();
+    },
+  });
 }
 
 class NotFound extends Error {
@@ -261,7 +374,113 @@ const DenoCompat = {
   realPath: (p: string | URL): Promise<string> => fsp.realpath(p),
 
   Command: DenoCommand,
+
+  serve: denoServe,
 };
+
+interface ServeOptions {
+  port?: number;
+  hostname?: string;
+  signal?: AbortSignal;
+  onListen?: (params: { hostname: string; port: number }) => void;
+}
+
+interface DenoServer {
+  addr: { transport: "tcp"; hostname: string; port: number };
+  finished: Promise<void>;
+  shutdown: () => Promise<void>;
+  ref: () => void;
+  unref: () => void;
+}
+
+// Minimal Deno.serve over node:http. Supports both call shapes used here:
+//   Deno.serve(handler) and Deno.serve(options, handler). The handler receives
+// a web Request and returns a (possibly async) web Response, matching Deno.
+// Returns a server with addr/finished/shutdown so tests can read the bound
+// port and tear the server down. This is a runtime-adapter shim for tests /
+// local run; the production serving path is unchanged.
+function denoServe(
+  optionsOrHandler: ServeOptions | ((req: Request) => Response | Promise<Response>),
+  maybeHandler?: (req: Request) => Response | Promise<Response>,
+): DenoServer {
+  const options: ServeOptions = typeof optionsOrHandler === "function" ? {} : optionsOrHandler;
+  const handler = (typeof optionsOrHandler === "function" ? optionsOrHandler : maybeHandler)!;
+  const hostname = options.hostname ?? "0.0.0.0";
+  const port = options.port ?? 8000;
+
+  const server: Server = createServer((nodeReq, nodeRes) => {
+    void (async () => {
+      try {
+        const host = nodeReq.headers.host ?? `${hostname}:${addrPort()}`;
+        const url = `http://${host}${nodeReq.url ?? "/"}`;
+        const method = nodeReq.method ?? "GET";
+        const headers = new Headers();
+        for (const [k, v] of Object.entries(nodeReq.headers)) {
+          if (v === undefined) continue;
+          headers.set(k, Array.isArray(v) ? v.join(", ") : v);
+        }
+        let body: BodyInit | undefined;
+        if (method !== "GET" && method !== "HEAD") {
+          body = Readable.toWeb(nodeReq) as unknown as ReadableStream<Uint8Array>;
+        }
+        const request = new Request(url, {
+          method,
+          headers,
+          body,
+          // @ts-ignore duplex is required by undici/Bun when streaming a body
+          duplex: body ? "half" : undefined,
+        });
+        const response = await handler(request);
+        nodeRes.statusCode = response.status;
+        response.headers.forEach((value, key) => nodeRes.setHeader(key, value));
+        if (response.body) {
+          const reader = response.body.getReader();
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            nodeRes.write(value);
+          }
+        }
+        nodeRes.end();
+      } catch (err) {
+        nodeRes.statusCode = 500;
+        nodeRes.end(String((err as Error)?.message ?? err));
+      }
+    })();
+  });
+
+  let resolveFinished!: () => void;
+  const finished = new Promise<void>((res) => {
+    resolveFinished = res;
+  });
+  server.on("close", () => resolveFinished());
+
+  server.listen(port, hostname === "0.0.0.0" ? undefined : hostname, () => {
+    options.onListen?.({ hostname, port: addrPort() });
+  });
+
+  function addrPort(): number {
+    const a = server.address();
+    return a && typeof a === "object" ? a.port : port;
+  }
+
+  if (options.signal) {
+    options.signal.addEventListener("abort", () => server.close(), { once: true });
+  }
+
+  return {
+    get addr() {
+      return { transport: "tcp" as const, hostname, port: addrPort() };
+    },
+    finished,
+    shutdown: () =>
+      new Promise<void>((res) => {
+        server.close(() => res());
+      }),
+    ref: () => server.ref?.(),
+    unref: () => server.unref?.(),
+  };
+}
 
 function toFileInfo(s: fs.Stats) {
   return {

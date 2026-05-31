@@ -3,7 +3,7 @@
 # without source edits. deno-compat installs the runtime namespace; the test
 # preload adds Deno.test backed by bun:test.
 [test]
-preload = ["./shims/node-sqlite-plugin.ts", "./shims/deno-compat.ts", "./shims/deno-test-preload.ts"]
+preload = ["./shims/deno-compat.ts", "./shims/deno-test-preload.ts"]
 
 [run]
-preload = ["./shims/node-sqlite-plugin.ts", "./shims/deno-compat.ts"]
+preload = ["./shims/deno-compat.ts"]
