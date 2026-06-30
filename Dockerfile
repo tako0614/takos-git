@@ -1,4 +1,4 @@
-FROM denoland/deno:2.7.10
+FROM denoland/deno:2.9.0
 
 USER root
 RUN apt-get update \
