@@ -1,0 +1,9 @@
+node_modules/
+dist/*
+!dist/worker.js
+.terraform/
+terraform.tfstate
+terraform.tfstate.backup
+*.tfvars
+!example.tfvars
+.DS_Store

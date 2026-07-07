@@ -1,0 +1,15 @@
+{
+  "name": "takos-git",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Takos standalone git hosting service (installable Capsule).",
+  "scripts": {
+    "build:worker": "bun run scripts/build-worker.ts",
+    "test": "bun test",
+    "check": "bunx tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  }
+}
