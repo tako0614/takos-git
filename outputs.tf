@@ -71,6 +71,28 @@ output "app_deployment" {
       },
     ]
 
+    publish = [
+      {
+        name      = "launcher"
+        publisher = "web"
+        type      = "interface.ui.surface"
+        outputs = {
+          url = {
+            kind     = "url"
+            routeRef = "root"
+          }
+        }
+        display = {
+          title       = "Takos Git"
+          description = "Read-only Git Smart HTTP hosting for workspace repositories."
+          category    = "developer"
+        }
+        spec = {
+          launcher = true
+        }
+      },
+    ]
+
     env = {
       APP_URL = local.launch_url != null ? local.launch_url : ""
     }
@@ -98,6 +120,24 @@ output "service_exports" {
         title         = "Takos Git Hosting"
         description   = "Read-only git Smart HTTP host for workspace repos, isolated per consumer by scoped clone grants."
         capabilityIds = ["takos.git.hosting.v1"]
+      }
+      visibility = "space"
+    },
+    {
+      name         = "launcher"
+      capabilities = ["interface.ui.surface"]
+      endpoints = [
+        {
+          name       = "default"
+          protocol   = "https"
+          pathPrefix = "/"
+          url        = local.launch_url
+        },
+      ]
+      metadata = {
+        title       = "Takos Git"
+        description = "Open the Git hosting console for this Capsule."
+        category    = "developer"
       }
       visibility = "space"
     },
