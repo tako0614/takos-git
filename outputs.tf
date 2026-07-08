@@ -85,6 +85,7 @@ output "app_deployment" {
         display = {
           title       = "Takos Git"
           description = "Read-only Git Smart HTTP hosting for workspace repositories."
+          icon        = "/icons/takos-git.svg"
           category    = "developer"
         }
         spec = {
@@ -137,6 +138,7 @@ output "service_exports" {
       metadata = {
         title       = "Takos Git"
         description = "Open the Git hosting console for this Capsule."
+        icon        = "/icons/takos-git.svg"
         category    = "developer"
       }
       visibility = "space"
