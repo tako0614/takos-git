@@ -6,8 +6,8 @@ the takos worker.
 
 ## Boundaries
 
-- OSS installable Capsule (CURATED_GIT_CATALOG / yurucommu lane). Plain OpenTofu
-  module + prebuilt Worker.
+- OSS installable Capsule listed by the Takosumi Store as discovery metadata
+  only. Plain OpenTofu module + prebuilt Worker.
 - **Distinct from** `takos.storage.workspace` (product filesystem API, capability
   `storage.filesystem`) and `takos.storage.object` (the object store). Do not
   reuse those names.
