@@ -1,0 +1,145 @@
+{
+  "schemaVersion": "tcs.repo/v1",
+  "id": "takos-git",
+  "modulePath": ".",
+  "kind": "storage",
+  "surface": "service",
+  "provider": "cloudflare",
+  "category": "developer",
+  "suggestedName": "git",
+  "name": {
+    "ja": "Takos Git",
+    "en": "Takos Git"
+  },
+  "description": {
+    "ja": "Git Smart HTTP で使えるリポジトリサービスを公開します。",
+    "en": "Deploys a repository service over Git Smart HTTP."
+  },
+  "badge": {
+    "ja": "追加候補",
+    "en": "Installable"
+  },
+  "iconUrl": "public/icons/takos-git.svg",
+  "inputs": [
+    {
+      "name": "project_name",
+      "type": "string",
+      "format": "text",
+      "required": true,
+      "defaultValue": "service-name-with-space",
+      "label": {
+        "ja": "サービス名",
+        "en": "Service name"
+      }
+    },
+    {
+      "name": "worker_name",
+      "type": "string",
+      "format": "subdomain",
+      "required": true,
+      "defaultValue": "service-name-with-space",
+      "label": {
+        "ja": "公開サブドメイン",
+        "en": "Public subdomain"
+      }
+    },
+    {
+      "name": "app_url",
+      "type": "string",
+      "format": "url",
+      "required": true,
+      "label": {
+        "ja": "公開URL",
+        "en": "Public URL"
+      }
+    },
+    {
+      "name": "git_token_signing_key",
+      "type": "string",
+      "format": "token",
+      "secret": true,
+      "advanced": true,
+      "label": {
+        "ja": "Token signing key",
+        "en": "Token signing key"
+      }
+    },
+    {
+      "name": "worker_bundle_url",
+      "type": "string",
+      "format": "url",
+      "advanced": true,
+      "label": {
+        "ja": "Worker artifact URL",
+        "en": "Worker artifact URL"
+      }
+    },
+    {
+      "name": "worker_bundle_sha256",
+      "type": "string",
+      "format": "sha256",
+      "advanced": true,
+      "label": {
+        "ja": "Worker artifact SHA-256",
+        "en": "Worker artifact SHA-256"
+      }
+    }
+  ],
+  "installExperience": {
+    "projections": [
+      {
+        "kind": "service_name",
+        "variable": "project_name"
+      },
+      {
+        "kind": "public_endpoint",
+        "variables": {
+          "subdomain": "worker_name",
+          "url": "app_url",
+          "routePattern": "cloudflare_route_pattern"
+        },
+        "baseDomain": "app.takos.jp"
+      },
+      {
+        "kind": "initial_secret",
+        "variable": "git_token_signing_key",
+        "secretKind": "token",
+        "optional": true
+      },
+      {
+        "kind": "artifact",
+        "variables": {
+          "url": "worker_bundle_url",
+          "sha256": "worker_bundle_sha256"
+        }
+      }
+    ]
+  },
+  "outputAllowlist": [
+    {
+      "key": "launch_url",
+      "from": "launch_url",
+      "type": "url"
+    },
+    {
+      "key": "url",
+      "from": "url",
+      "type": "url"
+    },
+    {
+      "key": "git_http_base_url",
+      "from": "git_http_base_url",
+      "type": "url"
+    },
+    {
+      "key": "app_deployment",
+      "from": "app_deployment",
+      "type": "json"
+    },
+    {
+      "key": "service_exports",
+      "from": "service_exports",
+      "type": "json"
+    }
+  ]
+}
