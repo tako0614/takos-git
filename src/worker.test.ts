@@ -49,6 +49,14 @@ describe("takos-git worker", () => {
     expect(res.status).toBe(200);
   });
 
+  test("root console needs no auth", async () => {
+    const { env } = await setup();
+    const res = await worker.fetch(req("GET", "/"), env);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/html");
+    expect(await res.text()).toContain("Takos Git");
+  });
+
   test("info/refs requires a token", async () => {
     const { env } = await setup();
     const res = await worker.fetch(
