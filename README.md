@@ -3,7 +3,8 @@
 A standalone, installable **Takos git hosting service**. It serves read-only git
 Smart HTTP (`git clone` / `fetch`) from an R2 object store, gated by scoped
 bearer tokens that Takosumi mints at bind time. It is a plain OpenTofu module +
-prebuilt Cloudflare Worker, installed through Takosumi like any other Capsule.
+prebuilt Cloudflare Worker, installed through Takosumi like any other Capsule
+and surfaced in the Capsule launcher.
 
 This is a **separate, lower-level primitive** from the Takos product's workspace
 storage. It publishes the `takos.git.hosting` service export
@@ -20,12 +21,16 @@ filesystem API) and `takos.storage.object` (the object store).
 - Every request is gated by a scoped token bounded to a repo prefix + verb set.
   git sends the token as the HTTP Basic password (username ignored, GitHub-PAT
   style).
+- The Worker also serves a small browser console at `/` and `/ui`, so an
+  installed git Capsule is not just a headless Smart HTTP endpoint. The console
+  helps inspect service health, check refs, and copy clone commands.
 
 ## HTTP surface
 
 | Method | Path                                            | Verb | Notes                    |
 | ------ | ----------------------------------------------- | ---- | ------------------------ |
 | GET    | `/healthz`                                      | —    | liveness, no auth        |
+| GET    | `/`, `/ui`                                      | —    | browser console, no auth |
 | GET    | `/git/<repo>.git/info/refs?service=git-upload-pack` | `r` | ref advertisement    |
 | POST   | `/git/<repo>.git/git-upload-pack`               | `r`  | clone/fetch (packfile)   |
 | POST   | `/git/<repo>.git/git-receive-pack`              | —    | `403` — push is P1-deferred |

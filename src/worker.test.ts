@@ -57,6 +57,16 @@ describe("takos-git worker", () => {
     expect(await res.text()).toContain("Takos Git");
   });
 
+  test("/ui serves the same console surface", async () => {
+    const { env } = await setup();
+    const res = await worker.fetch(req("GET", "/ui"), env);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/html");
+    const html = await res.text();
+    expect(html).toContain("Takos Git");
+    expect(html).toContain("Show clone command");
+  });
+
   test("info/refs requires a token", async () => {
     const { env } = await setup();
     const res = await worker.fetch(
