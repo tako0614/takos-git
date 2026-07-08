@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
+  <title id="title">Takos Git</title>
+  <desc id="desc">A simple Git repository service icon.</desc>
+  <rect width="128" height="128" rx="28" fill="#f7f7f2"/>
+  <path d="M64 22 106 64 64 106 22 64 64 22Z" fill="#16a34a"/>
+  <path d="M49 48h18c9 0 16 7 16 16s-7 16-16 16H51" fill="none" stroke="#dcfce7" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="49" cy="48" r="8" fill="#dcfce7"/>
+  <circle cx="49" cy="80" r="8" fill="#dcfce7"/>
+  <path d="M49 56v16" stroke="#dcfce7" stroke-width="8" stroke-linecap="round"/>
+</svg>
