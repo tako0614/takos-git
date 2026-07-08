@@ -79,6 +79,26 @@ variable "git_token_signing_key" {
   }
 }
 
+variable "env" {
+  description = "Additional non-secret Worker environment variables projected as plain_text bindings. Secrets must use dedicated sensitive variables or Provider Connections."
+  type        = map(string)
+  default     = {}
+
+  validation {
+    condition = alltrue([
+      for name, value in var.env :
+      can(regex("^[A-Z_][A-Z0-9_]{0,127}$", name)) &&
+      !can(regex("(SECRET|TOKEN|PASSWORD|CREDENTIAL|PRIVATE_?KEY|API_?KEY)", upper(name))) &&
+      !contains([
+        "BUCKET",
+        "APP_URL",
+        "GIT_TOKEN_SIGNING_KEY",
+      ], name)
+    ])
+    error_message = "env keys must be uppercase Worker plain-text variable names and must not be secret-like or reserved by the takos-git module."
+  }
+}
+
 variable "cloudflare_workers_subdomain" {
   description = "Cloudflare workers.dev subdomain used to derive launch_url for Worker-dev deployments."
   type        = string
@@ -183,6 +203,7 @@ locals {
   launch_url            = trimspace(var.app_url) != "" ? trimspace(var.app_url) : local.workers_dev_url
   provided_signing_key  = trimspace(var.git_token_signing_key)
   effective_signing_key = local.provided_signing_key != "" ? local.provided_signing_key : random_id.signing_key.hex
+  extra_worker_env      = { for name, value in var.env : name => value if trimspace(value) != "" }
 
   r2_objects_bucket = "${local.resource_prefix}-objects"
 }
@@ -247,6 +268,13 @@ resource "cloudflare_workers_script" "worker" {
         name = "GIT_TOKEN_SIGNING_KEY"
         text = local.effective_signing_key
       },
+    ],
+    [
+      for name, value in local.extra_worker_env : {
+        type = "plain_text"
+        name = name
+        text = value
+      }
     ],
   )
 
