@@ -18,7 +18,7 @@ terraform {
 }
 
 variable "enable_cloudflare_resources" {
-  description = "Provision the takos-storage Cloudflare backing resources (R2 bucket) with the cloudflare/cloudflare provider."
+  description = "Provision the takos-git Cloudflare backing resources (R2 bucket) with the cloudflare/cloudflare provider."
   type        = bool
   default     = false
 }
@@ -35,7 +35,7 @@ variable "cloudflare_account_id" {
 }
 
 variable "project_name" {
-  description = "Prefix for takos-storage backing resource names."
+  description = "Prefix for takos-git backing resource names."
   type        = string
   default     = "takos-git"
 
@@ -57,7 +57,7 @@ variable "worker_name" {
 }
 
 variable "app_url" {
-  description = "Canonical public URL for the storage service. When empty, launch_url is derived from worker_name and cloudflare_workers_subdomain."
+  description = "Canonical public URL for the git service. When empty, launch_url is derived from worker_name and cloudflare_workers_subdomain."
   type        = string
   default     = ""
 
@@ -91,7 +91,7 @@ variable "cloudflare_workers_subdomain" {
 }
 
 variable "enable_cloudflare_worker_script" {
-  description = "Deploy the takos-storage Worker script, bindings, route, and optional workers.dev enablement through OpenTofu."
+  description = "Deploy the takos-git Worker script, bindings, route, and optional workers.dev enablement through OpenTofu."
   type        = bool
   default     = false
 }
@@ -177,12 +177,10 @@ locals {
   worker_bundle_body            = local.worker_bundle_uses_url ? data.http.worker_bundle[0].response_body : null
   worker_bundle_content_sha256  = local.cloudflare_worker_enabled ? (local.worker_bundle_uses_url ? sha256(data.http.worker_bundle[0].response_body) : filesha256(local.worker_bundle_local_path)) : null
 
-  resource_prefix = var.project_name
-  worker_name     = trimspace(var.worker_name) != "" ? trimspace(var.worker_name) : local.resource_prefix
-  workers_dev_url = trimspace(var.cloudflare_workers_subdomain) != "" ? "https://${local.worker_name}.${trimspace(var.cloudflare_workers_subdomain)}.workers.dev" : null
-  launch_url      = trimspace(var.app_url) != "" ? trimspace(var.app_url) : local.workers_dev_url
-  api_base_url    = local.launch_url != null ? "${local.launch_url}/o" : null
-
+  resource_prefix       = var.project_name
+  worker_name           = trimspace(var.worker_name) != "" ? trimspace(var.worker_name) : local.resource_prefix
+  workers_dev_url       = trimspace(var.cloudflare_workers_subdomain) != "" ? "https://${local.worker_name}.${trimspace(var.cloudflare_workers_subdomain)}.workers.dev" : null
+  launch_url            = trimspace(var.app_url) != "" ? trimspace(var.app_url) : local.workers_dev_url
   provided_signing_key  = trimspace(var.git_token_signing_key)
   effective_signing_key = local.provided_signing_key != "" ? local.provided_signing_key : random_id.signing_key.hex
 

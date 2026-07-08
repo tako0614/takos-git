@@ -6,6 +6,7 @@
   "description": "Takos standalone git hosting service (installable Capsule).",
   "scripts": {
     "build:worker": "bun run scripts/build-worker.ts",
+    "smoke:postdeploy": "bun run scripts/post-deploy-smoke.ts",
     "test": "bun test",
     "check": "bunx tsc --noEmit"
   },
