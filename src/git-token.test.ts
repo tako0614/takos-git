@@ -12,7 +12,7 @@ function payload(over: Partial<GitTokenPayload> = {}): GitTokenPayload {
     sub: "inst_x",
     pfx: "acme/widgets",
     cap: ["r"],
-    aud: "takos.git.hosting",
+    aud: "source.git.smart_http",
     iat: now,
     exp: now + 3600,
     ...over,
@@ -25,7 +25,7 @@ describe("git token", () => {
     expect(token.startsWith("takstor_")).toBe(true);
     const result = await verifyGitToken(KEY, token, 1_000_100);
     expect(result.ok).toBe(true);
-    if (result.ok) expect(result.payload.aud).toBe("takos.git.hosting");
+    if (result.ok) expect(result.payload.aud).toBe("source.git.smart_http");
   });
 
   test("rejects wrong key / expiry / empty prefix", async () => {

@@ -18,7 +18,7 @@ async function token(over: Partial<GitTokenPayload> = {}): Promise<string> {
     sub: "inst_x",
     pfx: REPO,
     cap: ["r"],
-    aud: "takos.git.hosting",
+    aud: "source.git.smart_http",
     iat: now,
     exp: now + 3600,
     ...over,

@@ -68,7 +68,7 @@ variable "app_url" {
 }
 
 variable "git_token_signing_key" {
-  description = "Shared HMAC signing key for scoped git tokens (64-char lowercase hex). When empty, a key is generated. Takosumi mints tokens with the same value it reads from the takos_git_signing_key output."
+  description = "Shared HMAC signing key for scoped git tokens (64-char lowercase hex). When empty, a key is generated. Takosumi mints tokens with the same value it reads from the git_token_signing_key output."
   type        = string
   default     = ""
   sensitive   = true

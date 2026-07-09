@@ -35,7 +35,7 @@ output "cloudflare_r2_bucket_name" {
 
 # Sensitive: the shared HMAC key Takosumi reads to mint scoped git tokens.
 # Stripped from public projection (only in the encrypted output artifact).
-output "takos_git_signing_key" {
+output "git_token_signing_key" {
   description = "Shared HMAC signing key for scoped git tokens. Consumed by the Takosumi git credential issuer to mint per-consumer tokens."
   value       = local.effective_signing_key
   sensitive   = true
@@ -107,7 +107,7 @@ output "service_exports" {
   description = "Runtime service surface published by takos-git: the git Smart HTTP host consumers bind to."
   value = [
     {
-      name         = "takos.git.hosting"
+      name         = "source.git.smart_http"
       capabilities = ["source.git.smart_http", "protocol.http.api"]
       endpoints = [
         {
@@ -121,9 +121,9 @@ output "service_exports" {
       # session/cookie/key substrings (Takosumi output secret-scan drops the
       # whole output otherwise).
       metadata = {
-        title         = "Takos Git Hosting"
+        title         = "Git Smart HTTP"
         description   = "Read-only git Smart HTTP host for workspace repos, isolated per consumer by scoped clone grants."
-        capabilityIds = ["takos.git.hosting.v1"]
+        capabilityIds = ["source.git.smart_http.v1"]
       }
       visibility = "space"
     },

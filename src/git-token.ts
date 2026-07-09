@@ -34,7 +34,7 @@ export type GitTokenVerifyResult =
     };
 
 const TOKEN_PREFIX = "takstor_";
-const AUDIENCE = "takos.git.hosting";
+const AUDIENCE = "source.git.smart_http";
 
 export { AUDIENCE as GIT_TOKEN_AUDIENCE, TOKEN_PREFIX as GIT_TOKEN_PREFIX };
 
