@@ -6,10 +6,9 @@ bearer tokens that Takosumi mints at bind time. It is a plain OpenTofu module +
 prebuilt Cloudflare Worker, installed through Takosumi like any other Capsule
 and surfaced in the Capsule launcher.
 
-This is a **separate, lower-level primitive** from the Takos product's workspace
-storage. It publishes the `source.git.smart_http` service export, distinct from
-`takos.storage.workspace` (the Takos product filesystem API) and
-`storage.object` (the object store).
+This is a **separate, lower-level primitive** from product-specific workspace
+filesystem services. It publishes the `source.git.smart_http` service export,
+distinct from `storage.object` (the object store).
 
 ## What it is
 

@@ -129,8 +129,8 @@
       "type": "url"
     },
     {
-      "key": "source_git_smart_http_url",
-      "from": "source_git_smart_http_url",
+      "key": "api_url",
+      "from": "api_url",
       "type": "url"
     },
     {
