@@ -1,15 +1,15 @@
 # takos-git
 
-A standalone, installable **Takos git hosting service**. It serves read-only git
+A standalone, installable **Git Smart HTTP service**. It serves read-only git
 Smart HTTP (`git clone` / `fetch`) from an R2 object store, gated by scoped
 bearer tokens that Takosumi mints at bind time. It is a plain OpenTofu module +
 prebuilt Cloudflare Worker, installed through Takosumi like any other Capsule
 and surfaced in the Capsule launcher.
 
 This is a **separate, lower-level primitive** from the Takos product's workspace
-storage. It publishes the `takos.git.hosting` service export
-(`source.git.smart_http`), distinct from `takos.storage.workspace` (the product
-filesystem API) and `takos.storage.object` (the object store).
+storage. It publishes the `source.git.smart_http` service export, distinct from
+`takos.storage.workspace` (the Takos product filesystem API) and
+`storage.object` (the object store).
 
 ## What it is
 
@@ -62,6 +62,6 @@ tofu apply \
 ```
 
 `git_token_signing_key` is the shared HMAC key (generated when empty), emitted as
-the **sensitive** `takos_git_signing_key` output that the Takosumi git credential
+the **sensitive** `git_token_signing_key` output that the Takosumi git credential
 issuer reads to mint per-consumer clone tokens; the same value is injected into
 the Worker as `GIT_TOKEN_SIGNING_KEY`.

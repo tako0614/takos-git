@@ -36,7 +36,7 @@ test("real `git clone` works end-to-end against the standalone worker", async ()
     sub: "inst_e2e",
     pfx: REPO,
     cap: ["r"],
-    aud: "takos.git.hosting",
+    aud: "source.git.smart_http",
     iat: now,
     exp: now + 3600,
   });
