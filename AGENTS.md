@@ -32,7 +32,9 @@ typechecks without `@cloudflare/workers-types`.
 - `bun test` — unit + REAL `git clone` E2E (`git-clone.test.ts` runs a git
   subprocess against `Bun.serve`; skips if no git binary).
 - `bun run check` — `bunx tsc --noEmit`.
-- `bun run build:worker` — emit `dist/worker.js`.
+- `bun run build:worker` — emit local `dist/worker.js` for self-host applies;
+  hosted installs should use `worker_bundle_url` + `worker_bundle_sha256` from a
+  Git release or CI artifact.
 - `tofu fmt` / `tofu validate`.
 
 ## Conventions
