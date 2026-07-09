@@ -19,5 +19,49 @@
     "ja": "追加候補",
     "en": "Installable"
   },
-  "iconUrl": "public/icons/takos-git.svg"
+  "iconUrl": "public/icons/takos-git.svg",
+  "inputs": [
+    {
+      "name": "project_name",
+      "type": "string",
+      "required": true,
+      "defaultValue": "service-name",
+      "label": { "ja": "サービス名", "en": "Service name" }
+    },
+    {
+      "name": "public_subdomain",
+      "type": "string",
+      "format": "subdomain",
+      "required": true,
+      "defaultValue": "service-name",
+      "label": { "ja": "公開URLの名前", "en": "Public URL name" }
+    },
+    {
+      "name": "public_url",
+      "type": "string",
+      "format": "url",
+      "advanced": true,
+      "label": { "ja": "独自URL", "en": "Custom URL" }
+    },
+    {
+      "name": "cloudflare_route_pattern",
+      "type": "string",
+      "advanced": true,
+      "label": { "ja": "Cloudflare route", "en": "Cloudflare route" }
+    }
+  ],
+  "installExperience": {
+    "projections": [
+      { "kind": "service_name", "variable": "project_name" },
+      {
+        "kind": "public_endpoint",
+        "variables": {
+          "subdomain": "public_subdomain",
+          "url": "public_url",
+          "routePattern": "cloudflare_route_pattern"
+        },
+        "baseDomain": "app.takos.jp"
+      }
+    ]
+  }
 }
