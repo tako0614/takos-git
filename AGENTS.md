@@ -7,9 +7,8 @@ HTTP). Sibling to takos-storage; **not** part of the Takos worker.
 
 - OSS installable Capsule listed by the Takosumi Store as discovery metadata
   only. Plain OpenTofu module + prebuilt Worker.
-- **Distinct from** `takos.storage.workspace` (Takos product filesystem API,
-  capability `storage.filesystem`) and `storage.object` (the object store). Do not
-  reuse those names.
+- **Distinct from** product-specific workspace filesystem services and
+  `storage.object` (the object store). Do not reuse those names.
 - Read-only clone/fetch for P1. Push (`receive-pack`) is deferred; the route
   returns 403.
 - Access is via **bind-time scoped tokens** minted by Takosumi, verified here
