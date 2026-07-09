@@ -37,7 +37,9 @@ typechecks without `@cloudflare/workers-types`.
 
 ## Conventions
 
-- `outputs.tf` publishes `service_exports[0].name = "source.git.smart_http"`.
+- `outputs.tf` publishes generic service outputs (`launch_url`, `url`,
+  `public_url`, `api_url`, `app_deployment`, `service_exports`) and
+  `service_exports[0].name = "source.git.smart_http"`.
   Object KEYS in projected outputs must avoid
   token/secret/password/credential/auth/bearer/session/cookie/key substrings
   (the Takosumi output secret-scan drops the whole output otherwise).

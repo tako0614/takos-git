@@ -45,25 +45,25 @@ variable "project_name" {
   }
 }
 
-variable "worker_name" {
-  description = "Cloudflare Worker name used when enable_cloudflare_worker_script is true. Defaults to project_name."
+variable "public_subdomain" {
+  description = "Public subdomain label used for the hosted service. Defaults to project_name."
   type        = string
   default     = ""
 
   validation {
-    condition     = trimspace(var.worker_name) == "" || can(regex("^[a-z][a-z0-9-]{1,50}[a-z0-9]$", var.worker_name))
-    error_message = "worker_name must be empty or 3-52 lowercase letters, numbers, or hyphens, and start/end with an alphanumeric character."
+    condition     = trimspace(var.public_subdomain) == "" || can(regex("^[a-z][a-z0-9-]{1,50}[a-z0-9]$", var.public_subdomain))
+    error_message = "public_subdomain must be empty or 3-52 lowercase letters, numbers, or hyphens, and start/end with an alphanumeric character."
   }
 }
 
-variable "app_url" {
-  description = "Canonical public URL for the git service. When empty, launch_url is derived from worker_name and cloudflare_workers_subdomain."
+variable "public_url" {
+  description = "Canonical public URL for the git service. When empty, launch_url is derived from public_subdomain and cloudflare_workers_subdomain."
   type        = string
   default     = ""
 
   validation {
-    condition     = trimspace(var.app_url) == "" || can(regex("^https://[^[:space:]]+$", var.app_url))
-    error_message = "app_url must be empty or an https URL."
+    condition     = trimspace(var.public_url) == "" || can(regex("^https://[^[:space:]]+$", var.public_url))
+    error_message = "public_url must be empty or an https URL."
   }
 }
 
@@ -198,9 +198,10 @@ locals {
   worker_bundle_content_sha256  = local.cloudflare_worker_enabled ? (local.worker_bundle_uses_url ? sha256(data.http.worker_bundle[0].response_body) : filesha256(local.worker_bundle_local_path)) : null
 
   resource_prefix       = var.project_name
-  worker_name           = trimspace(var.worker_name) != "" ? trimspace(var.worker_name) : local.resource_prefix
-  workers_dev_url       = trimspace(var.cloudflare_workers_subdomain) != "" ? "https://${local.worker_name}.${trimspace(var.cloudflare_workers_subdomain)}.workers.dev" : null
-  launch_url            = trimspace(var.app_url) != "" ? trimspace(var.app_url) : local.workers_dev_url
+  public_subdomain      = trimspace(var.public_subdomain) != "" ? trimspace(var.public_subdomain) : local.resource_prefix
+  runtime_name          = local.public_subdomain
+  workers_dev_url       = trimspace(var.cloudflare_workers_subdomain) != "" ? "https://${local.public_subdomain}.${trimspace(var.cloudflare_workers_subdomain)}.workers.dev" : null
+  launch_url            = trimspace(var.public_url) != "" ? trimspace(var.public_url) : local.workers_dev_url
   provided_signing_key  = trimspace(var.service_grant_signing_key)
   effective_signing_key = local.provided_signing_key != "" ? local.provided_signing_key : random_id.signing_key.hex
   extra_worker_env      = { for name, value in var.env : name => value if trimspace(value) != "" }
@@ -241,7 +242,7 @@ resource "cloudflare_r2_bucket" "objects" {
 resource "cloudflare_workers_script" "worker" {
   count               = local.cloudflare_worker_enabled ? 1 : 0
   account_id          = var.cloudflare_account_id
-  script_name         = local.worker_name
+  script_name         = local.runtime_name
   content             = local.worker_bundle_uses_url ? sensitive(local.worker_bundle_body) : null
   content_file        = local.worker_bundle_uses_url ? null : local.worker_bundle_local_path
   content_sha256      = local.worker_bundle_content_sha256
