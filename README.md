@@ -45,7 +45,7 @@ undeltified packfile.
 ```sh
 bun test              # unit + REAL `git clone` E2E against the worker
 bun run check         # typecheck
-bun run build:worker  # emit dist/worker.js
+bun run build:worker  # emit local dist/worker.js for self-host applies
 ```
 
 ## Deploy (OpenTofu)
@@ -60,6 +60,9 @@ tofu apply \
   -var public_subdomain=<service-subdomain> \
   -var cloudflare_workers_subdomain=<workers-dev-subdomain>
 ```
+
+For hosted installs, pass `worker_bundle_url` + `worker_bundle_sha256` from a
+Git release or CI artifact. Do not commit `dist/worker.js` to the repository.
 
 `service_grant_signing_key` is the shared HMAC key (generated when empty),
 emitted as the **sensitive** `service_grant_signing_key` output that the
