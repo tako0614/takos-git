@@ -1,6 +1,6 @@
 // src/git-token.ts
 var TOKEN_PREFIX = "takstor_";
-var AUDIENCE = "takos.git.hosting";
+var AUDIENCE = "source.git.smart_http";
 function b64urlDecode(value) {
   let normalized = value.replace(/-/g, "+").replace(/_/g, "/");
   while (normalized.length % 4 !== 0)
