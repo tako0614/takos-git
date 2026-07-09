@@ -54,14 +54,14 @@
       }
     },
     {
-      "name": "git_token_signing_key",
+      "name": "service_grant_signing_key",
       "type": "string",
       "format": "token",
       "secret": true,
       "advanced": true,
       "label": {
-        "ja": "Token signing key",
-        "en": "Token signing key"
+        "ja": "Grant signing key",
+        "en": "Grant signing key"
       }
     },
     {
@@ -104,7 +104,7 @@
       },
       {
         "kind": "initial_secret",
-        "variable": "git_token_signing_key",
+        "variable": "service_grant_signing_key",
         "secretKind": "token",
         "optional": true
       },
@@ -129,8 +129,8 @@
       "type": "url"
     },
     {
-      "key": "git_http_base_url",
-      "from": "git_http_base_url",
+      "key": "source_git_smart_http_url",
+      "from": "source_git_smart_http_url",
       "type": "url"
     },
     {

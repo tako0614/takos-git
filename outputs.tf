@@ -8,7 +8,7 @@ output "url" {
   value       = local.launch_url
 }
 
-output "git_http_base_url" {
+output "source_git_smart_http_url" {
   description = "Base URL for git Smart HTTP (clone/fetch under /git/<repo>.git)."
   value       = local.launch_url != null ? "${local.launch_url}/git" : null
 }
@@ -28,15 +28,15 @@ output "cloudflare_worker_script_id" {
   value       = try(cloudflare_workers_script.worker[0].id, null)
 }
 
-output "cloudflare_r2_bucket_name" {
-  description = "R2 bucket name backing the BUCKET binding (git objects + per-repo refs)."
+output "object_bucket_name" {
+  description = "Backing object bucket name for git objects and per-repo refs."
   value       = local.r2_objects_bucket
 }
 
-# Sensitive: the shared HMAC key Takosumi reads to mint scoped git tokens.
+# Sensitive: the shared HMAC key Takosumi reads to mint scoped service grants.
 # Stripped from public projection (only in the encrypted output artifact).
-output "git_token_signing_key" {
-  description = "Shared HMAC signing key for scoped git tokens. Consumed by the Takosumi git credential issuer to mint per-consumer tokens."
+output "service_grant_signing_key" {
+  description = "Shared HMAC signing key for scoped service grants. Consumed by the grant issuer to mint per-consumer access material for the service_exports capability."
   value       = local.effective_signing_key
   sensitive   = true
 }
