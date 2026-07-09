@@ -1,5 +1,5 @@
 output "launch_url" {
-  description = "Public URL for the published takos-git service, when derivable."
+  description = "Public URL for the published Git Smart HTTP service, when derivable."
   value       = local.launch_url
 }
 
@@ -42,7 +42,7 @@ output "service_grant_signing_key" {
 }
 
 output "app_deployment" {
-  description = "Installable app declaration consumed from tofu output -json by Takos/Takosumi install flows."
+  description = "Installable app declaration consumed from tofu output -json by Capsule projection flows."
   value = {
     contractVersion = 1
     name            = "takos-git"
@@ -104,7 +104,7 @@ output "app_deployment" {
 }
 
 output "service_exports" {
-  description = "Runtime service surface published by takos-git: the git Smart HTTP host consumers bind to."
+  description = "Runtime service surface published by this Capsule: Git Smart HTTP consumers bind to it through the source.git.smart_http capability."
   value = [
     {
       name         = "source.git.smart_http"

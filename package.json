@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Takos standalone git hosting service (installable Capsule).",
+  "description": "Standalone Git Smart HTTP service (installable Capsule).",
   "scripts": {
     "build:worker": "bun run scripts/build-worker.ts",
     "smoke:postdeploy": "bun run scripts/post-deploy-smoke.ts",
