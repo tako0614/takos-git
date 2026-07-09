@@ -61,7 +61,8 @@ tofu apply \
   -var cloudflare_workers_subdomain=<subdomain>
 ```
 
-`git_token_signing_key` is the shared HMAC key (generated when empty), emitted as
-the **sensitive** `git_token_signing_key` output that the Takosumi git credential
-issuer reads to mint per-consumer clone tokens; the same value is injected into
-the Worker as `GIT_TOKEN_SIGNING_KEY`.
+`service_grant_signing_key` is the shared HMAC key (generated when empty),
+emitted as the **sensitive** `service_grant_signing_key` output that the
+Takosumi grant issuer reads to mint per-consumer access material for the
+`source.git.smart_http` service export; the same value is injected into the
+Worker as `GIT_TOKEN_SIGNING_KEY`.

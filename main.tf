@@ -67,15 +67,15 @@ variable "app_url" {
   }
 }
 
-variable "git_token_signing_key" {
-  description = "Shared HMAC signing key for scoped git tokens (64-char lowercase hex). When empty, a key is generated. Takosumi mints tokens with the same value it reads from the git_token_signing_key output."
+variable "service_grant_signing_key" {
+  description = "Shared HMAC signing key for scoped service grants (64-char lowercase hex). When empty, a key is generated. Takosumi mints grants with the same value it reads from the service_grant_signing_key output."
   type        = string
   default     = ""
   sensitive   = true
 
   validation {
-    condition     = trimspace(var.git_token_signing_key) == "" || can(regex("^[a-f0-9]{64}$", trimspace(var.git_token_signing_key)))
-    error_message = "git_token_signing_key must be empty or a 64-character lowercase hex key."
+    condition     = trimspace(var.service_grant_signing_key) == "" || can(regex("^[a-f0-9]{64}$", trimspace(var.service_grant_signing_key)))
+    error_message = "service_grant_signing_key must be empty or a 64-character lowercase hex key."
   }
 }
 
@@ -201,7 +201,7 @@ locals {
   worker_name           = trimspace(var.worker_name) != "" ? trimspace(var.worker_name) : local.resource_prefix
   workers_dev_url       = trimspace(var.cloudflare_workers_subdomain) != "" ? "https://${local.worker_name}.${trimspace(var.cloudflare_workers_subdomain)}.workers.dev" : null
   launch_url            = trimspace(var.app_url) != "" ? trimspace(var.app_url) : local.workers_dev_url
-  provided_signing_key  = trimspace(var.git_token_signing_key)
+  provided_signing_key  = trimspace(var.service_grant_signing_key)
   effective_signing_key = local.provided_signing_key != "" ? local.provided_signing_key : random_id.signing_key.hex
   extra_worker_env      = { for name, value in var.env : name => value if trimspace(value) != "" }
 
