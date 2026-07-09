@@ -69,6 +69,7 @@
       "type": "string",
       "format": "url",
       "advanced": true,
+      "defaultValue": "https://github.com/tako0614/takos-git/releases/download/v0.1.1/worker.js",
       "label": {
         "ja": "Worker artifact URL",
         "en": "Worker artifact URL"
@@ -79,6 +80,7 @@
       "type": "string",
       "format": "sha256",
       "advanced": true,
+      "defaultValue": "0f75a091e58d463dd45b20f1d1570fa69a9b2a06fe6b1e2f6c5914e75bf209eb",
       "label": {
         "ja": "Worker artifact SHA-256",
         "en": "Worker artifact SHA-256"
