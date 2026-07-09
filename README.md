@@ -57,7 +57,8 @@ tofu apply \
   -var enable_cloudflare_resources=true \
   -var enable_cloudflare_worker_script=true \
   -var cloudflare_account_id=<id> \
-  -var cloudflare_workers_subdomain=<subdomain>
+  -var public_subdomain=<service-subdomain> \
+  -var cloudflare_workers_subdomain=<workers-dev-subdomain>
 ```
 
 `service_grant_signing_key` is the shared HMAC key (generated when empty),

@@ -33,7 +33,7 @@
       }
     },
     {
-      "name": "worker_name",
+      "name": "public_subdomain",
       "type": "string",
       "format": "subdomain",
       "required": true,
@@ -44,7 +44,7 @@
       }
     },
     {
-      "name": "app_url",
+      "name": "public_url",
       "type": "string",
       "format": "url",
       "required": true,
@@ -96,8 +96,8 @@
       {
         "kind": "public_endpoint",
         "variables": {
-          "subdomain": "worker_name",
-          "url": "app_url",
+          "subdomain": "public_subdomain",
+          "url": "public_url",
           "routePattern": "cloudflare_route_pattern"
         },
         "baseDomain": "app.takos.jp"
@@ -126,6 +126,11 @@
     {
       "key": "url",
       "from": "url",
+      "type": "url"
+    },
+    {
+      "key": "public_url",
+      "from": "public_url",
       "type": "url"
     },
     {
