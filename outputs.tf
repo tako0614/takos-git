@@ -8,23 +8,28 @@ output "url" {
   value       = local.launch_url
 }
 
+output "public_url" {
+  description = "Canonical public URL for the published Git Smart HTTP service."
+  value       = local.launch_url
+}
+
 output "api_url" {
   description = "Primary service API URL for Git Smart HTTP clone/fetch under /git/<repo>.git."
   value       = local.launch_url != null ? "${local.launch_url}/git" : null
 }
 
-output "worker_name" {
-  description = "Cloudflare Worker name used when enable_cloudflare_worker_script is true."
-  value       = local.worker_name
+output "service_runtime_name" {
+  description = "Implementation runtime name used when enable_cloudflare_worker_script is true."
+  value       = local.runtime_name
 }
 
-output "worker_managed_by_opentofu" {
-  description = "True when the Worker script and bindings are managed by OpenTofu."
+output "service_runtime_managed_by_opentofu" {
+  description = "True when the HTTP runtime and bindings are managed by OpenTofu."
   value       = local.cloudflare_worker_enabled
 }
 
-output "cloudflare_worker_script_id" {
-  description = "OpenTofu-managed Cloudflare Worker script ID, or null when enable_cloudflare_worker_script is false."
+output "service_runtime_resource_id" {
+  description = "Provider-native runtime resource ID, or null when enable_cloudflare_worker_script is false."
   value       = try(cloudflare_workers_script.worker[0].id, null)
 }
 
