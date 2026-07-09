@@ -8,8 +8,8 @@ output "url" {
   value       = local.launch_url
 }
 
-output "source_git_smart_http_url" {
-  description = "Base URL for git Smart HTTP (clone/fetch under /git/<repo>.git)."
+output "api_url" {
+  description = "Primary service API URL for Git Smart HTTP clone/fetch under /git/<repo>.git."
   value       = local.launch_url != null ? "${local.launch_url}/git" : null
 }
 
