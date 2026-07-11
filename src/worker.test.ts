@@ -74,6 +74,15 @@ describe("takos-git worker", () => {
     expect(res.status).toBe(401);
   });
 
+  test("authentication runs before repository existence checks", async () => {
+    const { env } = await setup();
+    const res = await worker.fetch(
+      req("GET", "/git/acme/missing.git/info/refs?service=git-upload-pack"),
+      env,
+    );
+    expect(res.status).toBe(401);
+  });
+
   test("advertises refs for the seeded repo", async () => {
     const { env, seeded } = await setup();
     const res = await worker.fetch(
@@ -128,12 +137,87 @@ describe("takos-git worker", () => {
     expect(res.status).toBe(400);
   });
 
-  test("push (receive-pack) is disabled", async () => {
+  test("push (receive-pack) rejects a read-only grant", async () => {
     const { env } = await setup();
     const res = await worker.fetch(
       req("POST", `/git/${REPO}.git/git-receive-pack`, { token: await token() }),
       env,
     );
     expect(res.status).toBe(403);
+  });
+
+  test("receive-pack advertisement requires write scope", async () => {
+    const { env, seeded } = await setup();
+    const res = await worker.fetch(
+      req("GET", `/git/${REPO}.git/info/refs?service=git-receive-pack`, {
+        token: await token({ cap: ["r", "w"] }),
+      }),
+      env,
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe(
+      "application/x-git-receive-pack-advertisement",
+    );
+    const text = await res.text();
+    expect(text).toContain(seeded.commitSha);
+    expect(text).toContain("report-status delete-refs ofs-delta atomic");
+  });
+
+  test("receive-pack rejects write grants scoped to another prefix", async () => {
+    const { env } = await setup();
+    const res = await worker.fetch(
+      req("GET", `/git/${REPO}.git/info/refs?service=git-receive-pack`, {
+        token: await token({ pfx: "other/repo", cap: ["r", "w"] }),
+      }),
+      env,
+    );
+    expect(res.status).toBe(403);
+  });
+
+  test("receive-pack rejects malformed ref names without changing refs", async () => {
+    const { env, seeded } = await setup();
+    const body = concatBytes(
+      pktLineString(
+        `${seeded.commitSha} ${"b".repeat(40)} refs/heads/../escape\0report-status\n`,
+      ),
+      PKT_FLUSH,
+    );
+    const res = await worker.fetch(
+      req("POST", `/git/${REPO}.git/git-receive-pack`, {
+        token: await token({ cap: ["r", "w"] }),
+        body,
+      }),
+      env,
+    );
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain("invalid ref name");
+
+    const refs = await worker.fetch(
+      req("GET", `/git/${REPO}.git/info/refs?service=git-upload-pack`, {
+        token: await token(),
+      }),
+      env,
+    );
+    expect(await refs.text()).toContain(seeded.commitSha);
+  });
+
+  test("receive-pack rejects malformed pack data", async () => {
+    const { env } = await setup();
+    const body = concatBytes(
+      pktLineString(
+        `${"0".repeat(40)} ${"b".repeat(40)} refs/heads/topic\0report-status ofs-delta atomic\n`,
+      ),
+      PKT_FLUSH,
+      new TextEncoder().encode("PACKbad"),
+    );
+    const res = await worker.fetch(
+      req("POST", `/git/${REPO}.git/git-receive-pack`, {
+        token: await token({ cap: ["r", "w"] }),
+        body,
+      }),
+      env,
+    );
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain("pack: shorter than 12-byte header");
   });
 });

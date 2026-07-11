@@ -14,8 +14,13 @@ output "public_url" {
 }
 
 output "api_url" {
-  description = "Primary service API URL for Git Smart HTTP clone/fetch under /git/<repo>.git."
+  description = "Primary service API URL for Git Smart HTTP clone/fetch/push under /git/<repo>.git."
   value       = local.launch_url != null ? "${local.launch_url}/git" : null
+}
+
+output "mcp_url" {
+  description = "Streamable HTTP MCP endpoint for repository management."
+  value       = local.launch_url != null ? "${local.launch_url}/mcp" : null
 }
 
 output "service_runtime_name" {
@@ -46,12 +51,18 @@ output "service_grant_signing_key" {
   sensitive   = true
 }
 
+output "published_mcp_auth_token" {
+  description = "Generated bearer secret for the published MCP endpoint."
+  value       = local.effective_mcp_auth
+  sensitive   = true
+}
+
 output "app_deployment" {
   description = "Installable app declaration consumed from tofu output -json by Capsule projection flows."
   value = {
     contractVersion = 1
     name            = "takos-git"
-    version         = "0.2.0"
+    version         = "0.3.0"
 
     compute = {
       web = {
@@ -66,6 +77,12 @@ output "app_deployment" {
         bind = "BUCKET"
         to   = ["web"]
       }
+      published_mcp_auth_token = {
+        type     = "secret"
+        bind     = "PUBLISHED_MCP_AUTH_TOKEN"
+        to       = ["web"]
+        generate = true
+      }
     }
 
     routes = [
@@ -73,6 +90,12 @@ output "app_deployment" {
         id     = "root"
         target = "web"
         path   = "/"
+      },
+      {
+        id      = "mcp"
+        target  = "web"
+        path    = "/mcp"
+        methods = ["POST"]
       },
     ]
 
@@ -89,12 +112,35 @@ output "app_deployment" {
         }
         display = {
           title       = "Takos Git"
-          description = "Read-only Git Smart HTTP hosting for workspace repositories."
+          description = "Git Smart HTTP hosting for workspace repositories."
           icon        = "/icons/takos-git.svg"
           category    = "developer"
         }
         spec = {
           launcher = true
+        }
+      },
+      {
+        name      = "takos-git-mcp"
+        publisher = "web"
+        type      = "protocol.mcp.server"
+        outputs = {
+          url = {
+            kind     = "url"
+            routeRef = "mcp"
+          }
+        }
+        auth = {
+          bearer = {
+            secretRef = "PUBLISHED_MCP_AUTH_TOKEN"
+          }
+        }
+        display = {
+          title       = "Takos Git MCP"
+          description = "Repository listing and lifecycle tools over Streamable HTTP."
+        }
+        spec = {
+          protocol = "streamable-http"
         }
       },
     ]
@@ -127,8 +173,32 @@ output "service_exports" {
       # whole output otherwise).
       metadata = {
         title         = "Git Smart HTTP"
-        description   = "Read-only git Smart HTTP host for workspace repos, isolated per consumer by scoped clone grants."
+        description   = "Git Smart HTTP host for workspace repos, isolated per consumer by scoped read/write grants."
         capabilityIds = ["source.git.smart_http.v1"]
+      }
+      visibility = "space"
+    },
+    {
+      name         = "takos-git-mcp"
+      capabilities = ["protocol.mcp.server"]
+      endpoints = [
+        {
+          name       = "streamable-http"
+          protocol   = "https"
+          pathPrefix = "/mcp"
+          url        = local.launch_url != null ? "${local.launch_url}/mcp" : null
+        },
+      ]
+      auth = [
+        {
+          scheme = "bearer"
+          scopes = ["mcp.invoke"]
+        },
+      ]
+      metadata = {
+        title       = "Takos Git MCP"
+        description = "Repository listing and lifecycle tools over Streamable HTTP."
+        protocol    = "streamable-http"
       }
       visibility = "space"
     },

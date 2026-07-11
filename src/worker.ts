@@ -1,7 +1,7 @@
 /**
  * takos-git — standalone git hosting service.
  *
- * Serves read-only git Smart HTTP (`git clone` / `fetch`) from an R2 object
+ * Serves git Smart HTTP (`git clone` / `fetch` / `push`) from an R2 object
  * store, gated by scoped bearer tokens Takosumi mints at bind time. A token is
  * bounded to a repo prefix + verb set; git sends it as the HTTP Basic password
  * (username ignored, matching the GitHub PAT convention).
@@ -9,23 +9,25 @@
  *   GET  /healthz
  *   GET  /git/<repo>.git/info/refs?service=git-upload-pack   (verb: r)
  *   POST /git/<repo>.git/git-upload-pack                     (verb: r)
- *   POST /git/<repo>.git/git-receive-pack                    -> 403 (push via API; P1 read-only)
- *
- * Push (receive-pack) is intentionally out of scope for P1.
+ *   POST /git/<repo>.git/git-receive-pack                    (verb: w)
+ *   POST /mcp                                                (generated bearer or scoped grant)
  */
 
 import type { ObjectStoreBinding } from "./git/types.ts";
 import { gitTokenAllows, verifyGitToken } from "./git-token.ts";
-import { handleInfoRefs, handleUploadPack } from "./smart-http.ts";
-import { isValidRepoName } from "./git/refs-store.ts";
+import { handleInfoRefs, handleReceivePack, handleUploadPack, type GitService } from "./smart-http.ts";
+import { isValidRepoName, repoExists } from "./git/refs-store.ts";
+import { handleMcp } from "./mcp.ts";
 
 export interface Env {
   BUCKET: ObjectStoreBinding;
   GIT_TOKEN_SIGNING_KEY: string;
+  PUBLISHED_MCP_AUTH_TOKEN?: string;
   APP_URL?: string;
 }
 
 const GIT_PREFIX = "/git/";
+const MAX_RECEIVE_PACK_BYTES = 64 * 1024 * 1024;
 
 function json(body: unknown, status: number): Response {
   return new Response(JSON.stringify(body), {
@@ -73,7 +75,7 @@ function gitConsoleHtml(origin: string): string {
   <main>
     <header>
       <h1>Takos Git</h1>
-      <p>Read-only Git Smart HTTP endpoint for this Capsule.</p>
+      <p>Git Smart HTTP endpoint for this Capsule.</p>
     </header>
     <section>
       <label>Repository
@@ -87,7 +89,7 @@ function gitConsoleHtml(origin: string): string {
         <button id="refs" class="primary">Check refs</button>
         <button id="clone">Show clone command</button>
       </div>
-      <p class="muted">Push is disabled in this service version. Use Takosumi-managed import or release flows to write repositories.</p>
+      <p class="muted">Clone, fetch, and push use scoped credentials minted for this Workspace.</p>
     </section>
     <section>
       <pre id="result">Base URL: ${origin}/git</pre>
@@ -188,6 +190,9 @@ export default {
     if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/ui")) {
       return html(gitConsoleHtml(url.origin));
     }
+    if (url.pathname === "/mcp") {
+      return handleMcp(request, env);
+    }
 
     const route = parseGitPath(url.pathname);
     if (!route) return json({ error: "not_found" }, 404);
@@ -195,23 +200,23 @@ export default {
       return json({ error: "invalid_repository" }, 404);
     }
 
-    if (route.suffix === "/git-receive-pack") {
-      return json({ error: "git_push_disabled" }, 403);
-    }
-    if (
-      route.suffix === "/info/refs" &&
-      url.searchParams.get("service") === "git-receive-pack"
-    ) {
-      return json({ error: "git_push_disabled" }, 403);
-    }
+    let service: GitService;
     if (route.suffix === "/info/refs") {
-      const service = url.searchParams.get("service");
-      if (service !== "git-upload-pack") {
+      if (request.method !== "GET") return json({ error: "method_not_allowed" }, 405);
+      const requestedService = url.searchParams.get("service");
+      if (requestedService !== "git-upload-pack" && requestedService !== "git-receive-pack") {
         return json({ error: "service_required" }, 400);
       }
+      service = requestedService;
+    } else if (route.suffix === "/git-upload-pack") {
+      if (request.method !== "POST") return json({ error: "method_not_allowed" }, 405);
+      service = "git-upload-pack";
+    } else {
+      if (request.method !== "POST") return json({ error: "method_not_allowed" }, 405);
+      service = "git-receive-pack";
     }
 
-    // --- authenticate (read/clone) ---
+    // --- authenticate and enforce the repository prefix + protocol verb ---
     const token = tokenFromRequest(request);
     if (!token) return unauthorized();
     if (!env.GIT_TOKEN_SIGNING_KEY) {
@@ -219,15 +224,28 @@ export default {
     }
     const verified = await verifyGitToken(env.GIT_TOKEN_SIGNING_KEY, token);
     if (!verified.ok) return unauthorized();
-    if (!gitTokenAllows(verified.payload, "r", route.repo)) {
+    const verb = service === "git-receive-pack" ? "w" : "r";
+    if (!gitTokenAllows(verified.payload, verb, route.repo)) {
       return json({ error: "forbidden_repository" }, 403);
+    }
+    if (!(await repoExists(env.BUCKET, route.repo))) {
+      return json({ error: "repository_not_found" }, 404);
     }
 
     if (route.suffix === "/info/refs") {
-      return handleInfoRefs(env.BUCKET, route.repo);
+      return handleInfoRefs(env.BUCKET, route.repo, service);
     }
-    // /git-upload-pack
+    const contentLength = Number(request.headers.get("content-length") ?? "0");
+    if (service === "git-receive-pack" && contentLength > MAX_RECEIVE_PACK_BYTES) {
+      return json({ error: "receive_pack_too_large" }, 413);
+    }
     const body = new Uint8Array(await request.arrayBuffer());
+    if (service === "git-receive-pack") {
+      if (body.length > MAX_RECEIVE_PACK_BYTES) {
+        return json({ error: "receive_pack_too_large" }, 413);
+      }
+      return handleReceivePack(env.BUCKET, route.repo, body);
+    }
     return handleUploadPack(env.BUCKET, route.repo, body);
   },
 };

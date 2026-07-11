@@ -93,6 +93,7 @@ variable "env" {
         "BUCKET",
         "APP_URL",
         "GIT_TOKEN_SIGNING_KEY",
+        "PUBLISHED_MCP_AUTH_TOKEN",
       ], name)
     ])
     error_message = "env keys must be uppercase Worker plain-text variable names and must not be secret-like or reserved by the takos-git module."
@@ -125,7 +126,7 @@ variable "worker_bundle_path" {
 variable "worker_release_tag" {
   description = "GitHub release tag whose takosumi-artifact.json selects the default Worker bundle and SHA-256. Set empty to use worker_bundle_path."
   type        = string
-  default     = "v0.2.0"
+  default     = "v0.3.0"
 
   validation {
     condition     = trimspace(var.worker_release_tag) == "" || can(regex("^v[0-9]+\\.[0-9]+\\.[0-9]+([-+][0-9A-Za-z.-]+)?$", trimspace(var.worker_release_tag)))
@@ -219,6 +220,7 @@ locals {
   launch_url            = trimspace(var.public_url) != "" ? trimspace(var.public_url) : local.workers_dev_url
   provided_signing_key  = trimspace(var.service_grant_signing_key)
   effective_signing_key = local.provided_signing_key != "" ? local.provided_signing_key : random_id.signing_key.hex
+  effective_mcp_auth    = random_id.mcp_auth_token.hex
   extra_worker_env      = { for name, value in var.env : name => value if trimspace(value) != "" }
 
   r2_objects_bucket = "${local.resource_prefix}-objects"
@@ -241,6 +243,14 @@ data "http" "worker_release_manifest" {
 }
 
 resource "random_id" "signing_key" {
+  byte_length = 32
+
+  keepers = {
+    project_name = local.resource_prefix
+  }
+}
+
+resource "random_id" "mcp_auth_token" {
   byte_length = 32
 
   keepers = {
@@ -299,6 +309,11 @@ resource "cloudflare_workers_script" "worker" {
         type = "secret_text"
         name = "GIT_TOKEN_SIGNING_KEY"
         text = local.effective_signing_key
+      },
+      {
+        type = "secret_text"
+        name = "PUBLISHED_MCP_AUTH_TOKEN"
+        text = local.effective_mcp_auth
       },
     ],
     [

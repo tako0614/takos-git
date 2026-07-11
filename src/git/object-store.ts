@@ -152,6 +152,16 @@ export async function putRawObject(
   return sha;
 }
 
+/** Store a fully materialized pack object after independently validating its id. */
+export async function putObject(
+  bucket: ObjectStoreBinding,
+  type: GitObjectType,
+  content: Uint8Array,
+): Promise<string> {
+  const header = new TextEncoder().encode(`${type} ${content.length}\0`);
+  return putRawObject(bucket, concatBytes(header, content));
+}
+
 // --- Read operations ---
 
 export async function getRawObject(
