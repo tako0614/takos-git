@@ -14,7 +14,6 @@ function payload(over: Partial<GitTokenPayload> = {}): GitTokenPayload {
     cap: ["r"],
     aud: "source.git.smart_http",
     iat: now,
-    exp: now + 3600,
     ...over,
   };
 }
@@ -22,19 +21,17 @@ function payload(over: Partial<GitTokenPayload> = {}): GitTokenPayload {
 describe("git token", () => {
   test("round-trips + carries the git audience", async () => {
     const token = await mintGitToken(KEY, payload());
-    expect(token.startsWith("takstor_")).toBe(true);
-    const result = await verifyGitToken(KEY, token, 1_000_100);
+    expect(token.startsWith("tksvc_")).toBe(true);
+    const result = await verifyGitToken(KEY, token);
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.payload.aud).toBe("source.git.smart_http");
   });
 
-  test("rejects wrong key / expiry / empty prefix", async () => {
+  test("rejects wrong key and empty prefix", async () => {
     const token = await mintGitToken(KEY, payload());
-    expect((await verifyGitToken("other", token, 1_000_100)).ok).toBe(false);
-    const expired = await mintGitToken(KEY, payload({ exp: 1_000_050 }));
-    expect((await verifyGitToken(KEY, expired, 1_000_100)).ok).toBe(false);
+    expect((await verifyGitToken("other", token)).ok).toBe(false);
     const empty = await mintGitToken(KEY, payload({ pfx: "" }));
-    expect((await verifyGitToken(KEY, empty, 1_000_100)).ok).toBe(false);
+    expect((await verifyGitToken(KEY, empty)).ok).toBe(false);
   });
 
   test("confines access to the repo prefix", () => {
