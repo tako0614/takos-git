@@ -29,7 +29,6 @@ test("real `git clone` works end-to-end against the standalone worker", async ()
   const bucket = new MemoryBucket();
   const seeded = await seedRepo(bucket, { repo: REPO, content: FILE_CONTENT, fileName: "README.md" });
 
-  const now = Math.floor(Date.now() / 1000);
   const token = await mintGitToken(SIGNING_KEY, {
     v: 1,
     ws: "space_e2e",
@@ -37,8 +36,7 @@ test("real `git clone` works end-to-end against the standalone worker", async ()
     pfx: REPO,
     cap: ["r"],
     aud: "source.git.smart_http",
-    iat: now,
-    exp: now + 3600,
+    iat: Math.floor(Date.now() / 1000),
   });
 
   const env: Env = { BUCKET: bucket, GIT_TOKEN_SIGNING_KEY: SIGNING_KEY };

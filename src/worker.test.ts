@@ -11,7 +11,6 @@ const KEY = "worker-test-git-key-abcdef";
 const REPO = "acme/widgets";
 
 async function token(over: Partial<GitTokenPayload> = {}): Promise<string> {
-  const now = Math.floor(Date.now() / 1000);
   return mintGitToken(KEY, {
     v: 1,
     ws: "space_x",
@@ -19,8 +18,7 @@ async function token(over: Partial<GitTokenPayload> = {}): Promise<string> {
     pfx: REPO,
     cap: ["r"],
     aud: "source.git.smart_http",
-    iat: now,
-    exp: now + 3600,
+    iat: Math.floor(Date.now() / 1000),
     ...over,
   });
 }

@@ -181,7 +181,6 @@ function parseGitPath(pathname: string): { repo: string; suffix: string } | null
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
-    const nowSeconds = Math.floor(Date.now() / 1000);
 
     if (request.method === "GET" && url.pathname === "/healthz") {
       return json({ status: "ok", service: "takos-git" }, 200);
@@ -218,7 +217,7 @@ export default {
     if (!env.GIT_TOKEN_SIGNING_KEY) {
       return json({ error: "git_signing_key_unconfigured" }, 503);
     }
-    const verified = await verifyGitToken(env.GIT_TOKEN_SIGNING_KEY, token, nowSeconds);
+    const verified = await verifyGitToken(env.GIT_TOKEN_SIGNING_KEY, token);
     if (!verified.ok) return unauthorized();
     if (!gitTokenAllows(verified.payload, "r", route.repo)) {
       return json({ error: "forbidden_repository" }, 403);
