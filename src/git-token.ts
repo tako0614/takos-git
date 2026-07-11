@@ -1,6 +1,6 @@
 /**
  * Scoped git access token — same wire format as the takos-storage object-store
- * token (`takstor_<b64url(payload)>.<b64url(hmac)>`), with a git-hosting
+ * credential (`tksvc_<b64url(payload)>.<b64url(hmac)>`), with a git-hosting
  * audience. Takosumi mints one per consumer at bind time, bounded to a repo
  * prefix (`pfx`) and a verb set (`cap`: `r` = read/clone, `w` = push). The
  * standalone takos-git Worker verifies it on every request.
@@ -23,17 +23,16 @@ export interface GitTokenPayload {
   /** Audience — always the git-hosting publication name. */
   readonly aud: string;
   readonly iat: number;
-  readonly exp: number;
 }
 
 export type GitTokenVerifyResult =
   | { readonly ok: true; readonly payload: GitTokenPayload }
   | {
       readonly ok: false;
-      readonly reason: "format" | "signature" | "payload" | "version" | "expired";
+      readonly reason: "format" | "signature" | "payload" | "version";
     };
 
-const TOKEN_PREFIX = "takstor_";
+const TOKEN_PREFIX = "tksvc_";
 const AUDIENCE = "source.git.smart_http";
 
 export { AUDIENCE as GIT_TOKEN_AUDIENCE, TOKEN_PREFIX as GIT_TOKEN_PREFIX };
@@ -78,7 +77,6 @@ export async function mintGitToken(
 export async function verifyGitToken(
   signingKey: string,
   token: string,
-  nowSeconds: number,
 ): Promise<GitTokenVerifyResult> {
   if (!token.startsWith(TOKEN_PREFIX)) return { ok: false, reason: "format" };
   const rest = token.slice(TOKEN_PREFIX.length);
@@ -112,9 +110,6 @@ export async function verifyGitToken(
   }
   if (typeof payload.pfx !== "string" || payload.pfx.length === 0) {
     return { ok: false, reason: "version" };
-  }
-  if (typeof payload.exp !== "number" || payload.exp <= nowSeconds) {
-    return { ok: false, reason: "expired" };
   }
   return { ok: true, payload };
 }

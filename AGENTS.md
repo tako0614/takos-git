@@ -13,7 +13,7 @@ HTTP). Sibling to takos-storage; **not** part of the Takos worker.
   returns 403.
 - Access is via **bind-time scoped tokens** minted by Takosumi, verified here
   with the shared `GIT_TOKEN_SIGNING_KEY`. Token format is `src/git-token.ts`
-  (`takstor_` prefix, HMAC-SHA256, audience `source.git.smart_http`) — the Takosumi
+  (`tksvc_` prefix, HMAC-SHA256, audience `source.git.smart_http`) — the Takosumi
   minting side MUST match byte-for-byte.
 - The R2 bucket (objects + per-repo refs) is provisioned by this module's own
   `main.tf`, not by the takos deploy module.
