@@ -16,6 +16,7 @@
 import type { GitObjectType } from "./git-objects.ts";
 import { hashObject } from "./object.ts";
 import { inflateZlibAt } from "./inflate-raw.ts";
+import { bytesToHex, sha1 } from "./sha1.ts";
 
 // Packfile object type numbers (git pack format v2).
 const OBJ_COMMIT = 1;
@@ -290,6 +291,14 @@ export async function readPack(
   // A 20-byte SHA-1 trailer follows the last object.
   if (cursor + 20 > pack.length) {
     throw new Error("pack: truncated trailer");
+  }
+  if (cursor + 20 !== pack.length) {
+    throw new Error("pack: trailing bytes after checksum");
+  }
+  const expectedChecksum = bytesToHex(pack.subarray(cursor, cursor + 20));
+  const actualChecksum = await sha1(pack.subarray(0, cursor));
+  if (expectedChecksum !== actualChecksum) {
+    throw new Error("pack: checksum mismatch");
   }
 
   // --- Second pass: resolve deltas (memoized, in file order). ---
