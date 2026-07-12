@@ -13,6 +13,8 @@ const baseInput =
 const token = process.env.TAKOS_GIT_ACCESS_TOKEN ?? "";
 const repo = process.env.TAKOS_GIT_SMOKE_REPO ?? "";
 const skipRefs = process.env.TAKOS_GIT_SKIP_REFS === "1";
+const delegateCleanupToDestroy =
+  process.env.TAKOS_GIT_DELEGATE_CLEANUP_TO_DESTROY === "1";
 
 function fail(message: string): never {
   console.error(message);
@@ -198,18 +200,22 @@ if (!skipRefs) {
     }
     checks.push("smart-http.clone");
   } finally {
-    if (repositoryCreated) {
+    if (repositoryCreated && !delegateCleanupToDestroy) {
       await callMcp(baseUrl, token, "git_repo_delete", { repo });
     }
     await rm(tempRoot, { recursive: true, force: true });
   }
-  const deletedRefs = await fetch(refsUrl, {
-    headers: { authorization: `Bearer ${token}` },
-  });
-  if (deletedRefs.status !== 404) {
-    fail(`deleted repository remained readable: ${deletedRefs.status}`);
+  if (delegateCleanupToDestroy) {
+    checks.push("repository.cleanup-delegated-to-destroy");
+  } else {
+    const deletedRefs = await fetch(refsUrl, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    if (deletedRefs.status !== 404) {
+      fail(`deleted repository remained readable: ${deletedRefs.status}`);
+    }
+    checks.push("repository.cleanup");
   }
-  checks.push("repository.cleanup");
 }
 
 console.log(
@@ -218,7 +224,9 @@ console.log(
     status: "passed",
     product: "takos-git",
     checks: checks.map((name) => ({ name, status: "passed" })),
-    cleanupVerified: true,
+    ...(delegateCleanupToDestroy
+      ? { cleanupDelegatedToDestroy: true }
+      : { cleanupVerified: true }),
     ok: true,
     service: "takos-git",
     checkedRefs: !skipRefs,
