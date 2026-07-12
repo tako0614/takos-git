@@ -8,6 +8,7 @@ export interface PurgeR2Environment {
   readonly CLOUDFLARE_ACCOUNT_ID?: string;
   readonly CLOUDFLARE_API_BASE_URL?: string;
   readonly TAKOS_GIT_R2_BUCKET_NAME?: string;
+  readonly TAKOS_GIT_CLOUDFLARE_ACCOUNT_ID?: string;
   readonly TAKOS_GIT_WORKERS_SUBDOMAIN?: string;
   readonly TAKOS_GIT_PURGE_API_BASE_URL?: string;
 }
@@ -120,8 +121,8 @@ export async function purgeR2BucketBeforeDestroy(
     "CLOUDFLARE_API_TOKEN or CF_API_TOKEN",
   );
   const accountId = required(
-    env.CLOUDFLARE_ACCOUNT_ID,
-    "CLOUDFLARE_ACCOUNT_ID",
+    env.TAKOS_GIT_CLOUDFLARE_ACCOUNT_ID ?? env.CLOUDFLARE_ACCOUNT_ID,
+    "TAKOS_GIT_CLOUDFLARE_ACCOUNT_ID",
   );
   const workersSubdomain = required(
     env.TAKOS_GIT_WORKERS_SUBDOMAIN,

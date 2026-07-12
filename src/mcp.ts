@@ -323,7 +323,7 @@ export async function handleMcp(
     return jsonRpcResult(body.id, {
       protocolVersion: MCP_PROTOCOL_VERSION,
       capabilities: { tools: {} },
-      serverInfo: { name: "takos-git", version: "0.3.2" },
+      serverInfo: { name: "takos-git", version: "0.3.3" },
     });
   }
   if (body.method === "notifications/initialized")
