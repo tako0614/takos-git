@@ -69,8 +69,9 @@ output "takosumi_release" {
         working_directory = "."
         timeout_seconds   = 600
         env = {
-          TAKOS_GIT_R2_BUCKET_NAME    = local.r2_objects_bucket
-          TAKOS_GIT_WORKERS_SUBDOMAIN = trimspace(var.cloudflare_workers_subdomain)
+          TAKOS_GIT_CLOUDFLARE_ACCOUNT_ID = trimspace(var.cloudflare_account_id)
+          TAKOS_GIT_R2_BUCKET_NAME        = local.r2_objects_bucket
+          TAKOS_GIT_WORKERS_SUBDOMAIN     = trimspace(var.cloudflare_workers_subdomain)
         }
       },
     ] : []
@@ -82,7 +83,7 @@ output "app_deployment" {
   value = {
     contractVersion = 1
     name            = "takos-git"
-    version         = "0.3.2"
+    version         = "0.3.3"
 
     compute = {
       web = {

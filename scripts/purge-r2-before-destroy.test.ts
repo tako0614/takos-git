@@ -4,7 +4,7 @@ import { purgeR2BucketBeforeDestroy } from "./purge-r2-before-destroy.ts";
 
 const ENV = {
   CLOUDFLARE_API_TOKEN: "provider-secret",
-  CLOUDFLARE_ACCOUNT_ID: "account-123",
+  TAKOS_GIT_CLOUDFLARE_ACCOUNT_ID: "account-123",
   TAKOS_GIT_R2_BUCKET_NAME: "git-e2e-objects",
   TAKOS_GIT_WORKERS_SUBDOMAIN: "example",
 } as const;
