@@ -68,12 +68,13 @@ tofu apply \
 Hosted installs consume `worker_bundle_url` + `worker_bundle_sha256` from a Git
 release or CI artifact. Do not commit `dist/worker.js`.
 
-Repository objects are isolated below a repository-owned object prefix. During
-`tofu destroy`, the module uses the service's authenticated MCP lifecycle API to
-delete all repositories before OpenTofu removes the Worker and its R2 bucket.
-The Cloudflare provider cannot delete a non-empty R2 bucket, so the machine
-running OpenTofu must have `bun` available for this module-owned destroy
-provisioner.
+Repository objects are isolated below a repository-owned object prefix, so the
+normal repository delete API removes all data owned by that repository. The
+Cloudflare provider cannot delete a non-empty R2 bucket. For Takosumi-managed
+runs, the module therefore declares an audited `takosumi_release.pre_destroy`
+command that empties the bucket before the reviewed OpenTofu destroy. Takosumi
+does not contain Git-specific cleanup logic; it executes the source-owned argv
+with the same Provider Connection boundary as apply/destroy.
 
 `service_grant_signing_key` is emitted only as a sensitive output for the
 Takosumi grant issuer and injected into the Worker as
