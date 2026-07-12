@@ -2,12 +2,13 @@
  * Minimal per-repo ref store, backed by a small JSON blob in the same R2
  * bucket as the objects. Replaces the takos worker's D1 refs/branches tables.
  *
- * Objects stay content-addressed and shared across repos (`git/v2/objects/...`),
- * but refs are per-repo (`git/v2/refs/<repo>.json`); the upload-pack tip guard
- * (want ⊆ this repo's advertised tips) confines a clone to its own objects.
+ * Refs are per-repo (`git/v2/refs/<repo>.json`) and object storage is scoped by
+ * repository (`git/v3/repos/<repo>/objects/...`). Repository deletion can
+ * therefore remove all owned data without cross-repository reachability GC.
  */
 
 import type { ObjectStoreBinding } from "./types.ts";
+import { deleteRepositoryObjects } from "./repo-object-store.ts";
 
 export interface RefRecord {
   /** Fully-qualified ref name, e.g. `refs/heads/main` or `refs/tags/v1`. */
@@ -35,17 +36,25 @@ function refsKey(repo: string): string {
 }
 
 function isValidRepoName(repo: string): boolean {
-  return /^[a-zA-Z0-9._-]+(\/[a-zA-Z0-9._-]+)?$/.test(repo) && !repo.includes("..");
+  return (
+    /^[a-zA-Z0-9._-]+(\/[a-zA-Z0-9._-]+)?$/.test(repo) && !repo.includes("..")
+  );
 }
 
 function isValidRefName(name: string): boolean {
-  if (!name.startsWith("refs/heads/") && !name.startsWith("refs/tags/")) return false;
-  if (name.length > 1024 || name.endsWith("/") || name.endsWith(".")) return false;
-  if (name.includes("..") || name.includes("@{") || name.includes("//")) return false;
+  if (!name.startsWith("refs/heads/") && !name.startsWith("refs/tags/"))
+    return false;
+  if (name.length > 1024 || name.endsWith("/") || name.endsWith("."))
+    return false;
+  if (name.includes("..") || name.includes("@{") || name.includes("//"))
+    return false;
   if (/[][\\ ~^:?*\x00-\x1f\x7f]/.test(name)) return false;
-  return name.split("/").every(
-    (part) => part.length > 0 && !part.startsWith(".") && !part.endsWith(".lock"),
-  );
+  return name
+    .split("/")
+    .every(
+      (part) =>
+        part.length > 0 && !part.startsWith(".") && !part.endsWith(".lock"),
+    );
 }
 
 export async function readRepoRefs(
@@ -63,7 +72,9 @@ export async function readRepoRefsSnapshot(
   const object = await bucket.get(refsKey(repo));
   if (!object) return null;
   try {
-    const text = new TextDecoder().decode(new Uint8Array(await object.arrayBuffer()));
+    const text = new TextDecoder().decode(
+      new Uint8Array(await object.arrayBuffer()),
+    );
     const parsed = JSON.parse(text) as Partial<RefsDoc>;
     if (!Array.isArray(parsed.refs)) throw new Error("refs must be an array");
     const refs = parsed.refs.map((ref) => {
@@ -87,15 +98,15 @@ export async function readRepoRefsSnapshot(
     return {
       doc: {
         refs,
-        defaultBranch: typeof parsed.defaultBranch === "string" ? parsed.defaultBranch : null,
+        defaultBranch:
+          typeof parsed.defaultBranch === "string"
+            ? parsed.defaultBranch
+            : null,
       },
       etag: object.etag,
     };
   } catch (error) {
-    throw new Error(
-      `invalid refs document for ${repo}`,
-      { cause: error },
-    );
+    throw new Error(`invalid refs document for ${repo}`, { cause: error });
   }
 }
 
@@ -143,6 +154,7 @@ export async function deleteRepo(
 ): Promise<boolean> {
   if (!isValidRepoName(repo)) throw new Error(`invalid repo name: ${repo}`);
   if (!(await repoExists(bucket, repo))) return false;
+  await deleteRepositoryObjects(bucket, repo);
   await bucket.delete(refsKey(repo));
   return true;
 }

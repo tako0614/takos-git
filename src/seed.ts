@@ -8,6 +8,7 @@ import type { ObjectStoreBinding } from "./git/types.ts";
 import { putCommit } from "./git/object-store.ts";
 import { createSingleFileTree } from "./git/tree-ops.ts";
 import { writeRepoRefs } from "./git/refs-store.ts";
+import { repositoryObjectStore } from "./git/repo-object-store.ts";
 
 export interface SeedRepoInput {
   readonly repo: string;
@@ -29,15 +30,22 @@ export async function seedRepo(
 ): Promise<SeededRepo> {
   const branch = input.branch ?? "main";
   const content =
-    typeof input.content === "string" ? new TextEncoder().encode(input.content) : input.content;
-  const treeSha = await createSingleFileTree(bucket, input.fileName ?? "README.md", content);
+    typeof input.content === "string"
+      ? new TextEncoder().encode(input.content)
+      : input.content;
+  const objectStore = repositoryObjectStore(bucket, input.repo);
+  const treeSha = await createSingleFileTree(
+    objectStore,
+    input.fileName ?? "README.md",
+    content,
+  );
   const signature = {
     name: "Takos Git",
     email: "git@takos.test",
     timestamp: 1_700_000_000,
     tzOffset: "+0000",
   };
-  const commitSha = await putCommit(bucket, {
+  const commitSha = await putCommit(objectStore, {
     tree: treeSha,
     parents: [],
     author: signature,

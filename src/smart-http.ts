@@ -7,7 +7,13 @@
  */
 
 import type { ObjectStoreBinding } from "./git/types.ts";
-import { getCommitData, getObject, getTreeEntries, objectExists, putObject } from "./git/object-store.ts";
+import {
+  getCommitData,
+  getObject,
+  getTreeEntries,
+  objectExists,
+  putObject,
+} from "./git/object-store.ts";
 import { readPack } from "./git/pack-reader.ts";
 import { writePackFromShas } from "./git/pack.ts";
 import { parsePktLines, PKT_FLUSH, pktLineString } from "./git/pack-common.ts";
@@ -20,6 +26,7 @@ import {
   type RefsDoc,
 } from "./git/refs-store.ts";
 import { collectReachableObjects } from "./git/reachability.ts";
+import { repositoryObjectStore } from "./git/repo-object-store.ts";
 
 const ZERO_OID = "0".repeat(40);
 const OID = /^[0-9a-f]{40}$/;
@@ -110,9 +117,7 @@ function buildReceiveAdvertisement(refs: AdvertisedRefs): Uint8Array {
   const refsWithoutHead = refs.lines.filter((ref) => ref.name !== "HEAD");
   if (refsWithoutHead.length === 0) {
     parts.push(
-      pktLineString(
-        `${ZERO_OID} capabilities^{}\0${RECEIVE_CAPABILITIES}\n`,
-      ),
+      pktLineString(`${ZERO_OID} capabilities^{}\0${RECEIVE_CAPABILITIES}\n`),
     );
   } else {
     refsWithoutHead.forEach((line, index) => {
@@ -124,7 +129,10 @@ function buildReceiveAdvertisement(refs: AdvertisedRefs): Uint8Array {
   return concatBytes(...parts);
 }
 
-function parseUploadPackRequest(body: Uint8Array): { wants: string[]; haves: string[] } {
+function parseUploadPackRequest(body: Uint8Array): {
+  wants: string[];
+  haves: string[];
+} {
   const wants: string[] = [];
   const haves: string[] = [];
   const decoder = new TextDecoder();
@@ -148,9 +156,10 @@ export async function handleInfoRefs(
   service: GitService,
 ): Promise<Response> {
   const refs = await advertisedRefs(bucket, repo);
-  const body = service === "git-upload-pack"
-    ? buildUploadAdvertisement(refs)
-    : buildReceiveAdvertisement(refs);
+  const body =
+    service === "git-upload-pack"
+      ? buildUploadAdvertisement(refs)
+      : buildReceiveAdvertisement(refs);
   return new Response(bytesToBody(body), {
     status: 200,
     headers: {
@@ -165,18 +174,23 @@ export async function handleUploadPack(
   repo: string,
   requestBody: Uint8Array,
 ): Promise<Response> {
+  const objectStore = repositoryObjectStore(bucket, repo);
   const { wants, haves } = parseUploadPackRequest(requestBody);
   if (wants.length === 0) return json({ error: "no_wants" }, 400);
 
-  // Objects are shared by content id, so every want must be a tip advertised
-  // by this repository. Otherwise a caller could request another repo's object.
+  // Every want must be a tip advertised by this repository. The object store
+  // is also repository-scoped, so object ownership and deletion stay local.
   const refs = await advertisedRefs(bucket, repo);
   for (const want of wants) {
     if (!refs.tips.has(want)) return json({ error: "invalid_want" }, 400);
   }
 
-  const shas = await collectReachableObjects(bucket, wants, new Set(haves));
-  const { pack, missing } = await writePackFromShas(bucket, shas);
+  const shas = await collectReachableObjects(
+    objectStore,
+    wants,
+    new Set(haves),
+  );
+  const { pack, missing } = await writePackFromShas(objectStore, shas);
   if (missing.length > 0) return json({ error: "repository_incomplete" }, 500);
 
   const response = concatBytes(pktLineString("NAK\n"), pack);
@@ -221,14 +235,20 @@ function parseReceiveRequest(body: Uint8Array): ReceiveRequest {
     if (length < 4 || offset + length > body.length) {
       throw new Error("truncated command pkt-line");
     }
-    if (commands.length >= MAX_REF_COMMANDS) throw new Error("too many ref commands");
+    if (commands.length >= MAX_REF_COMMANDS)
+      throw new Error("too many ref commands");
     let line = decoder.decode(body.subarray(offset + 4, offset + length));
     offset += length;
     if (line.endsWith("\n")) line = line.slice(0, -1);
 
     const nul = line.indexOf("\0");
     if (commands.length === 0 && nul !== -1) {
-      capabilities = new Set(line.slice(nul + 1).split(" ").filter(Boolean));
+      capabilities = new Set(
+        line
+          .slice(nul + 1)
+          .split(" ")
+          .filter(Boolean),
+      );
       line = line.slice(0, nul);
     } else if (nul !== -1) {
       throw new Error("capabilities are only valid on the first command");
@@ -259,7 +279,9 @@ function receiveResponse(
   for (const command of commands) {
     parts.push(
       pktLineString(
-        safeFailure ? `ng ${command.name} ${safeFailure}\n` : `ok ${command.name}\n`,
+        safeFailure
+          ? `ng ${command.name} ${safeFailure}\n`
+          : `ok ${command.name}\n`,
       ),
     );
   }
@@ -276,7 +298,9 @@ function receiveResponse(
 function unpackFailure(message: string): Response {
   const safeMessage = message.replace(/[\0\r\n]/g, " ").slice(0, 160);
   return new Response(
-    bytesToBody(concatBytes(pktLineString(`unpack ${safeMessage}\n`), PKT_FLUSH)),
+    bytesToBody(
+      concatBytes(pktLineString(`unpack ${safeMessage}\n`), PKT_FLUSH),
+    ),
     {
       status: 200,
       headers: {
@@ -299,7 +323,8 @@ async function isAncestor(
     if (sha === ancestor) return true;
     if (visited.has(sha)) continue;
     visited.add(sha);
-    if (visited.size > MAX_REACHABLE_OBJECTS) throw new Error("commit graph too large");
+    if (visited.size > MAX_REACHABLE_OBJECTS)
+      throw new Error("commit graph too large");
     const commit = await getCommitData(bucket, sha);
     if (!commit) return false;
     queue.push(...commit.parents);
@@ -317,7 +342,8 @@ async function validateTreeClosure(
     const sha = queue.pop() as string;
     if (visited.has(sha)) continue;
     visited.add(sha);
-    if (visited.size > MAX_REACHABLE_OBJECTS) throw new Error("object graph too large");
+    if (visited.size > MAX_REACHABLE_OBJECTS)
+      throw new Error("object graph too large");
     const entries = await getTreeEntries(bucket, sha);
     if (!entries) throw new Error("missing or invalid tree object");
     for (const entry of entries) {
@@ -352,7 +378,10 @@ async function validateCommitClosure(
   }
 }
 
-function nextRefsDoc(current: RefsDoc, commands: readonly RefCommand[]): RefsDoc {
+function nextRefsDoc(
+  current: RefsDoc,
+  commands: readonly RefCommand[],
+): RefsDoc {
   const refs = new Map(current.refs.map((ref) => [ref.name, ref.sha]));
   for (const command of commands) {
     if (command.newSha === ZERO_OID) refs.delete(command.name);
@@ -364,11 +393,12 @@ function nextRefsDoc(current: RefsDoc, commands: readonly RefCommand[]): RefsDoc
   const branches = records
     .filter((ref) => ref.name.startsWith("refs/heads/"))
     .map((ref) => ref.name.slice("refs/heads/".length));
-  const defaultBranch = current.defaultBranch && branches.includes(current.defaultBranch)
-    ? current.defaultBranch
-    : branches.includes("main")
-      ? "main"
-      : (branches[0] ?? null);
+  const defaultBranch =
+    current.defaultBranch && branches.includes(current.defaultBranch)
+      ? current.defaultBranch
+      : branches.includes("main")
+        ? "main"
+        : (branches[0] ?? null);
   return { refs: records, defaultBranch };
 }
 
@@ -377,26 +407,39 @@ export async function handleReceivePack(
   repo: string,
   requestBody: Uint8Array,
 ): Promise<Response> {
+  const objectStore = repositoryObjectStore(bucket, repo);
   let receive: ReceiveRequest;
   try {
     receive = parseReceiveRequest(requestBody);
   } catch (error) {
-    return unpackFailure(error instanceof Error ? error.message : "invalid request");
+    return unpackFailure(
+      error instanceof Error ? error.message : "invalid request",
+    );
   }
 
   if (!receive.capabilities.has("report-status")) {
-    return receiveResponse(receive.commands, "report-status capability required");
+    return receiveResponse(
+      receive.commands,
+      "report-status capability required",
+    );
   }
   const snapshot = await readRepoRefsSnapshot(bucket, repo);
-  if (!snapshot) return receiveResponse(receive.commands, "repository not found");
+  if (!snapshot)
+    return receiveResponse(receive.commands, "repository not found");
   const current = snapshot.doc;
   const currentRefs = new Map(current.refs.map((ref) => [ref.name, ref.sha]));
   for (const command of receive.commands) {
     if ((currentRefs.get(command.name) ?? ZERO_OID) !== command.oldSha) {
       return receiveResponse(receive.commands, "stale ref value");
     }
-    if (command.newSha === ZERO_OID && !receive.capabilities.has("delete-refs")) {
-      return receiveResponse(receive.commands, "delete-refs capability required");
+    if (
+      command.newSha === ZERO_OID &&
+      !receive.capabilities.has("delete-refs")
+    ) {
+      return receiveResponse(
+        receive.commands,
+        "delete-refs capability required",
+      );
     }
   }
 
@@ -409,24 +452,29 @@ export async function handleReceivePack(
         throw new Error("missing PACK payload");
       }
       const objects = await readPack(receive.pack, {
-        resolveExternalBase: async (sha) => (await getObject(bucket, sha))?.content ?? null,
+        resolveExternalBase: async (sha) =>
+          (await getObject(objectStore, sha))?.content ?? null,
       });
       for (const object of objects) {
-        const storedSha = await putObject(bucket, object.type, object.content);
+        const storedSha = await putObject(
+          objectStore,
+          object.type,
+          object.content,
+        );
         if (storedSha !== object.sha) throw new Error("object id mismatch");
       }
     }
 
     for (const command of receive.commands) {
       if (command.newSha === ZERO_OID) continue;
-      if (!(await objectExists(bucket, command.newSha))) {
+      if (!(await objectExists(objectStore, command.newSha))) {
         throw new Error("new ref target is missing");
       }
       if (command.name.startsWith("refs/heads/")) {
-        await validateCommitClosure(bucket, command.newSha);
+        await validateCommitClosure(objectStore, command.newSha);
         if (
           command.oldSha !== ZERO_OID &&
-          !(await isAncestor(bucket, command.oldSha, command.newSha))
+          !(await isAncestor(objectStore, command.oldSha, command.newSha))
         ) {
           throw new Error("non-fast-forward branch update");
         }

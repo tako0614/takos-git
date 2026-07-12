@@ -1,7 +1,7 @@
 /**
  * Git object storage on the configured object store.
  *
- * Key format: git/v2/objects/<sha1[0:2]>/<sha1[2:]>
+ * Key format inside a repository-scoped binding: objects/<sha1[0:2]>/<sha1[2:]>
  * Content: zlib-deflated git loose object (type size\0content)
  *
  * Uses CompressionStream/DecompressionStream when available in the runtime.
@@ -28,7 +28,7 @@ import {
   hashObject,
 } from "./object.ts";
 
-const OBJECT_PREFIX = "git/v2/objects";
+const OBJECT_PREFIX = "objects";
 
 function getObjectKey(sha: string): string {
   return `${OBJECT_PREFIX}/${sha.substring(0, 2)}/${sha.substring(2)}`;
