@@ -39,7 +39,7 @@ export interface ObjectStoreBinding {
     value: Uint8Array | ArrayBuffer | ReadableStream | string,
     options?: ObjectStorePutOptions,
   ): Promise<ObjectStoreObjectHead | null>;
-  delete(key: string): Promise<void>;
+  delete(key: string | string[]): Promise<void>;
   list(options?: {
     prefix?: string;
     cursor?: string;

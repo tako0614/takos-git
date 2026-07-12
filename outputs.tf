@@ -62,7 +62,7 @@ output "app_deployment" {
   value = {
     contractVersion = 1
     name            = "takos-git"
-    version         = "0.3.0"
+    version         = "0.3.1"
 
     compute = {
       web = {
