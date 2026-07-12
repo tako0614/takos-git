@@ -57,12 +57,32 @@ output "published_mcp_auth_token" {
   sensitive   = true
 }
 
+output "takosumi_release" {
+  description = "Audited source-owned lifecycle commands. Takosumi executes these as opaque argv with the reviewed Provider Connection credentials."
+  value = {
+    post_apply = []
+    pre_destroy = local.cloudflare_worker_enabled ? [
+      {
+        id                = "empty-object-bucket"
+        executor          = "runner"
+        command           = ["bun", "scripts/purge-r2-before-destroy.ts"]
+        working_directory = "."
+        timeout_seconds   = 600
+        env = {
+          TAKOS_GIT_R2_BUCKET_NAME    = local.r2_objects_bucket
+          TAKOS_GIT_WORKERS_SUBDOMAIN = trimspace(var.cloudflare_workers_subdomain)
+        }
+      },
+    ] : []
+  }
+}
+
 output "app_deployment" {
   description = "Installable app declaration consumed from tofu output -json by Capsule projection flows."
   value = {
     contractVersion = 1
     name            = "takos-git"
-    version         = "0.3.1"
+    version         = "0.3.2"
 
     compute = {
       web = {
