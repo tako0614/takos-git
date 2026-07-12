@@ -126,7 +126,7 @@ variable "worker_bundle_path" {
 variable "worker_release_tag" {
   description = "GitHub release tag whose takosumi-artifact.json selects the default Worker bundle and SHA-256. Set empty to use worker_bundle_path."
   type        = string
-  default     = "v0.3.0"
+  default     = "v0.3.1"
 
   validation {
     condition     = trimspace(var.worker_release_tag) == "" || can(regex("^v[0-9]+\\.[0-9]+\\.[0-9]+([-+][0-9A-Za-z.-]+)?$", trimspace(var.worker_release_tag)))
@@ -361,4 +361,34 @@ resource "cloudflare_workers_route" "worker" {
   zone_id = trimspace(var.cloudflare_route_zone_id)
   pattern = trimspace(var.cloudflare_route_pattern)
   script  = cloudflare_workers_script.worker[0].script_name
+}
+
+# Cloudflare's R2 bucket resource cannot delete a non-empty bucket. Keep the
+# cleanup lifecycle in this plain OpenTofu module: the service's normal MCP API
+# removes every repository before the Worker and bucket are destroyed.
+resource "terraform_data" "pre_destroy_cleanup" {
+  count = local.cloudflare_worker_enabled && local.launch_url != null ? 1 : 0
+
+  input = sensitive({
+    service_url = local.launch_url
+    access      = local.effective_mcp_auth
+    script      = "${path.module}/scripts/cleanup-before-destroy.ts"
+  })
+
+  depends_on = [
+    cloudflare_workers_script.worker,
+    cloudflare_workers_script_subdomain.worker,
+    cloudflare_workers_route.worker,
+  ]
+
+  provisioner "local-exec" {
+    when        = destroy
+    command     = self.input.script
+    interpreter = ["bun"]
+
+    environment = {
+      TAKOS_GIT_URL          = self.input.service_url
+      TAKOS_GIT_ACCESS_TOKEN = self.input.access
+    }
+  }
 }

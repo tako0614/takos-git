@@ -64,9 +64,11 @@ export class MemoryBucket implements ObjectStoreBinding {
     return { key, etag };
   }
 
-  async delete(key: string): Promise<void> {
-    this.store.delete(key);
-    this.etags.delete(key);
+  async delete(key: string | string[]): Promise<void> {
+    for (const item of Array.isArray(key) ? key : [key]) {
+      this.store.delete(item);
+      this.etags.delete(item);
+    }
   }
 
   async list(options?: {
@@ -75,7 +77,9 @@ export class MemoryBucket implements ObjectStoreBinding {
     limit?: number;
   }): Promise<ObjectStoreListResult> {
     const prefix = options?.prefix ?? "";
-    const keys = [...this.store.keys()].filter((key) => key.startsWith(prefix)).sort();
+    const keys = [...this.store.keys()]
+      .filter((key) => key.startsWith(prefix))
+      .sort();
     const start = options?.cursor ? Number.parseInt(options.cursor, 10) : 0;
     const limit = Math.max(1, Math.min(options?.limit ?? 1000, 1000));
     const objects = keys.slice(start, start + limit).map((key) => ({ key }));

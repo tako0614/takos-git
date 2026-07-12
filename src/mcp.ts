@@ -1,6 +1,11 @@
 /** Dependency-free MCP Streamable HTTP surface for repository management. */
 
-import { gitTokenAllows, verifyGitToken, type GitTokenPayload, type GitTokenVerb } from "./git-token.ts";
+import {
+  gitTokenAllows,
+  verifyGitToken,
+  type GitTokenPayload,
+  type GitTokenVerb,
+} from "./git-token.ts";
 import {
   createRepo,
   deleteRepo,
@@ -44,7 +49,11 @@ function jsonRpcResult(id: unknown, result: unknown): Response {
 }
 
 function jsonRpcError(id: unknown, code: number, message: string): Response {
-  return Response.json({ jsonrpc: "2.0", id: id ?? null, error: { code, message } });
+  return Response.json({
+    jsonrpc: "2.0",
+    id: id ?? null,
+    error: { code, message },
+  });
 }
 
 function unauthorized(): Response {
@@ -79,7 +88,10 @@ async function secretEquals(left: string, right: string): Promise<boolean> {
   return difference === 0;
 }
 
-async function authorize(request: Request, env: McpEnv): Promise<McpAuth | Response> {
+async function authorize(
+  request: Request,
+  env: McpEnv,
+): Promise<McpAuth | Response> {
   const token = bearerToken(request);
   if (!token) return unauthorized();
   if (env.PUBLISHED_MCP_AUTH_TOKEN) {
@@ -90,13 +102,18 @@ async function authorize(request: Request, env: McpEnv): Promise<McpAuth | Respo
     }
   }
   if (!env.GIT_TOKEN_SIGNING_KEY) {
-    return new Response(JSON.stringify({ error: "git_signing_key_unconfigured" }), {
-      status: 503,
-      headers: { "content-type": "application/json; charset=utf-8" },
-    });
+    return new Response(
+      JSON.stringify({ error: "git_signing_key_unconfigured" }),
+      {
+        status: 503,
+        headers: { "content-type": "application/json; charset=utf-8" },
+      },
+    );
   }
   const verified = await verifyGitToken(env.GIT_TOKEN_SIGNING_KEY, token);
-  return verified.ok ? { kind: "grant", payload: verified.payload } : unauthorized();
+  return verified.ok
+    ? { kind: "grant", payload: verified.payload }
+    : unauthorized();
 }
 
 function can(auth: McpAuth, verb: GitTokenVerb, repo: string): boolean {
@@ -105,12 +122,14 @@ function can(auth: McpAuth, verb: GitTokenVerb, repo: string): boolean {
 
 function requireRepo(args: Record<string, unknown>): string {
   const repo = typeof args.repo === "string" ? args.repo.trim() : "";
-  if (!isValidRepoName(repo)) throw new Error("repo must be a valid owner/name path");
+  if (!isValidRepoName(repo))
+    throw new Error("repo must be a valid owner/name path");
   return repo;
 }
 
 function requireAccess(auth: McpAuth, verb: GitTokenVerb, repo: string): void {
-  if (!can(auth, verb, repo)) throw new Error("repository is outside the grant scope");
+  if (!can(auth, verb, repo))
+    throw new Error("repository is outside the grant scope");
 }
 
 function mcpResult(value: unknown): Record<string, unknown> {
@@ -136,11 +155,15 @@ const REPO_SCHEMA = {
 const TOOLS: readonly ToolDefinition[] = [
   {
     name: "git_repo_list",
-    description: "List Git repositories visible inside the authenticated Workspace/prefix scope.",
+    description:
+      "List Git repositories visible inside the authenticated Workspace/prefix scope.",
     inputSchema: {
       type: "object",
       properties: {
-        cursor: { type: "string", description: "Opaque cursor from a previous result." },
+        cursor: {
+          type: "string",
+          description: "Opaque cursor from a previous result.",
+        },
         limit: { type: "integer", minimum: 1, maximum: 100, default: 100 },
       },
       additionalProperties: false,
@@ -155,12 +178,15 @@ const TOOLS: readonly ToolDefinition[] = [
       if (auth.kind === "grant" && !auth.payload.cap.includes("r")) {
         throw new Error("read capability required");
       }
-      const limit = typeof args.limit === "number" && Number.isInteger(args.limit)
-        ? Math.max(1, Math.min(args.limit, 100))
-        : 100;
+      const limit =
+        typeof args.limit === "number" && Number.isInteger(args.limit)
+          ? Math.max(1, Math.min(args.limit, 100))
+          : 100;
       const page = await listRepos(env.BUCKET, {
         ...(auth.kind === "grant" ? { prefix: auth.payload.pfx } : {}),
-        ...(typeof args.cursor === "string" && args.cursor ? { cursor: args.cursor } : {}),
+        ...(typeof args.cursor === "string" && args.cursor
+          ? { cursor: args.cursor }
+          : {}),
         limit,
       });
       const repos = page.repos.filter((repo) => can(auth, "r", repo));
@@ -169,7 +195,8 @@ const TOOLS: readonly ToolDefinition[] = [
   },
   {
     name: "git_repo_create",
-    description: "Create an empty repository inside the authenticated Workspace/prefix scope.",
+    description:
+      "Create an empty repository inside the authenticated Workspace/prefix scope.",
     inputSchema: REPO_SCHEMA,
     annotations: {
       readOnlyHint: false,
@@ -182,12 +209,16 @@ const TOOLS: readonly ToolDefinition[] = [
       requireAccess(auth, "w", repo);
       const created = await createRepo(env.BUCKET, repo);
       if (!created) throw new Error("repository already exists");
-      return { repo, url: `${origin}/git/${repo.split("/").map(encodeURIComponent).join("/")}.git` };
+      return {
+        repo,
+        url: `${origin}/git/${repo.split("/").map(encodeURIComponent).join("/")}.git`,
+      };
     },
   },
   {
     name: "git_repo_info",
-    description: "Read repository refs and clone URL inside the authenticated Workspace/prefix scope.",
+    description:
+      "Read repository refs and clone URL inside the authenticated Workspace/prefix scope.",
     inputSchema: REPO_SCHEMA,
     annotations: {
       readOnlyHint: true,
@@ -198,7 +229,8 @@ const TOOLS: readonly ToolDefinition[] = [
     async call(args, { env, auth, origin }) {
       const repo = requireRepo(args);
       requireAccess(auth, "r", repo);
-      if (!(await repoExists(env.BUCKET, repo))) throw new Error("repository not found");
+      if (!(await repoExists(env.BUCKET, repo)))
+        throw new Error("repository not found");
       const refs = await readRepoRefs(env.BUCKET, repo);
       return {
         repo,
@@ -210,7 +242,8 @@ const TOOLS: readonly ToolDefinition[] = [
   },
   {
     name: "git_repo_delete",
-    description: "Delete repository refs inside the authenticated Workspace/prefix scope.",
+    description:
+      "Delete repository refs inside the authenticated Workspace/prefix scope.",
     inputSchema: REPO_SCHEMA,
     annotations: {
       readOnlyHint: false,
@@ -234,10 +267,15 @@ async function readBody(request: Request): Promise<string | null> {
   const length = request.headers.get("content-length");
   if (length && Number(length) > MAX_MCP_BODY_BYTES) return null;
   const bytes = new Uint8Array(await request.arrayBuffer());
-  return bytes.length > MAX_MCP_BODY_BYTES ? null : new TextDecoder().decode(bytes);
+  return bytes.length > MAX_MCP_BODY_BYTES
+    ? null
+    : new TextDecoder().decode(bytes);
 }
 
-export async function handleMcp(request: Request, env: McpEnv): Promise<Response> {
+export async function handleMcp(
+  request: Request,
+  env: McpEnv,
+): Promise<Response> {
   const origin = request.headers.get("origin");
   if (origin && origin !== new URL(request.url).origin) {
     return new Response(JSON.stringify({ error: "mcp_origin_forbidden" }), {
@@ -246,7 +284,10 @@ export async function handleMcp(request: Request, env: McpEnv): Promise<Response
     });
   }
   if (request.method === "OPTIONS") {
-    return new Response(null, { status: 204, headers: { allow: "POST, OPTIONS" } });
+    return new Response(null, {
+      status: 204,
+      headers: { allow: "POST, OPTIONS" },
+    });
   }
   if (request.method !== "POST") {
     return new Response(JSON.stringify({ error: "method_not_allowed" }), {
@@ -258,25 +299,35 @@ export async function handleMcp(request: Request, env: McpEnv): Promise<Response
   if (auth instanceof Response) return auth;
 
   const bodyText = await readBody(request);
-  if (bodyText === null) return jsonRpcError(null, -32600, "Request body too large");
+  if (bodyText === null)
+    return jsonRpcError(null, -32600, "Request body too large");
   let body: unknown;
   try {
     body = JSON.parse(bodyText);
   } catch {
     return jsonRpcError(null, -32700, "Parse error");
   }
-  if (!isRecord(body) || body.jsonrpc !== "2.0" || typeof body.method !== "string") {
-    return jsonRpcError(isRecord(body) ? body.id : null, -32600, "Invalid Request");
+  if (
+    !isRecord(body) ||
+    body.jsonrpc !== "2.0" ||
+    typeof body.method !== "string"
+  ) {
+    return jsonRpcError(
+      isRecord(body) ? body.id : null,
+      -32600,
+      "Invalid Request",
+    );
   }
 
   if (body.method === "initialize") {
     return jsonRpcResult(body.id, {
       protocolVersion: MCP_PROTOCOL_VERSION,
       capabilities: { tools: {} },
-      serverInfo: { name: "takos-git", version: "0.3.0" },
+      serverInfo: { name: "takos-git", version: "0.3.1" },
     });
   }
-  if (body.method === "notifications/initialized") return new Response(null, { status: 202 });
+  if (body.method === "notifications/initialized")
+    return new Response(null, { status: 202 });
   if (body.method === "tools/list") {
     return jsonRpcResult(body.id, {
       tools: TOOLS.map(({ name, description, inputSchema, annotations }) => ({
@@ -287,12 +338,14 @@ export async function handleMcp(request: Request, env: McpEnv): Promise<Response
       })),
     });
   }
-  if (body.method !== "tools/call") return jsonRpcError(body.id, -32601, "Method not found");
+  if (body.method !== "tools/call")
+    return jsonRpcError(body.id, -32601, "Method not found");
   if (!isRecord(body.params) || typeof body.params.name !== "string") {
     return jsonRpcError(body.id, -32602, "Invalid params");
   }
   const tool = TOOL_MAP.get(body.params.name);
-  if (!tool) return jsonRpcError(body.id, -32602, `Unknown tool: ${body.params.name}`);
+  if (!tool)
+    return jsonRpcError(body.id, -32602, `Unknown tool: ${body.params.name}`);
   const args = isRecord(body.params.arguments) ? body.params.arguments : {};
   try {
     const result = await tool.call(args, {
