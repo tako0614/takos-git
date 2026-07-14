@@ -1,11 +1,9 @@
 /** Dependency-free MCP Streamable HTTP surface for repository management. */
 
 import {
-  gitTokenAllows,
-  verifyGitToken,
-  type GitTokenPayload,
-  type GitTokenVerb,
-} from "./git-token.ts";
+  hasValidInterfaceOAuthConfiguration,
+  verifyInterfaceOAuthCredential,
+} from "./interface-oauth-auth.ts";
 import {
   createRepo,
   deleteRepo,
@@ -15,19 +13,32 @@ import {
   repoExists,
 } from "./git/refs-store.ts";
 import type { ObjectStoreBinding } from "./git/types.ts";
+import { createDbClient, type D1Binding, type DbClient } from "./db/index.ts";
+import { upsertPrincipal } from "./auth/acl.ts";
+import { ensureOwnerForNamespace } from "./features/repos/owners.ts";
+import { provisionRepo } from "./features/repos/repositories.ts";
 
 const MCP_PROTOCOL_VERSION = "2025-03-26";
 const MAX_MCP_BODY_BYTES = 1024 * 1024;
 
 interface McpEnv {
   BUCKET: ObjectStoreBinding;
-  GIT_TOKEN_SIGNING_KEY: string;
+  /** D1 metadata plane. When present, MCP repo create/delete also writes the row. */
+  DB?: D1Binding;
   PUBLISHED_MCP_AUTH_TOKEN?: string;
+  APP_URL?: string;
+  OIDC_ISSUER_URL?: string;
+  APP_WORKSPACE_ID?: string;
+  APP_CAPSULE_ID?: string;
 }
 
 type McpAuth =
   | { readonly kind: "capsule" }
-  | { readonly kind: "grant"; readonly payload: GitTokenPayload };
+  | {
+      readonly kind: "interface";
+      readonly subject: string;
+      readonly bindingId: string;
+    };
 
 interface ToolDefinition {
   readonly name: string;
@@ -36,7 +47,12 @@ interface ToolDefinition {
   readonly annotations: Record<string, boolean>;
   readonly call: (
     args: Record<string, unknown>,
-    context: { env: McpEnv; auth: McpAuth; origin: string },
+    context: {
+      env: McpEnv;
+      auth: McpAuth;
+      origin: string;
+      db: DbClient | null;
+    },
   ) => Promise<unknown>;
 }
 
@@ -91,33 +107,65 @@ async function secretEquals(left: string, right: string): Promise<boolean> {
 async function authorize(
   request: Request,
   env: McpEnv,
+  interfaceUserInfoFetch?: (
+    input: RequestInfo | URL,
+    init?: RequestInit,
+  ) => Promise<Response>,
 ): Promise<McpAuth | Response> {
   const token = bearerToken(request);
   if (!token) return unauthorized();
   if (env.PUBLISHED_MCP_AUTH_TOKEN) {
     if (await secretEquals(token, env.PUBLISHED_MCP_AUTH_TOKEN)) {
-      // The generated publication secret is scoped to this installed Capsule,
-      // whose bucket is already a single-Workspace boundary.
+      // The explicitly configured standalone secret is scoped to this
+      // installed Capsule, whose bucket is already one deployment boundary.
       return { kind: "capsule" };
     }
   }
-  if (!env.GIT_TOKEN_SIGNING_KEY) {
+  const requestUrl = new URL(request.url);
+  const base = env.APP_URL?.trim() || requestUrl.origin;
+  let audience = "";
+  try {
+    audience = new URL("/mcp", `${base.replace(/\/$/u, "")}/`).href;
+  } catch {
+    // Invalid configuration remains a fail-closed empty audience.
+  }
+  const interfaceOAuthConfigured = hasValidInterfaceOAuthConfiguration({
+    issuerUrl: env.OIDC_ISSUER_URL,
+    audience,
+    workspaceId: env.APP_WORKSPACE_ID,
+    capsuleId: env.APP_CAPSULE_ID,
+  });
+  if (!env.PUBLISHED_MCP_AUTH_TOKEN && !interfaceOAuthConfigured) {
     return new Response(
-      JSON.stringify({ error: "git_signing_key_unconfigured" }),
+      JSON.stringify({ error: "mcp_authentication_unconfigured" }),
       {
         status: 503,
         headers: { "content-type": "application/json; charset=utf-8" },
       },
     );
   }
-  const verified = await verifyGitToken(env.GIT_TOKEN_SIGNING_KEY, token);
-  return verified.ok
-    ? { kind: "grant", payload: verified.payload }
-    : unauthorized();
-}
-
-function can(auth: McpAuth, verb: GitTokenVerb, repo: string): boolean {
-  return auth.kind === "capsule" || gitTokenAllows(auth.payload, verb, repo);
+  if (interfaceOAuthConfigured) {
+    const credential = await verifyInterfaceOAuthCredential(
+      request,
+      token,
+      "mcp.invoke",
+      {
+        issuerUrl: env.OIDC_ISSUER_URL,
+        expectedAudience: audience,
+        expectedWorkspaceId: env.APP_WORKSPACE_ID,
+        expectedCapsuleId: env.APP_CAPSULE_ID,
+        ...(interfaceUserInfoFetch ? { fetchImpl: interfaceUserInfoFetch } : {}),
+      },
+    );
+    if (credential.ok) {
+      return {
+        kind: "interface",
+        subject: credential.subject,
+        bindingId: credential.interfaceBindingId,
+      };
+    }
+  }
+  return unauthorized();
 }
 
 function requireRepo(args: Record<string, unknown>): string {
@@ -125,11 +173,6 @@ function requireRepo(args: Record<string, unknown>): string {
   if (!isValidRepoName(repo))
     throw new Error("repo must be a valid owner/name path");
   return repo;
-}
-
-function requireAccess(auth: McpAuth, verb: GitTokenVerb, repo: string): void {
-  if (!can(auth, verb, repo))
-    throw new Error("repository is outside the grant scope");
 }
 
 function mcpResult(value: unknown): Record<string, unknown> {
@@ -144,8 +187,7 @@ const REPO_SCHEMA = {
   properties: {
     repo: {
       type: "string",
-      description:
-        "Full repository path under the authenticated Workspace prefix, for example space_x/project.",
+      description: "Full repository path, for example acme/project.",
     },
   },
   required: ["repo"],
@@ -155,8 +197,7 @@ const REPO_SCHEMA = {
 const TOOLS: readonly ToolDefinition[] = [
   {
     name: "git_repo_list",
-    description:
-      "List Git repositories visible inside the authenticated Workspace/prefix scope.",
+    description: "List Git repositories in this installed Capsule.",
     inputSchema: {
       type: "object",
       properties: {
@@ -174,29 +215,23 @@ const TOOLS: readonly ToolDefinition[] = [
       idempotentHint: true,
       openWorldHint: false,
     },
-    async call(args, { env, auth }) {
-      if (auth.kind === "grant" && !auth.payload.cap.includes("r")) {
-        throw new Error("read capability required");
-      }
+    async call(args, { env }) {
       const limit =
         typeof args.limit === "number" && Number.isInteger(args.limit)
           ? Math.max(1, Math.min(args.limit, 100))
           : 100;
       const page = await listRepos(env.BUCKET, {
-        ...(auth.kind === "grant" ? { prefix: auth.payload.pfx } : {}),
         ...(typeof args.cursor === "string" && args.cursor
           ? { cursor: args.cursor }
           : {}),
         limit,
       });
-      const repos = page.repos.filter((repo) => can(auth, "r", repo));
-      return { repos, nextCursor: page.cursor };
+      return { repos: page.repos, nextCursor: page.cursor };
     },
   },
   {
     name: "git_repo_create",
-    description:
-      "Create an empty repository inside the authenticated Workspace/prefix scope.",
+    description: "Create an empty repository in this installed Capsule.",
     inputSchema: REPO_SCHEMA,
     annotations: {
       readOnlyHint: false,
@@ -204,11 +239,33 @@ const TOOLS: readonly ToolDefinition[] = [
       idempotentHint: false,
       openWorldHint: false,
     },
-    async call(args, { env, auth, origin }) {
+    async call(args, { env, origin, auth, db }) {
       const repo = requireRepo(args);
-      requireAccess(auth, "w", repo);
-      const created = await createRepo(env.BUCKET, repo);
-      if (!created) throw new Error("repository already exists");
+      if (db) {
+        // D1 configured → create the metadata row (via the same repos service)
+        // so MCP-created repos are ACL-browsable, plus the R2 refs-doc.
+        const [ownerLogin, name] = repo.split("/");
+        const principal =
+          auth.kind === "interface"
+            ? await upsertPrincipal(db, {
+                subject: auth.subject,
+                kind: "service_account",
+                bindingId: auth.bindingId,
+              })
+            : null;
+        const owner = await ensureOwnerForNamespace(
+          db,
+          ownerLogin,
+          principal?.id ?? null,
+        );
+        const result = await provisionRepo(env.BUCKET, db, owner, {
+          name: name as string,
+        });
+        if (!result.ok) throw new Error("repository already exists");
+      } else {
+        const created = await createRepo(env.BUCKET, repo);
+        if (!created) throw new Error("repository already exists");
+      }
       return {
         repo,
         url: `${origin}/git/${repo.split("/").map(encodeURIComponent).join("/")}.git`,
@@ -217,8 +274,7 @@ const TOOLS: readonly ToolDefinition[] = [
   },
   {
     name: "git_repo_info",
-    description:
-      "Read repository refs and clone URL inside the authenticated Workspace/prefix scope.",
+    description: "Read repository refs and clone URL.",
     inputSchema: REPO_SCHEMA,
     annotations: {
       readOnlyHint: true,
@@ -226,9 +282,8 @@ const TOOLS: readonly ToolDefinition[] = [
       idempotentHint: true,
       openWorldHint: false,
     },
-    async call(args, { env, auth, origin }) {
+    async call(args, { env, origin }) {
       const repo = requireRepo(args);
-      requireAccess(auth, "r", repo);
       if (!(await repoExists(env.BUCKET, repo)))
         throw new Error("repository not found");
       const refs = await readRepoRefs(env.BUCKET, repo);
@@ -242,8 +297,7 @@ const TOOLS: readonly ToolDefinition[] = [
   },
   {
     name: "git_repo_delete",
-    description:
-      "Delete repository refs inside the authenticated Workspace/prefix scope.",
+    description: "Delete repository refs from this installed Capsule.",
     inputSchema: REPO_SCHEMA,
     annotations: {
       readOnlyHint: false,
@@ -251,10 +305,14 @@ const TOOLS: readonly ToolDefinition[] = [
       idempotentHint: false,
       openWorldHint: false,
     },
-    async call(args, { env, auth }) {
+    async call(args, { env, db }) {
       const repo = requireRepo(args);
-      requireAccess(auth, "w", repo);
       const deleted = await deleteRepo(env.BUCKET, repo);
+      // Remove the D1 metadata row too (cascades collaborators/issues/…). R2 is
+      // the authoritative existence signal, so a missing D1 row is not an error.
+      if (db) {
+        await db.run(`DELETE FROM repositories WHERE storage_key = ?`, [repo]);
+      }
       if (!deleted) throw new Error("repository not found");
       return { repo, deleted: true };
     },
@@ -275,6 +333,10 @@ async function readBody(request: Request): Promise<string | null> {
 export async function handleMcp(
   request: Request,
   env: McpEnv,
+  interfaceUserInfoFetch?: (
+    input: RequestInfo | URL,
+    init?: RequestInit,
+  ) => Promise<Response>,
 ): Promise<Response> {
   const origin = request.headers.get("origin");
   if (origin && origin !== new URL(request.url).origin) {
@@ -295,7 +357,7 @@ export async function handleMcp(
       headers: { "content-type": "application/json", allow: "POST, OPTIONS" },
     });
   }
-  const auth = await authorize(request, env);
+  const auth = await authorize(request, env, interfaceUserInfoFetch);
   if (auth instanceof Response) return auth;
 
   const bodyText = await readBody(request);
@@ -352,6 +414,7 @@ export async function handleMcp(
       env,
       auth,
       origin: new URL(request.url).origin,
+      db: env.DB ? createDbClient(env.DB) : null,
     });
     return jsonRpcResult(body.id, mcpResult(result));
   } catch (error) {

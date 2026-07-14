@@ -11,6 +11,6 @@
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": false
   },
-  "include": ["src/**/*.ts"],
-  "exclude": ["src/**/*.test.ts", "dist"]
+  "include": ["src/**/*.ts", "containers/**/*.ts"],
+  "exclude": ["**/*.test.ts", "dist"]
 }
