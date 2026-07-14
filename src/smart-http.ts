@@ -209,6 +209,13 @@ interface RefCommand {
   readonly name: string;
 }
 
+/**
+ * One applied ref update, handed to the optional post-apply hook after a
+ * successful atomic receive-pack write. Consumed by the Actions push-trigger to
+ * discover + queue workflow runs (best-effort; see {@link handleReceivePack}).
+ */
+export type AppliedRefUpdate = RefCommand;
+
 interface ReceiveRequest {
   readonly commands: readonly RefCommand[];
   readonly capabilities: ReadonlySet<string>;
@@ -406,6 +413,13 @@ export async function handleReceivePack(
   bucket: ObjectStoreBinding,
   repo: string,
   requestBody: Uint8Array,
+  /**
+   * Optional best-effort hook fired ONLY after the atomic refs-doc write
+   * succeeds, with the applied ref commands. A throwing/rejecting hook never
+   * affects the push result (it is caught and ignored). Absent by default, so the
+   * clone/push path is unchanged when no hook is supplied.
+   */
+  onApplied?: (updates: readonly AppliedRefUpdate[]) => void | Promise<void>,
 ): Promise<Response> {
   const objectStore = repositoryObjectStore(bucket, repo);
   let receive: ReceiveRequest;
@@ -495,6 +509,14 @@ export async function handleReceivePack(
   );
   if (!written) {
     return receiveResponse(receive.commands, "concurrent ref update");
+  }
+  if (onApplied) {
+    // Best-effort: workflow discovery must never break a committed push.
+    try {
+      await onApplied(receive.commands);
+    } catch {
+      // swallow — refs already advanced authoritatively in R2.
+    }
   }
   return receiveResponse(receive.commands);
 }
