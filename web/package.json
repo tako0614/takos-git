@@ -1,0 +1,21 @@
+{
+  "name": "takos-git-web",
+  "private": true,
+  "type": "module",
+  "version": "0.0.0",
+  "description": "takos-git browser SPA (Solid + Vite).",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@solidjs/router": "^0.16.1",
+    "solid-js": "^1.9.13"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "vite": "^8.0.14",
+    "vite-plugin-solid": "^2.11.12"
+  }
+}

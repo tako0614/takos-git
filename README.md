@@ -1,60 +1,44 @@
 # takos-git
 
-A standalone, installable **Git Smart HTTP service**. It serves standard
-`git clone`, `fetch`, and `push` from an R2 object store and publishes a small
-repository-management MCP server. It is a plain OpenTofu module + prebuilt
-Cloudflare Worker, installed through Takosumi like any other Capsule.
+English: [README.en.md](README.en.md)
 
-This is a separate, lower-level primitive from product-specific workspace
-filesystem services. It publishes `source.git.smart_http`, distinct from
-`storage.object`, plus `protocol.mcp.server` for repository lifecycle calls.
+takos-git は、標準の `git clone` / `fetch` / `push` がそのまま使える、独立した
+collaborative Git hosting product です。R2 object store を Git data plane として使い、
+Workspace-bound な browser、hosting API、リポジトリ管理用 MCP server を公開します。
 
-## What it owns
+実体は plain な OpenTofu module + ビルド済み Cloudflare Worker で、ほかの
+Capsule (Git URL から取り込む 1 つのアプリ/インフラ単位) と同じように Takosumi から
+インストールします。Takos worker の内部サービスではありません。product 固有の workspace
+filesystem サービスとは別の通常の installable product です。公開する service surface は
+`storage.object` とは別の `source.git.smart_http`、`source.git.hosting` と、リポジトリの
+ライフサイクル操作用の `mcp.server` です。
 
-- Git Smart HTTP over an app-owned R2 bucket. Objects are content-addressed
-  loose objects; each repo's refs are one JSON document.
-- Scoped `tksvc_` grants minted by Takosumi. `r` authorizes upload-pack and `w`
-  authorizes receive-pack, both limited to the signed repository prefix.
-- Receive-pack pack/checksum/delta validation, object-closure checks, atomic
-  per-request ref replacement, and fast-forward-only normal branch updates.
-- A dependency-free Streamable HTTP MCP endpoint with exactly four tools:
-  `git_repo_list`, `git_repo_create`, `git_repo_info`, and `git_repo_delete`.
-- A small browser console at `/` and `/ui` for service health, refs, and clone
-  command discovery.
+GitHub 的な共同作業機能へ広げる source-owner 境界と移行順は
+[`docs/collaborative-hosting.md`](docs/collaborative-hosting.md) が正本です。
 
-Clone, commit, fetch, and push are deliberately **not** custom MCP tools. An
-agent uses an installed computer/sandbox Capsule and normal Git CLI with a
-scoped credential.
+## できること
 
-## HTTP surface
+- アプリ所有の R2 bucket の上で Git Smart HTTP を提供します。object は content-addressed な
+  loose object として保存され、各リポジトリの refs は 1 つの JSON document です
+- Git Smart HTTP は短命な `taksrv_` Interface OAuth credential を使います。
+  clone/fetch は `source.git.smart_http.read`、push は
+  `source.git.smart_http.write` を要求します
+- receive-pack では pack/checksum/delta の検証・object closure の確認・リクエスト単位の
+  atomic な ref 差し替えを行い、通常ブランチの更新は fast-forward のみ受け付けます
+- 依存ライブラリなしの Streamable HTTP MCP endpoint を持ちます。ツールは
+  `git_repo_list` / `git_repo_create` / `git_repo_info` / `git_repo_delete` のちょうど 4 つです
+- Takosumi Accounts の authorization-code + PKCE で browser session を作り、install 先
+  Workspace の membership を検証します
+- `/api/v1` で repository list / overview / branch / commit / tree / blob を読み、`/` と `/ui`
+  の browser console から確認できます
 
-| Method | Path                                                   | Scope | Notes |
-| ------ | ------------------------------------------------------ | ----- | ----- |
-| GET    | `/healthz`                                             | —     | liveness |
-| GET    | `/`, `/ui`                                             | —     | browser console |
-| GET    | `/git/<repo>.git/info/refs?service=git-upload-pack`    | `r`   | clone/fetch advertisement |
-| POST   | `/git/<repo>.git/git-upload-pack`                      | `r`   | clone/fetch packfile |
-| GET    | `/git/<repo>.git/info/refs?service=git-receive-pack`   | `w`   | push advertisement |
-| POST   | `/git/<repo>.git/git-receive-pack`                     | `w`   | validated push |
-| POST   | `/mcp`                                                 | Bearer | repository lifecycle MCP |
+clone / commit / fetch / push は意図的に独自の MCP ツールにしていません。agent は
+インストール済みの computer/sandbox Capsule と通常の Git CLI を、呼び出し時だけ発行される
+Interface credential と一緒に使います。
 
-The MCP publication gets a generated `PUBLISHED_MCP_AUTH_TOKEN` secret scoped
-to that installed Capsule. `/mcp` also accepts signed service grants; those
-calls are filtered by the grant's Workspace repo prefix and `r`/`w` verbs.
+## 始め方 (OpenTofu で deploy)
 
-## Develop
-
-```sh
-bun test              # unit + real Git CLI clone/push/reclone E2E
-bun run check         # typecheck
-bun run build:worker  # emit local dist/worker.js for self-host applies
-tofu fmt -check
-tofu validate
-```
-
-## Deploy (OpenTofu)
-
-The module is inert until its Cloudflare feature flags are enabled:
+module は Cloudflare の feature flag を有効にするまでリソースを作りません。
 
 ```sh
 tofu apply \
@@ -65,18 +49,78 @@ tofu apply \
   -var cloudflare_workers_subdomain=<workers-dev-subdomain>
 ```
 
-Hosted installs consume `worker_bundle_url` + `worker_bundle_sha256` from a Git
-release or CI artifact. Do not commit `dist/worker.js`.
+hosted 環境からのインストールでは、Git release や CI artifact の
+`worker_bundle_url` + `worker_bundle_sha256` を読み込みます。`dist/worker.js` は commit しません。
 
-Repository objects are isolated below a repository-owned object prefix, so the
-normal repository delete API removes all data owned by that repository. The
-Cloudflare provider cannot delete a non-empty R2 bucket. For Takosumi-managed
-runs, the module therefore declares an audited `takosumi_release.pre_destroy`
-command that empties the bucket before the reviewed OpenTofu destroy. Takosumi
-does not contain Git-specific cleanup logic; it executes the source-owned argv
-with the same Provider Connection boundary as apply/destroy.
+## 仕組み
 
-`service_grant_signing_key` is emitted only as a sensitive output for the
-Takosumi grant issuer and injected into the Worker as
-`GIT_TOKEN_SIGNING_KEY`. The generated MCP bearer is likewise sensitive and is
-injected as `PUBLISHED_MCP_AUTH_TOKEN`.
+### HTTP surface
+
+| Method | Path                                                 | Permission                                   | Notes                          |
+| ------ | ---------------------------------------------------- | -------------------------------------------- | ------------------------------ |
+| GET    | `/healthz`                                           | —                                            | 死活確認                       |
+| GET    | `/`, `/ui`                                           | —                                            | ブラウザコンソール             |
+| GET    | `/api/auth/login`, `/api/auth/callback`              | OIDC                                         | browser sign-in                |
+| GET    | `/api/auth/session`                                  | cookie                                       | browser session state          |
+| POST   | `/api/auth/logout`                                   | cookie                                       | browser sign-out               |
+| GET    | `/api/v1/repos/...`                                  | browser session or `source.git.hosting.read` | repository/code browser        |
+| GET    | `/git/<repo>.git/info/refs?service=git-upload-pack`  | `source.git.smart_http.read`                 | clone/fetch advertisement      |
+| POST   | `/git/<repo>.git/git-upload-pack`                    | `source.git.smart_http.read`                 | clone/fetch packfile           |
+| GET    | `/git/<repo>.git/info/refs?service=git-receive-pack` | `source.git.smart_http.write`                | push advertisement             |
+| POST   | `/git/<repo>.git/git-receive-pack`                   | `source.git.smart_http.write`                | 検証付き push                  |
+| POST   | `/mcp`                                               | `mcp.invoke`                                 | リポジトリのライフサイクル MCP |
+
+Takosumi-managed な Git/hosting/MCP 呼び出しは、通常の `api_url` / `hosting_api_url` /
+`mcp_url` Output を resource URI に
+明示 mapping した service-side Interface と InterfaceBinding を使います。Interface/blueprint は上記
+permission を明示し、Worker は Accounts UserInfo から audience、scope、Workspace、Capsule、Interface、
+Binding、resolved revision を fail-closed 検証します。managed InstallConfig は通常の `env` input 経由で
+`APP_WORKSPACE_ID` と `APP_CAPSULE_ID` を渡します。宣言・credential は Output に入れません。
+
+`PUBLISHED_MCP_AUTH_TOKEN` は直接/self-host deployment 用の standalone MCP bearer としてだけ残し、
+InterfaceBinding delivery とは扱いません。値は output しません。
+
+service-side `interfaceBlueprints` が宣言する surface は次の通りです (binding の subject は install 後に選択します)。
+
+| Interface type          | Resource URI input | Supported InterfaceBinding permissions                      |
+| ----------------------- | ------------------ | ----------------------------------------------------------- |
+| `source.git.smart_http` | `api_url`          | `source.git.smart_http.read`, `source.git.smart_http.write` |
+| `source.git.hosting`    | `hosting_api_url`  | `source.git.hosting.read`                                   |
+| `mcp.server`            | `mcp_url`          | `mcp.invoke`                                                |
+
+browser sign-in を有効にする場合は `takosumi_accounts_issuer_url`、
+`takosumi_accounts_client_id`、32 文字以上の `app_session_secret` を一緒に渡します。
+confidential client なら `takosumi_accounts_client_secret` も secret input として渡します。
+managed InstallConfig は `env.APP_WORKSPACE_ID` / `env.APP_CAPSULE_ID` も明示します。secret は
+repo や Output に書きません。
+
+### 削除と後片付け
+
+リポジトリの object はリポジトリ所有の object prefix の下に分離されているため、通常の
+リポジトリ削除 API でそのリポジトリのデータをすべて削除できます。Cloudflare provider は
+空でない R2 bucket を削除できません。そのため Takosumi 管理の実行では、operator が
+service-side InstallConfig に、レビュー済み OpenTofu destroy の前に bucket を空にする
+versioned `pre_destroy` lifecycle action と明示的な policy を設定します。対象 bucket などの
+non-secret 値もその service-side 設定で明示します。Takosumi 自体は Git 固有の後片付け
+ロジックを持たず、OpenTofu Output からコマンドや認証情報を推論しません。
+
+### MCP standalone bearer
+
+直接/self-host client が必要とするときだけ `published_mcp_auth_token` を外部 secret 管理から明示入力し、
+Worker 内部の `PUBLISHED_MCP_AUTH_TOKEN` として注入します。空なら static credential は作りません。
+値は output せず、Takosumi-managed runtime は `mcp.invoke` Interface OAuth を使います。
+
+## 開発者向け
+
+```sh
+bun test              # unit + real Git CLI clone/push/reclone E2E
+bun run check         # typecheck
+bun run build:worker  # emit local dist/worker.js for self-host applies
+tofu fmt -check
+tofu validate
+```
+
+deploy 後の smoke は exact scope を共有しないため、`TAKOS_GIT_MCP_TOKEN`、
+`TAKOS_GIT_READ_TOKEN`、`TAKOS_GIT_WRITE_TOKEN` を別々に渡します。
+`TAKOS_GIT_HOSTING_READ_TOKEN` を渡すと `/api/v1` も検証します。旧
+`TAKOS_GIT_ACCESS_TOKEN` は移行用 fallback だけで、新しい InterfaceBinding では使いません。
