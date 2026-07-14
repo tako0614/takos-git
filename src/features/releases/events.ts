@@ -1,10 +1,15 @@
 /**
- * Event descriptors emitted by the releases feature.
+ * Event descriptors + settable sink for the releases feature.
  *
- * The releases service does not itself own a webhook/event sink — that runtime
- * wiring belongs to the webhooks feature + the integrator. This module only
- * BUILDS the typed descriptor at the state transition that should fan out, so the
- * integrator can route it (see the feature report's cross-feature wiring note).
+ * The releases handlers do NOT import the webhooks feature — they build a typed
+ * {@link ReleaseEvent} at each fan-out state transition (publish / edit / delete)
+ * and hand it to a process-wide sink via {@link emitReleaseEvent}. The integrator
+ * installs a sink (`setReleaseEventSink`) that bridges these into webhook delivery
+ * (see `src/features/event-bridge.ts`). Until a sink is installed, emission is a
+ * no-op, so the releases feature stays testable + shippable in isolation.
+ *
+ * Emission is best-effort: a throwing/absent sink never fails the originating
+ * request (the authoritative R2/D1 write has already committed).
  */
 
 import type { ReleaseDto } from "./dto.ts";
@@ -34,4 +39,41 @@ export function buildReleasePublishedEvent(
   at: number,
 ): ReleaseEvent {
   return { event: "release.published", repo, action: "published", release, at };
+}
+
+/** Build the `release.edited` descriptor (a non-publishing metadata edit). */
+export function buildReleaseEditedEvent(
+  repo: string,
+  release: ReleaseDto,
+  at: number,
+): ReleaseEvent {
+  return { event: "release.edited", repo, action: "edited", release, at };
+}
+
+/** Build the `release.deleted` descriptor (release row removed). */
+export function buildReleaseDeletedEvent(
+  repo: string,
+  release: ReleaseDto,
+  at: number,
+): ReleaseEvent {
+  return { event: "release.deleted", repo, action: "deleted", release, at };
+}
+
+export type ReleaseEventSink = (event: ReleaseEvent) => void | Promise<void>;
+
+let sink: ReleaseEventSink | null = null;
+
+/** Install (or clear with `null`) the process-wide release-event sink. */
+export function setReleaseEventSink(next: ReleaseEventSink | null): void {
+  sink = next;
+}
+
+/** Best-effort emit; a throwing/absent sink never disturbs the caller. */
+export async function emitReleaseEvent(event: ReleaseEvent): Promise<void> {
+  if (!sink) return;
+  try {
+    await sink(event);
+  } catch {
+    // The authoritative write already landed; event delivery is advisory.
+  }
 }

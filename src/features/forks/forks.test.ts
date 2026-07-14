@@ -4,7 +4,7 @@
  * key state transitions (up-to-date, fast-forward, diverged).
  */
 
-import { describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
 
 import { SCOPES } from "../../contract/v1.ts";
 import { getCommitData, putCommit } from "../../git/object-store.ts";
@@ -27,6 +27,7 @@ import {
 import { resolveOwner } from "../repos/index.ts";
 import { forkRepository, getRepoByOwnerName, syncFork } from "./service.ts";
 import { registerForkRoutes } from "./routes.ts";
+import { setForkEventSink, type ForkEvent } from "./events.ts";
 
 const TOKENS = {
   taksrv_dev_read: { subject: "svc-dev", scope: SCOPES.hostingRead },
@@ -330,5 +331,73 @@ describe("sync with upstream (fast-forward only)", () => {
     const req = jsonRequest("POST", "/api/v1/repos/devuser/web/sync", {});
     const res = (await dispatch(registry, env, req)) as Response;
     expect(res.status).toBe(401);
+  });
+});
+
+describe("fork domain events", () => {
+  afterEach(() => setForkEventSink(null));
+
+  it("emits fork.created on the source repo when a fork is made", async () => {
+    const { registry, env, handle } = harness();
+    await seedFullRepo(handle, {
+      ownerLogin: "acme",
+      name: "web",
+      visibility: "public",
+      file: "README.md",
+      content: "# web\n",
+    });
+    const events: ForkEvent[] = [];
+    setForkEventSink((event) => {
+      events.push(event);
+    });
+
+    expect((await forkWebInto(registry, env)).status).toBe(201);
+
+    expect(events).toHaveLength(1);
+    expect(events[0]?.type).toBe("fork.created");
+    expect(events[0]?.repo).toBe("acme/web");
+    expect(events[0]?.payload.forkee).toMatchObject({ fullName: "devuser/web" });
+    expect(events[0]?.payload.sourceFullName).toBe("acme/web");
+  });
+
+  it("emits fork.synced (a push on the fork) when an upstream sync advances a ref", async () => {
+    const { registry, env, handle } = harness();
+    const source = await seedFullRepo(handle, {
+      ownerLogin: "acme",
+      name: "web",
+      visibility: "public",
+    });
+    expect((await forkWebInto(registry, env)).status).toBe(201);
+    const upstreamTip = await advanceBranch(env, "acme/web", "main", source.commitSha, "README.md", "v2");
+
+    const events: ForkEvent[] = [];
+    setForkEventSink((event) => {
+      events.push(event);
+    });
+    const req = jsonRequest("POST", "/api/v1/repos/devuser/web/sync", { branch: "main" }, "taksrv_dev_write");
+    expect(((await dispatch(registry, env, req)) as Response).status).toBe(200);
+
+    expect(events).toHaveLength(1);
+    expect(events[0]?.type).toBe("fork.synced");
+    expect(events[0]?.repo).toBe("devuser/web");
+    expect(events[0]?.payload).toMatchObject({
+      ref: "refs/heads/main",
+      before: source.commitSha,
+      after: upstreamTip,
+    });
+  });
+
+  it("emits nothing when the sync is already up-to-date", async () => {
+    const { registry, env, handle } = harness();
+    await seedFullRepo(handle, { ownerLogin: "acme", name: "web", visibility: "public" });
+    expect((await forkWebInto(registry, env)).status).toBe(201);
+
+    const events: ForkEvent[] = [];
+    setForkEventSink((event) => {
+      events.push(event);
+    });
+    const req = jsonRequest("POST", "/api/v1/repos/devuser/web/sync", {}, "taksrv_dev_write");
+    expect(((await dispatch(registry, env, req)) as Response).status).toBe(200);
+    expect(events).toHaveLength(0);
   });
 });

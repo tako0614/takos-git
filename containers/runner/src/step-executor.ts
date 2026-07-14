@@ -3,9 +3,10 @@
  *
  * Consumes an {@link ActionsJobDispatch} and runs each {@link DispatchStep} in a
  * shared workspace, honoring `shell` / `working-directory` / `env` /
- * `continue-on-error` / `timeout-minutes`. `run:` steps spawn a shell; the only
- * MVP `uses:` actions are `<org>/checkout` (git checkout of the run-pinned tree)
- * and `<org>/upload-artifact`. Every other `uses:` fails the step with an explicit
+ * `continue-on-error` / `timeout-minutes`. `run:` steps spawn a shell; `uses:`
+ * steps are dispatched through the {@link resolveAction capability registry}
+ * (`action-registry.ts`) — supported today: `checkout`, `upload-artifact`,
+ * `download-artifact`. Every unregistered `uses:` fails the step with an explicit
  * "unsupported action" message. Logs stream through the injected sink and are
  * secret-REDACTED before they leave the process.
  *
@@ -22,6 +23,7 @@ import type {
 import type { RunConclusion } from "../../../src/features/actions/dto.ts";
 import { createRedactor } from "../../../src/features/actions/runner/redaction.ts";
 import { stepTimeoutMs, DEFAULT_RUNNER_POLICY } from "../../../src/features/actions/runner/policy.ts";
+import { resolveAction, supportedActionNames } from "./action-registry.ts";
 
 export interface CommandResult {
   /** Process exit code, or null when killed (e.g. on timeout). */
@@ -48,6 +50,8 @@ export interface CheckoutClient {
 export interface ArtifactClient {
   /** Upload the file/dir at `sourcePath` under `name`. */
   upload(name: string, sourcePath: string): Promise<void>;
+  /** Download the artifact named `name` and unpack it into `destPath`. */
+  download(name: string, destPath: string): Promise<void>;
 }
 
 export interface LogSink {
@@ -74,10 +78,7 @@ export interface JobExecution {
   readonly steps: StepResultReport[];
 }
 
-const CHECKOUT_ACTION = /(^|\/)checkout(@|$)/u;
-const UPLOAD_ARTIFACT_ACTION = /(^|\/)upload-artifact(@|$)/u;
-
-function joinPath(base: string, sub: string | null): string {
+export function joinPath(base: string, sub: string | null): string {
   if (!sub) return base;
   const clean = sub.replace(/^\/+/u, "");
   return clean ? `${base.replace(/\/+$/u, "")}/${clean}` : base;
@@ -174,7 +175,7 @@ function skippedReport(step: DispatchStep, startedAt: number, completedAt: numbe
   };
 }
 
-interface StepRunDeps extends ExecuteJobDeps {
+export interface StepRunDeps extends ExecuteJobDeps {
   readonly now: () => number;
   readonly defaultShell: string;
   readonly secretEnv: Record<string, string>;
@@ -182,7 +183,7 @@ interface StepRunDeps extends ExecuteJobDeps {
   readonly log: (text: string, stepId?: string) => Promise<void>;
 }
 
-interface StepOutcome {
+export interface StepOutcome {
   readonly conclusion: RunConclusion;
   readonly exitCode: number | null;
   readonly errorMessage?: string;
@@ -197,20 +198,14 @@ async function runStep(
   const uses = contract.uses?.trim() ?? null;
 
   if (uses) {
-    if (CHECKOUT_ACTION.test(uses)) {
-      try {
-        await deps.checkout.checkout(deps.workspaceDir);
-        await deps.log(`checked out ${dispatch.checkout.commit}\n`, step.stepId);
-        return { conclusion: "success", exitCode: 0 };
-      } catch (error) {
-        await deps.log(`checkout failed: ${errText(error)}\n`, step.stepId);
-        return { conclusion: "failure", exitCode: null, errorMessage: errText(error) };
-      }
+    const handler = resolveAction(uses);
+    if (handler) {
+      return handler({ dispatch, step, deps });
     }
-    if (UPLOAD_ARTIFACT_ACTION.test(uses)) {
-      return uploadArtifactStep(step, deps);
-    }
-    const message = `unsupported action: ${uses} (MVP supports checkout + upload-artifact; use run: for everything else)`;
+    const supported = supportedActionNames().join(", ");
+    const message =
+      `unsupported action: ${uses} (supported: ${supported}; use run: for everything else. ` +
+      `cache / setup-* are documented follow-ups)`;
     await deps.log(`${message}\n`, step.stepId);
     return { conclusion: "failure", exitCode: null, errorMessage: message };
   }
@@ -220,25 +215,6 @@ async function runStep(
     return { conclusion: "success", exitCode: 0 }; // nothing to run
   }
   return runShellStep(dispatch, step, deps, script);
-}
-
-async function uploadArtifactStep(step: DispatchStep, deps: StepRunDeps): Promise<StepOutcome> {
-  const withInputs = step.contract.with ?? {};
-  const path = typeof withInputs.path === "string" ? withInputs.path : null;
-  const name = typeof withInputs.name === "string" ? withInputs.name : "artifact";
-  if (!path) {
-    const message = "upload-artifact requires a `with.path` input";
-    await deps.log(`${message}\n`, step.stepId);
-    return { conclusion: "failure", exitCode: null, errorMessage: message };
-  }
-  try {
-    await deps.artifacts.upload(name, joinPath(deps.workspaceDir, path));
-    await deps.log(`uploaded artifact "${name}" from ${path}\n`, step.stepId);
-    return { conclusion: "success", exitCode: 0 };
-  } catch (error) {
-    await deps.log(`artifact upload failed: ${errText(error)}\n`, step.stepId);
-    return { conclusion: "failure", exitCode: null, errorMessage: errText(error) };
-  }
 }
 
 async function runShellStep(
@@ -282,6 +258,6 @@ async function runShellStep(
   };
 }
 
-function errText(error: unknown): string {
+export function errText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }

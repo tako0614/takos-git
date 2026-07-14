@@ -25,10 +25,16 @@ import { handleMcp } from "./mcp.ts";
 import { handleForgeApi } from "./forge-api.ts";
 import {
   hasValidInterfaceOAuthConfiguration,
-  verifyInterfaceOAuthBearer,
+  verifyInterfaceOAuthCredential,
 } from "./interface-oauth-auth.ts";
 import { routes } from "./router.ts";
-import type { D1Database } from "./db/index.ts";
+import { createDbClient, type D1Database } from "./db/index.ts";
+import { authorizeRepo, upsertPrincipal } from "./auth/acl.ts";
+import {
+  ACTION_REQUIRED_SCOPE,
+  type AuthContext,
+  type RepoAction,
+} from "./contract/v1.ts";
 import type { DurableObjectNamespace } from "./features/actions/runner/cf-types.ts";
 // Side-effect: registers the /api/v1/ping route into the global registry. Later
 // features add themselves the same way — one import line here, no control flow.
@@ -438,6 +444,74 @@ function parseGitPath(
   return null;
 }
 
+/** The proven interface credential fields the smart-HTTP ACL consumes. */
+interface SmartHttpCredential {
+  readonly subject: string;
+  readonly scope: string;
+  readonly interfaceBindingId: string;
+}
+
+/** A resolved smart-HTTP repo authorization: a deny Response, or the per-ref gate. */
+type SmartHttpGate =
+  | Response
+  | { readonly authorizeRef: (refName: string) => Promise<boolean> };
+
+/**
+ * Per-repo authorization for the Git smart-HTTP surface, layered AFTER the exact
+ * smart_http scope verify (which already ran in {@link fetchHandler}) and ONLY
+ * when the D1 metadata plane is present. Resolves the interface credential's
+ * subject into an app-local `service_account` principal, then runs the fail-closed
+ * repo ACL: a private repo the caller cannot read → 404 (non-disclosure), an
+ * insufficient role → 403. Returns a per-ref gate the receive-pack path calls to
+ * enforce branch protection on each advanced ref BEFORE the R2 CAS.
+ */
+async function authorizeSmartHttpRepo(
+  dbBinding: D1Database,
+  credential: SmartHttpCredential,
+  repoPath: string,
+  service: GitService,
+): Promise<SmartHttpGate> {
+  const db = createDbClient(dbBinding);
+  // The R2 storage key is `owner/name`; split on the first slash. A bare
+  // single-segment path has no owner row and fails closed as not_found below.
+  const slash = repoPath.indexOf("/");
+  const owner = slash === -1 ? "" : repoPath.slice(0, slash);
+  const name = slash === -1 ? repoPath : repoPath.slice(slash + 1);
+  const action: RepoAction =
+    service === "git-receive-pack" ? "contents.write" : "contents.read";
+  const principal = await upsertPrincipal(db, {
+    subject: credential.subject,
+    kind: "service_account",
+    bindingId: credential.interfaceBindingId,
+  });
+  // The authoritative scope ceiling for THIS surface already ran in fetchHandler
+  // (the exact source.git.smart_http.{read,write} verify). authorizeRepo's
+  // interface ceiling speaks the hosting-scope vocabulary, so seed the ctx with
+  // the action's required scope to make that (already-satisfied) ceiling a no-op
+  // and let the ACL contribute role + visibility + branch protection.
+  const ctx: AuthContext = {
+    principal,
+    channel: "interface",
+    scopes: new Set([credential.scope, ACTION_REQUIRED_SCOPE[action]]),
+  };
+  const decision = await authorizeRepo(db, ctx, owner, name, action, {
+    ref: "*",
+  });
+  if (!decision.allow) {
+    return json({ error: decision.reason }, decision.status);
+  }
+  return {
+    // Per-ref branch protection at receive-pack time: re-run the ACL with the
+    // concrete ref so a protected branch rejects a non-permitted direct push.
+    authorizeRef: async (refName: string) =>
+      (
+        await authorizeRepo(db, ctx, owner, name, "contents.write", {
+          ref: refName,
+        })
+      ).allow,
+  };
+}
+
 export type InterfaceUserInfoFetch = (
   input: RequestInfo | URL,
   init?: RequestInit,
@@ -542,16 +616,34 @@ async function fetchHandler(
   ) {
     return json({ error: "interface_oauth_unconfigured" }, 503);
   }
-  if (
-    !(await verifyInterfaceOAuthBearer(request, token, expectedPermission, {
+  const credential = await verifyInterfaceOAuthCredential(
+    request,
+    token,
+    expectedPermission,
+    {
       issuerUrl: env.OIDC_ISSUER_URL,
       expectedAudience: audience,
       expectedWorkspaceId: env.APP_WORKSPACE_ID,
       expectedCapsuleId: env.APP_CAPSULE_ID,
       ...(interfaceUserInfoFetch ? { fetchImpl: interfaceUserInfoFetch } : {}),
-    }))
-  ) {
-    return unauthorized();
+    },
+  );
+  if (!credential.ok) return unauthorized();
+
+  // Per-repo ACL, layered AFTER the exact-scope gate and ONLY when the D1
+  // metadata plane is present (D1-optional graceful degradation). Without DB this
+  // is skipped entirely, leaving exactly the scope-only behavior the DB-less E2E
+  // relies on. The per-ref gate enforces branch protection inside receive-pack.
+  let authorizeRef: ((refName: string) => Promise<boolean>) | undefined;
+  if (env.DB) {
+    const gate = await authorizeSmartHttpRepo(
+      env.DB,
+      credential,
+      route.repo,
+      service,
+    );
+    if (gate instanceof Response) return gate;
+    authorizeRef = gate.authorizeRef;
   }
   if (!(await repoExists(env.BUCKET, route.repo))) {
     return json({ error: "repository_not_found" }, 404);
@@ -579,7 +671,10 @@ async function fetchHandler(
       ? (updates: readonly { name: string; oldSha: string; newSha: string }[]) =>
           onPushDiscoverWorkflows(env, route.repo, updates)
       : undefined;
-    return handleReceivePack(env.BUCKET, route.repo, body, onApplied);
+    return handleReceivePack(env.BUCKET, route.repo, body, {
+      ...(onApplied ? { onApplied } : {}),
+      ...(authorizeRef ? { authorizeRef } : {}),
+    });
   }
   return handleUploadPack(env.BUCKET, route.repo, body);
 }

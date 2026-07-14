@@ -50,6 +50,7 @@ import {
   toRepositoryDtoFull,
   type RepoFullRow,
 } from "./service.ts";
+import { buildForkCreatedEvent, buildForkSyncedEvent, emitForkEvent } from "./events.ts";
 
 const RR = "/api/v1/repos/:owner/:repo";
 const MAX_BODY_BYTES = 16 * 1024;
@@ -243,17 +244,29 @@ const createForkHandler: Route["handler"] = async (ctx) => {
   }
 
   const base = originBase(ctx);
+  const sourceFullName = `${source.ownerLogin}/${source.name}`;
+  const forkFullName = `${outcome.fork.ownerLogin}/${outcome.fork.name}`;
+  // Fan out `fork` on the SOURCE repo's webhooks (GitHub parity: the forked repo
+  // hears about its new fork). Best-effort — the fork already committed.
+  await emitForkEvent(
+    buildForkCreatedEvent(source.storageKey, access.auth.principal.id, {
+      action: "created",
+      sourceFullName,
+      forkee: {
+        owner: outcome.fork.ownerLogin,
+        name: outcome.fork.name,
+        fullName: forkFullName,
+      },
+      objectsCopied: outcome.objectsCopied,
+    }),
+  );
   return json(
     {
-      repository: toRepositoryDtoFull(
-        outcome.fork,
-        `${source.ownerLogin}/${source.name}`,
-        base,
-      ),
+      repository: toRepositoryDtoFull(outcome.fork, sourceFullName, base),
       forkedFrom: {
         owner: source.ownerLogin,
         name: source.name,
-        fullName: `${source.ownerLogin}/${source.name}`,
+        fullName: sourceFullName,
       },
       objectsCopied: outcome.objectsCopied,
     },
@@ -353,6 +366,21 @@ const syncHandler: Route["handler"] = async (ctx) => {
       default:
         return errorResponse(500, "sync_failed", "Failed to sync with upstream.");
     }
+  }
+
+  // A sync that actually advanced the fork's ref is a `push` on the fork repo.
+  // No ref moved when already up-to-date, so no push fires. Best-effort.
+  if (!outcome.alreadyUpToDate) {
+    await emitForkEvent(
+      buildForkSyncedEvent(fork.storageKey, access.auth.principal.id, {
+        ref: `refs/heads/${outcome.branch}`,
+        before: outcome.previousHead,
+        after: outcome.newHead,
+        commitsSynced: outcome.commitsSynced,
+        forced: false,
+        syncedFromUpstream: true,
+      }),
+    );
   }
 
   return json({
