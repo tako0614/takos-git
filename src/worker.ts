@@ -32,7 +32,12 @@ import type { D1Database } from "./db/index.ts";
 // Side-effect: registers the /api/v1/ping route into the global registry. Later
 // features add themselves the same way — one import line here, no control flow.
 import "./routes/ping.ts";
+// Feature registration: each feature exports a `registerXRoutes(registry)`; the
+// worker adds one import + one call. Phase-3b features follow this exact pattern.
+import { registerRepoRoutes } from "./features/repos/index.ts";
 import iconSvg from "../public/icons/takos-git.svg" with { type: "text" };
+
+registerRepoRoutes(routes);
 
 /** The native Cloudflare Workers static-assets binding (subset we use). */
 export interface AssetFetcher {
