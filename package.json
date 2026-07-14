@@ -4,11 +4,16 @@
   "private": true,
   "type": "module",
   "description": "Standalone Git Smart HTTP service (installable Capsule).",
+  "license": "AGPL-3.0-only",
   "scripts": {
     "build:worker": "bun run scripts/build-worker.ts",
+    "build:web": "cd web && vite build",
+    "build": "bun run build:web && bun run build:worker",
+    "dev:web": "cd web && vite",
     "smoke:postdeploy": "bun run scripts/post-deploy-smoke.ts",
     "test": "bun test",
-    "check": "bunx tsc --noEmit"
+    "check": "bunx tsc --noEmit",
+    "check:web": "cd web && tsc --noEmit"
   },
   "devDependencies": {
     "typescript": "^5.6.0"
