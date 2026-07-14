@@ -29,6 +29,7 @@ import {
 } from "./interface-oauth-auth.ts";
 import { routes } from "./router.ts";
 import type { D1Database } from "./db/index.ts";
+import type { DurableObjectNamespace } from "./features/actions/runner/cf-types.ts";
 // Side-effect: registers the /api/v1/ping route into the global registry. Later
 // features add themselves the same way — one import line here, no control flow.
 import "./routes/ping.ts";
@@ -45,8 +46,22 @@ import {
   onPushDiscoverWorkflows,
   registerActionsRoutes,
 } from "./features/actions/index.ts";
+import {
+  handleInternalActionsRoute,
+  handleWorkflowQueue,
+  type MessageBatch,
+  type RunTick,
+} from "./features/actions/runner/index.ts";
 import { installEventBridge } from "./features/event-bridge.ts";
 import iconSvg from "../public/icons/takos-git.svg" with { type: "text" };
+
+// Self-hosted Actions runner Durable Objects. Re-exported from the Worker entry
+// so the `main.tf` migration `new_sqlite_classes = ["ActionsRunCoordinator",
+// "ActionsJobRunner"]` resolves against the deployed bundle.
+export {
+  ActionsRunCoordinator,
+  ActionsJobRunner,
+} from "./features/actions/runner/index.ts";
 
 registerRepoRoutes(routes);
 // Phase-3b collaboration features, registered in dependency order.
@@ -91,6 +106,10 @@ export interface Env {
   ACTIONS_SECRETS_KEY?: string;
   /** HMAC key for the run-scoped /internal/actions/* routes (Phase 5b). */
   ACTIONS_RUNNER_SECRET?: string;
+  /** Run-coordinator Durable Object namespace (Phase 5b). */
+  ACTIONS_RUN?: DurableObjectNamespace;
+  /** Per-job Container Durable Object namespace (Phase 5b). */
+  ACTIONS_JOB?: DurableObjectNamespace;
 }
 
 // Tightened from the inline console's `script-src 'unsafe-inline'`: Vite emits
@@ -440,6 +459,12 @@ async function fetchHandler(
   if (request.method === "GET" && url.pathname === ICON_PATH) {
     return svgAsset(iconSvg);
   }
+  // Self-hosted Actions runner callback surface. A SEPARATE HMAC trust boundary
+  // (ACTIONS_RUNNER_SECRET), dispatched here BEFORE the router so it is never
+  // reachable via /api/v1, /git/, or /mcp. Returns null when the path is not an
+  // /internal/actions/* route, so existing dispatch is untouched; fail-closed.
+  const internalActions = await handleInternalActionsRoute(request, env, url);
+  if (internalActions) return internalActions;
   if (
     request.method === "GET" &&
     (url.pathname === "/" || url.pathname === "/ui")
@@ -558,9 +583,15 @@ async function fetchHandler(
 
 export function createGitWorker(
   interfaceUserInfoFetch?: InterfaceUserInfoFetch,
-): { fetch(request: Request, env: Env): Promise<Response> } {
+): {
+  fetch(request: Request, env: Env): Promise<Response>;
+  queue(batch: MessageBatch<RunTick>, env: Env): Promise<void>;
+} {
   return {
     fetch: (request, env) => fetchHandler(request, env, interfaceUserInfoFetch),
+    // Actions run-tick consumer (WORKFLOW_QUEUE → coordinator DO). A no-op when
+    // the coordinator namespace is unbound; never touches the fetch path.
+    queue: (batch, env) => handleWorkflowQueue(batch, env),
   };
 }
 

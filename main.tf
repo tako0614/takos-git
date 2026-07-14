@@ -188,6 +188,23 @@ variable "actions_secrets_key" {
   }
 }
 
+variable "actions_runner_image" {
+  description = "Container image ref for the self-hosted Actions runner (built from containers/runner/Dockerfile and pushed by takos-git CI). Attached to the ActionsJobRunner Durable Object class through a wrangler `[[containers]]` step; the cloudflare provider 5.19.1 cannot express a container image binding. Informational for OpenTofu (surfaced as an output for the wrangler step)."
+  type        = string
+  default     = ""
+}
+
+variable "actions_runner_max_instances" {
+  description = "Maximum concurrent runner Container instances (wrangler `[[containers]].max_instances`). Applied by the wrangler container step, not by OpenTofu."
+  type        = number
+  default     = 10
+
+  validation {
+    condition     = var.actions_runner_max_instances >= 1 && var.actions_runner_max_instances <= 1000
+    error_message = "actions_runner_max_instances must be between 1 and 1000."
+  }
+}
+
 variable "worker_bundle_path" {
   description = "Local path to a source-built Worker module JS file. Used only when worker_release_tag and worker_bundle_url are both empty."
   type        = string
@@ -361,11 +378,34 @@ resource "cloudflare_d1_database" "metadata" {
 }
 
 # --- Self-hosted Actions runner backing resources (gated by enable_actions) ---
-# The runner Container is a Cloudflare Container bound through the ActionsJobRunner
-# Durable Object namespace declared on the Worker script (see the durable_object
-# bindings + migrations block below). The cloudflare provider 5.19.1 exposes no
-# standalone container resource; the container image is built and pushed in
-# takos-git CI and wired via wrangler in Phase 5. TODO(Phase5): container image.
+#
+# The self-hosted Actions runner is embedded in takos-git's OWN worker:
+#   - the run coordinator DO  (ActionsRunCoordinator, SQLite)         — bound below
+#   - the per-job Container DO (ActionsJobRunner)                     — bound below
+#   - the run-tick queue + DLQ + consumer                            — resources below
+#   - the logs/artifacts R2 bucket (R2_ACTIONS)                      — resource below
+# All of the above ARE expressed here and provision zero resources unless
+# enable_actions is true.
+#
+# CONTAINER IMAGE — the one part OpenTofu cannot express. The runner Container
+# image (built from `containers/runner/Dockerfile`, entrypoint the in-container
+# step server `containers/runner/src/executor-main.ts`) attaches to the
+# ActionsJobRunner Durable Object class. The cloudflare provider 5.19.1
+# `cloudflare_workers_script` schema has NO `containers` attribute, so the image
+# binding + `max_instances` MUST be applied out of band with a wrangler
+# `[[containers]]` step in takos-git CI, reading `actions_runner_image` /
+# `actions_runner_max_instances` from the module outputs:
+#
+#   # wrangler.toml (generated from the module outputs)
+#   [[containers]]
+#   class_name     = "ActionsJobRunner"
+#   image          = "<actions_runner_image>"
+#   max_instances  = <actions_runner_max_instances>
+#
+# This is the same output-then-wrangler pattern used for the D1 migrations and the
+# worker bundle. The DO namespace + the `new_sqlite_classes` migration for both DO
+# classes ARE declared on the worker script below, so only the image attachment is
+# deferred to wrangler. TODO(wrangler): apply the `[[containers]]` image binding.
 resource "cloudflare_queue" "workflows" {
   count      = local.actions_enabled ? 1 : 0
   account_id = var.cloudflare_account_id
