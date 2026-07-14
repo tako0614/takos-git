@@ -2,7 +2,7 @@
 
 import {
   hasValidInterfaceOAuthConfiguration,
-  verifyInterfaceOAuthBearer,
+  verifyInterfaceOAuthCredential,
 } from "./interface-oauth-auth.ts";
 import {
   createRepo,
@@ -13,12 +13,18 @@ import {
   repoExists,
 } from "./git/refs-store.ts";
 import type { ObjectStoreBinding } from "./git/types.ts";
+import { createDbClient, type D1Binding, type DbClient } from "./db/index.ts";
+import { upsertPrincipal } from "./auth/acl.ts";
+import { ensureOwnerForNamespace } from "./features/repos/owners.ts";
+import { provisionRepo } from "./features/repos/repositories.ts";
 
 const MCP_PROTOCOL_VERSION = "2025-03-26";
 const MAX_MCP_BODY_BYTES = 1024 * 1024;
 
 interface McpEnv {
   BUCKET: ObjectStoreBinding;
+  /** D1 metadata plane. When present, MCP repo create/delete also writes the row. */
+  DB?: D1Binding;
   PUBLISHED_MCP_AUTH_TOKEN?: string;
   APP_URL?: string;
   OIDC_ISSUER_URL?: string;
@@ -26,7 +32,13 @@ interface McpEnv {
   APP_CAPSULE_ID?: string;
 }
 
-type McpAuth = { readonly kind: "capsule" } | { readonly kind: "interface" };
+type McpAuth =
+  | { readonly kind: "capsule" }
+  | {
+      readonly kind: "interface";
+      readonly subject: string;
+      readonly bindingId: string;
+    };
 
 interface ToolDefinition {
   readonly name: string;
@@ -35,7 +47,12 @@ interface ToolDefinition {
   readonly annotations: Record<string, boolean>;
   readonly call: (
     args: Record<string, unknown>,
-    context: { env: McpEnv; auth: McpAuth; origin: string },
+    context: {
+      env: McpEnv;
+      auth: McpAuth;
+      origin: string;
+      db: DbClient | null;
+    },
   ) => Promise<unknown>;
 }
 
@@ -127,17 +144,26 @@ async function authorize(
       },
     );
   }
-  if (
-    interfaceOAuthConfigured &&
-    (await verifyInterfaceOAuthBearer(request, token, "mcp.invoke", {
-      issuerUrl: env.OIDC_ISSUER_URL,
-      expectedAudience: audience,
-      expectedWorkspaceId: env.APP_WORKSPACE_ID,
-      expectedCapsuleId: env.APP_CAPSULE_ID,
-      ...(interfaceUserInfoFetch ? { fetchImpl: interfaceUserInfoFetch } : {}),
-    }))
-  ) {
-    return { kind: "interface" };
+  if (interfaceOAuthConfigured) {
+    const credential = await verifyInterfaceOAuthCredential(
+      request,
+      token,
+      "mcp.invoke",
+      {
+        issuerUrl: env.OIDC_ISSUER_URL,
+        expectedAudience: audience,
+        expectedWorkspaceId: env.APP_WORKSPACE_ID,
+        expectedCapsuleId: env.APP_CAPSULE_ID,
+        ...(interfaceUserInfoFetch ? { fetchImpl: interfaceUserInfoFetch } : {}),
+      },
+    );
+    if (credential.ok) {
+      return {
+        kind: "interface",
+        subject: credential.subject,
+        bindingId: credential.interfaceBindingId,
+      };
+    }
   }
   return unauthorized();
 }
@@ -213,10 +239,33 @@ const TOOLS: readonly ToolDefinition[] = [
       idempotentHint: false,
       openWorldHint: false,
     },
-    async call(args, { env, origin }) {
+    async call(args, { env, origin, auth, db }) {
       const repo = requireRepo(args);
-      const created = await createRepo(env.BUCKET, repo);
-      if (!created) throw new Error("repository already exists");
+      if (db) {
+        // D1 configured → create the metadata row (via the same repos service)
+        // so MCP-created repos are ACL-browsable, plus the R2 refs-doc.
+        const [ownerLogin, name] = repo.split("/");
+        const principal =
+          auth.kind === "interface"
+            ? await upsertPrincipal(db, {
+                subject: auth.subject,
+                kind: "service_account",
+                bindingId: auth.bindingId,
+              })
+            : null;
+        const owner = await ensureOwnerForNamespace(
+          db,
+          ownerLogin,
+          principal?.id ?? null,
+        );
+        const result = await provisionRepo(env.BUCKET, db, owner, {
+          name: name as string,
+        });
+        if (!result.ok) throw new Error("repository already exists");
+      } else {
+        const created = await createRepo(env.BUCKET, repo);
+        if (!created) throw new Error("repository already exists");
+      }
       return {
         repo,
         url: `${origin}/git/${repo.split("/").map(encodeURIComponent).join("/")}.git`,
@@ -256,9 +305,14 @@ const TOOLS: readonly ToolDefinition[] = [
       idempotentHint: false,
       openWorldHint: false,
     },
-    async call(args, { env }) {
+    async call(args, { env, db }) {
       const repo = requireRepo(args);
       const deleted = await deleteRepo(env.BUCKET, repo);
+      // Remove the D1 metadata row too (cascades collaborators/issues/…). R2 is
+      // the authoritative existence signal, so a missing D1 row is not an error.
+      if (db) {
+        await db.run(`DELETE FROM repositories WHERE storage_key = ?`, [repo]);
+      }
       if (!deleted) throw new Error("repository not found");
       return { repo, deleted: true };
     },
@@ -360,6 +414,7 @@ export async function handleMcp(
       env,
       auth,
       origin: new URL(request.url).origin,
+      db: env.DB ? createDbClient(env.DB) : null,
     });
     return jsonRpcResult(body.id, mcpResult(result));
   } catch (error) {

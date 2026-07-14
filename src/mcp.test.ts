@@ -2,6 +2,9 @@ import { describe, expect, test } from "bun:test";
 
 import { MemoryBucket } from "./test-bucket.ts";
 import worker, { createGitWorker, type Env } from "./worker.ts";
+import { createDbClient } from "./db/client.ts";
+import { createFakeD1 } from "./db/fake.ts";
+import { migrationSql } from "./db/migration-sql.ts";
 
 const MCP_TOKEN = "generated-published-mcp-token";
 
@@ -88,6 +91,27 @@ describe("takos-git MCP", () => {
     const deleted = await call(target, MCP_TOKEN, "git_repo_delete", { repo: "acme/widgets" });
     expect((deleted.result as { structuredContent: { deleted: boolean } }).structuredContent.deleted)
       .toBe(true);
+  });
+
+  test("with the metadata plane, git_repo_create/delete write and remove the D1 row", async () => {
+    const fake = createFakeD1(migrationSql);
+    const target: Env = {
+      BUCKET: new MemoryBucket(),
+      PUBLISHED_MCP_AUTH_TOKEN: MCP_TOKEN,
+      DB: fake,
+    };
+    await call(target, MCP_TOKEN, "git_repo_create", { repo: "acme/widgets" });
+    const db = createDbClient(fake);
+    const created = await db.queryOne<{ storage_key: string }>(
+      `SELECT storage_key FROM repositories WHERE storage_key = 'acme/widgets'`,
+    );
+    expect(created?.storage_key).toBe("acme/widgets");
+
+    await call(target, MCP_TOKEN, "git_repo_delete", { repo: "acme/widgets" });
+    const gone = await db.queryOne(
+      `SELECT storage_key FROM repositories WHERE storage_key = 'acme/widgets'`,
+    );
+    expect(gone).toBeNull();
   });
 
   test("Interface OAuth accepts only the exact mcp.invoke audience and owner evidence", async () => {

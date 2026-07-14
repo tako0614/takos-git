@@ -5,6 +5,9 @@ import { MemoryBucket } from "./test-bucket.ts";
 import { seedRepo } from "./seed.ts";
 import { concatBytes } from "./git/sha1.ts";
 import { PKT_FLUSH, pktLineString } from "./git/pack-common.ts";
+import { createDbClient } from "./db/client.ts";
+import { createFakeD1 } from "./db/fake.ts";
+import { migrationSql } from "./db/migration-sql.ts";
 
 const REPO = "acme/widgets";
 const READ_TOKEN = "taksrv_git_read";
@@ -94,14 +97,39 @@ describe("takos-git worker", () => {
 
   test("routes the authenticated hosting API before Smart HTTP", async () => {
     const { env } = await setup();
+    // The /api/v1 forge surface now lives on the router + D1 ACL. Seed a matching
+    // public repo row so the list returns it (owner "acme", name "widgets").
+    const fake = createFakeD1(migrationSql);
+    const db = createDbClient(fake);
+    const now = db.now();
+    const ownerId = db.id();
+    await db.run(
+      `INSERT INTO owners (id, login, type, principal_id, created_at, updated_at)
+       VALUES (?, 'acme', 'org', NULL, ?, ?)`,
+      [ownerId, now, now],
+    );
+    await db.run(
+      `INSERT INTO repositories (id, owner_id, name, storage_key, visibility, default_branch, created_at, updated_at)
+       VALUES (?, ?, 'widgets', 'acme/widgets', 'public', 'main', ?, ?)`,
+      [db.id(), ownerId, now, now],
+    );
+    const res = await worker.fetch(
+      req("GET", "/api/v1/repos", { token: HOSTING_TOKEN }),
+      { ...env, DB: fake },
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      repositories: [{ fullName: REPO }],
+    });
+  });
+
+  test("the /api/v1 forge surface is 503 without the metadata plane", async () => {
+    const { env } = await setup();
     const res = await worker.fetch(
       req("GET", "/api/v1/repos", { token: HOSTING_TOKEN }),
       env,
     );
-    expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({
-      repositories: [{ name: REPO }],
-    });
+    expect(res.status).toBe(503);
   });
 
   test("serves the launcher tile icon it advertises", async () => {
