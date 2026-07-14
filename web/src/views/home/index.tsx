@@ -63,7 +63,12 @@ function RepoRow(props: { repo: RepositoryDto }): JSX.Element {
 export function HomeView(): JSX.Element {
   const session = useSession();
   const [cursor, setCursor] = createSignal<string | null>(null);
-  const [data] = createResource(cursor, (c) => reposApi.list({ cursor: c ?? undefined }));
+  // Source must be an object (always truthy): a bare null cursor would make
+  // createResource treat the source as "no fetch" and never load the list.
+  const [data] = createResource(
+    () => ({ cursor: cursor() }),
+    (s) => reposApi.list({ cursor: s.cursor ?? undefined }),
+  );
 
   return (
     <PageContainer>
