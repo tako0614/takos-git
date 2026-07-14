@@ -35,9 +35,23 @@ import "./routes/ping.ts";
 // Feature registration: each feature exports a `registerXRoutes(registry)`; the
 // worker adds one import + one call. Phase-3b features follow this exact pattern.
 import { registerRepoRoutes } from "./features/repos/index.ts";
+import { registerIssuesRoutes } from "./features/issues/index.ts";
+import { registerPullRoutes } from "./features/pulls/routes.ts";
+import { registerReleaseRoutes } from "./features/releases/routes.ts";
+import { registerForkRoutes } from "./features/forks/index.ts";
+import { registerWebhookRoutes } from "./features/webhooks/routes.ts";
+import { registerChecksRoutes } from "./features/checks/routes.ts";
+import { installEventBridge } from "./features/event-bridge.ts";
 import iconSvg from "../public/icons/takos-git.svg" with { type: "text" };
 
 registerRepoRoutes(routes);
+// Phase-3b collaboration features, registered in dependency order.
+registerIssuesRoutes(routes);
+registerPullRoutes(routes);
+registerReleaseRoutes(routes);
+registerForkRoutes(routes);
+registerWebhookRoutes(routes);
+registerChecksRoutes(routes);
 
 /** The native Cloudflare Workers static-assets binding (subset we use). */
 export interface AssetFetcher {
@@ -397,6 +411,9 @@ async function fetchHandler(
   interfaceUserInfoFetch?: InterfaceUserInfoFetch,
 ): Promise<Response> {
   const url = new URL(request.url);
+  // Bridge issues/pulls domain events to webhook delivery. Cheap + idempotent;
+  // env bindings are stable per isolate, so re-installing each request is safe.
+  installEventBridge(env);
 
   if (request.method === "GET" && url.pathname === "/healthz") {
     return json({ status: "ok", service: "takos-git" }, 200);
