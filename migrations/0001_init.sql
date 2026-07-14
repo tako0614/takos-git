@@ -18,11 +18,22 @@
 -- NNNN_*.sql migrations. Never rewrite an applied migration.
 
 -- ============================================================================
+-- 0. Schema migration ledger
+-- ============================================================================
+-- Records which migrations the Worker has applied. `ensureSchema` (src/db/
+-- ensure-schema.ts) applies this baseline once per D1 database on first use, so a
+-- Takosumi/OpenTofu install needs no separate `wrangler d1 migrations apply` step.
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  version    TEXT PRIMARY KEY,
+  applied_at INTEGER NOT NULL
+);
+
+-- ============================================================================
 -- 1. Identity and namespace
 -- ============================================================================
 
 -- A workspace-scoped actor. subject = OIDC sub or Interface OAuth sub.
-CREATE TABLE principals (
+CREATE TABLE IF NOT EXISTS principals (
   id             TEXT PRIMARY KEY,           -- ULID, internal stable id
   subject        TEXT NOT NULL,              -- OIDC sub (authoritative identity)
   kind           TEXT NOT NULL DEFAULT 'user', -- 'user' | 'service_account'
@@ -32,10 +43,10 @@ CREATE TABLE principals (
   created_at     INTEGER NOT NULL,
   updated_at     INTEGER NOT NULL
 );
-CREATE UNIQUE INDEX uq_principals_subject ON principals(subject);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_principals_subject ON principals(subject);
 
 -- Namespace segment. Every repo lives under exactly one owner.
-CREATE TABLE owners (
+CREATE TABLE IF NOT EXISTS owners (
   id             TEXT PRIMARY KEY,
   login          TEXT NOT NULL,              -- URL segment, case-insensitive-unique
   type           TEXT NOT NULL,              -- 'user' | 'org'
@@ -47,24 +58,24 @@ CREATE TABLE owners (
   created_at     INTEGER NOT NULL,
   updated_at     INTEGER NOT NULL
 );
-CREATE UNIQUE INDEX uq_owners_login ON owners(login COLLATE NOCASE);
-CREATE INDEX idx_owners_principal ON owners(principal_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_owners_login ON owners(login COLLATE NOCASE);
+CREATE INDEX IF NOT EXISTS idx_owners_principal ON owners(principal_id);
 
 -- Org membership (only meaningful for type='org' owners).
-CREATE TABLE org_memberships (
+CREATE TABLE IF NOT EXISTS org_memberships (
   owner_id       TEXT NOT NULL REFERENCES owners(id) ON DELETE CASCADE,
   principal_id   TEXT NOT NULL REFERENCES principals(id) ON DELETE CASCADE,
   role           TEXT NOT NULL DEFAULT 'member', -- 'admin' | 'member'
   created_at     INTEGER NOT NULL,
   PRIMARY KEY (owner_id, principal_id)
 );
-CREATE INDEX idx_org_memberships_principal ON org_memberships(principal_id);
+CREATE INDEX IF NOT EXISTS idx_org_memberships_principal ON org_memberships(principal_id);
 
 -- ============================================================================
 -- 2. Repositories
 -- ============================================================================
 
-CREATE TABLE repositories (
+CREATE TABLE IF NOT EXISTS repositories (
   id             TEXT PRIMARY KEY,
   owner_id       TEXT NOT NULL REFERENCES owners(id) ON DELETE CASCADE,
   name           TEXT NOT NULL,
@@ -81,14 +92,14 @@ CREATE TABLE repositories (
   created_at     INTEGER NOT NULL,
   updated_at     INTEGER NOT NULL
 );
-CREATE UNIQUE INDEX uq_repositories_owner_name ON repositories(owner_id, name COLLATE NOCASE);
-CREATE UNIQUE INDEX uq_repositories_storage_key ON repositories(storage_key);
-CREATE INDEX idx_repositories_visibility_updated ON repositories(visibility, updated_at);
-CREATE INDEX idx_repositories_fork_of ON repositories(fork_of_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_repositories_owner_name ON repositories(owner_id, name COLLATE NOCASE);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_repositories_storage_key ON repositories(storage_key);
+CREATE INDEX IF NOT EXISTS idx_repositories_visibility_updated ON repositories(visibility, updated_at);
+CREATE INDEX IF NOT EXISTS idx_repositories_fork_of ON repositories(fork_of_id);
 
 -- Per-repo monotonic sequence allocator. Issues and PRs SHARE one number
 -- space (GitHub parity); run_number is per (repo, workflow_path).
-CREATE TABLE repo_counters (
+CREATE TABLE IF NOT EXISTS repo_counters (
   repo_id        TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
   scope          TEXT NOT NULL,             -- 'issue' (shared issue+PR) | 'workflow:<path>'
   next_value     INTEGER NOT NULL DEFAULT 1,
@@ -100,16 +111,16 @@ CREATE TABLE repo_counters (
 -- ============================================================================
 
 -- Direct per-repo role grant. role in owner|maintainer|writer|reader.
-CREATE TABLE repo_collaborators (
+CREATE TABLE IF NOT EXISTS repo_collaborators (
   repo_id        TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
   principal_id   TEXT NOT NULL REFERENCES principals(id) ON DELETE CASCADE,
   role           TEXT NOT NULL,             -- 'owner'|'maintainer'|'writer'|'reader'
   created_at     INTEGER NOT NULL,
   PRIMARY KEY (repo_id, principal_id)
 );
-CREATE INDEX idx_repo_collaborators_principal ON repo_collaborators(principal_id);
+CREATE INDEX IF NOT EXISTS idx_repo_collaborators_principal ON repo_collaborators(principal_id);
 
-CREATE TABLE teams (
+CREATE TABLE IF NOT EXISTS teams (
   id             TEXT PRIMARY KEY,
   owner_id       TEXT NOT NULL REFERENCES owners(id) ON DELETE CASCADE, -- must be type='org'
   slug           TEXT NOT NULL,
@@ -118,28 +129,28 @@ CREATE TABLE teams (
   created_at     INTEGER NOT NULL,
   updated_at     INTEGER NOT NULL
 );
-CREATE UNIQUE INDEX uq_teams_owner_slug ON teams(owner_id, slug COLLATE NOCASE);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_teams_owner_slug ON teams(owner_id, slug COLLATE NOCASE);
 
-CREATE TABLE team_members (
+CREATE TABLE IF NOT EXISTS team_members (
   team_id        TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
   principal_id   TEXT NOT NULL REFERENCES principals(id) ON DELETE CASCADE,
   role           TEXT NOT NULL DEFAULT 'member', -- 'maintainer'|'member'
   created_at     INTEGER NOT NULL,
   PRIMARY KEY (team_id, principal_id)
 );
-CREATE INDEX idx_team_members_principal ON team_members(principal_id);
+CREATE INDEX IF NOT EXISTS idx_team_members_principal ON team_members(principal_id);
 
-CREATE TABLE team_repo_access (
+CREATE TABLE IF NOT EXISTS team_repo_access (
   team_id        TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
   repo_id        TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
   role           TEXT NOT NULL,             -- maps to repo role vocabulary
   created_at     INTEGER NOT NULL,
   PRIMARY KEY (team_id, repo_id)
 );
-CREATE INDEX idx_team_repo_access_repo ON team_repo_access(repo_id);
+CREATE INDEX IF NOT EXISTS idx_team_repo_access_repo ON team_repo_access(repo_id);
 
 -- Branch protection. pattern is a fnmatch branch glob (e.g. "main", "release/*").
-CREATE TABLE branch_protection_rules (
+CREATE TABLE IF NOT EXISTS branch_protection_rules (
   id                      TEXT PRIMARY KEY,
   repo_id                 TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
   pattern                 TEXT NOT NULL,
@@ -156,14 +167,14 @@ CREATE TABLE branch_protection_rules (
   created_at              INTEGER NOT NULL,
   updated_at              INTEGER NOT NULL
 );
-CREATE UNIQUE INDEX uq_branch_protection_repo_pattern ON branch_protection_rules(repo_id, pattern);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_branch_protection_repo_pattern ON branch_protection_rules(repo_id, pattern);
 
 -- ============================================================================
 -- 4. Derived Git indexes (R2 projections, not sources of truth)
 -- ============================================================================
 
 -- Projection of the R2 refs-doc so branch/tag listing is one indexed scan.
-CREATE TABLE ref_index (
+CREATE TABLE IF NOT EXISTS ref_index (
   repo_id        TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
   name           TEXT NOT NULL,             -- 'refs/heads/main', 'refs/tags/v1'
   kind           TEXT NOT NULL,             -- 'branch' | 'tag'
@@ -172,11 +183,11 @@ CREATE TABLE ref_index (
   updated_at     INTEGER NOT NULL,
   PRIMARY KEY (repo_id, name)
 );
-CREATE INDEX idx_ref_index_repo_kind ON ref_index(repo_id, kind);
-CREATE INDEX idx_ref_index_target ON ref_index(repo_id, target_sha);
+CREATE INDEX IF NOT EXISTS idx_ref_index_repo_kind ON ref_index(repo_id, kind);
+CREATE INDEX IF NOT EXISTS idx_ref_index_target ON ref_index(repo_id, target_sha);
 
 -- Parsed commit headers so history/graph pages don't re-inflate packs.
-CREATE TABLE commit_index (
+CREATE TABLE IF NOT EXISTS commit_index (
   repo_id        TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
   sha            TEXT NOT NULL,
   tree_sha       TEXT NOT NULL,
@@ -191,11 +202,11 @@ CREATE TABLE commit_index (
   message        TEXT NOT NULL,
   PRIMARY KEY (repo_id, sha)
 );
-CREATE INDEX idx_commit_index_repo_date ON commit_index(repo_id, commit_at);
-CREATE INDEX idx_commit_index_tree ON commit_index(tree_sha);
+CREATE INDEX IF NOT EXISTS idx_commit_index_repo_date ON commit_index(repo_id, commit_at);
+CREATE INDEX IF NOT EXISTS idx_commit_index_tree ON commit_index(tree_sha);
 
 -- Annotated-tag object metadata (lightweight tags need no row; ref_index covers them).
-CREATE TABLE git_tags (
+CREATE TABLE IF NOT EXISTS git_tags (
   repo_id        TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
   name           TEXT NOT NULL,
   tag_sha        TEXT NOT NULL,             -- the tag object SHA
@@ -211,7 +222,7 @@ CREATE TABLE git_tags (
 -- 5. Issues, comments, labels, milestones
 -- ============================================================================
 
-CREATE TABLE milestones (
+CREATE TABLE IF NOT EXISTS milestones (
   id             TEXT PRIMARY KEY,
   repo_id        TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
   number         INTEGER NOT NULL,          -- per-repo, own sequence
@@ -223,9 +234,9 @@ CREATE TABLE milestones (
   updated_at     INTEGER NOT NULL,
   closed_at      INTEGER
 );
-CREATE UNIQUE INDEX uq_milestones_repo_number ON milestones(repo_id, number);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_milestones_repo_number ON milestones(repo_id, number);
 
-CREATE TABLE labels (
+CREATE TABLE IF NOT EXISTS labels (
   id             TEXT PRIMARY KEY,
   repo_id        TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
   name           TEXT NOT NULL,
@@ -233,9 +244,9 @@ CREATE TABLE labels (
   description    TEXT,
   created_at     INTEGER NOT NULL
 );
-CREATE UNIQUE INDEX uq_labels_repo_name ON labels(repo_id, name COLLATE NOCASE);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_labels_repo_name ON labels(repo_id, name COLLATE NOCASE);
 
-CREATE TABLE issues (
+CREATE TABLE IF NOT EXISTS issues (
   id             TEXT PRIMARY KEY,
   repo_id        TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
   number         INTEGER NOT NULL,          -- shared issue+PR sequence
@@ -252,26 +263,26 @@ CREATE TABLE issues (
   updated_at     INTEGER NOT NULL,
   closed_at      INTEGER
 );
-CREATE UNIQUE INDEX uq_issues_repo_number ON issues(repo_id, number);
-CREATE INDEX idx_issues_repo_state ON issues(repo_id, state, updated_at);
-CREATE INDEX idx_issues_author ON issues(author_id);
-CREATE INDEX idx_issues_milestone ON issues(milestone_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_issues_repo_number ON issues(repo_id, number);
+CREATE INDEX IF NOT EXISTS idx_issues_repo_state ON issues(repo_id, state, updated_at);
+CREATE INDEX IF NOT EXISTS idx_issues_author ON issues(author_id);
+CREATE INDEX IF NOT EXISTS idx_issues_milestone ON issues(milestone_id);
 
-CREATE TABLE issue_assignees (
+CREATE TABLE IF NOT EXISTS issue_assignees (
   issue_id       TEXT NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
   principal_id   TEXT NOT NULL REFERENCES principals(id) ON DELETE CASCADE,
   PRIMARY KEY (issue_id, principal_id)
 );
 
-CREATE TABLE issue_labels (
+CREATE TABLE IF NOT EXISTS issue_labels (
   issue_id       TEXT NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
   label_id       TEXT NOT NULL REFERENCES labels(id) ON DELETE CASCADE,
   PRIMARY KEY (issue_id, label_id)
 );
-CREATE INDEX idx_issue_labels_label ON issue_labels(label_id);
+CREATE INDEX IF NOT EXISTS idx_issue_labels_label ON issue_labels(label_id);
 
 -- Conversation comments on issues AND pull requests (not inline code comments).
-CREATE TABLE issue_comments (
+CREATE TABLE IF NOT EXISTS issue_comments (
   id             TEXT PRIMARY KEY,
   issue_id       TEXT NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
   author_id      TEXT REFERENCES principals(id) ON DELETE SET NULL,
@@ -279,13 +290,13 @@ CREATE TABLE issue_comments (
   created_at     INTEGER NOT NULL,
   updated_at     INTEGER NOT NULL
 );
-CREATE INDEX idx_issue_comments_issue ON issue_comments(issue_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_issue_comments_issue ON issue_comments(issue_id, created_at);
 
 -- ============================================================================
 -- 6. Pull requests, reviews, inline comments, PR commits
 -- ============================================================================
 
-CREATE TABLE pull_requests (
+CREATE TABLE IF NOT EXISTS pull_requests (
   id             TEXT PRIMARY KEY,
   issue_id       TEXT NOT NULL UNIQUE REFERENCES issues(id) ON DELETE CASCADE,
   repo_id        TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
@@ -308,20 +319,20 @@ CREATE TABLE pull_requests (
   created_at     INTEGER NOT NULL,
   updated_at     INTEGER NOT NULL
 );
-CREATE INDEX idx_pull_requests_repo ON pull_requests(repo_id);
-CREATE INDEX idx_pull_requests_head ON pull_requests(head_repo_id, head_ref);
+CREATE INDEX IF NOT EXISTS idx_pull_requests_repo ON pull_requests(repo_id);
+CREATE INDEX IF NOT EXISTS idx_pull_requests_head ON pull_requests(head_repo_id, head_ref);
 
 -- Ordered commits attributed to a PR (projection of the head..base walk).
-CREATE TABLE pr_commits (
+CREATE TABLE IF NOT EXISTS pr_commits (
   pr_id          TEXT NOT NULL REFERENCES pull_requests(id) ON DELETE CASCADE,
   sha            TEXT NOT NULL,
   position       INTEGER NOT NULL,         -- order in the PR
   PRIMARY KEY (pr_id, sha)
 );
-CREATE INDEX idx_pr_commits_pr_pos ON pr_commits(pr_id, position);
+CREATE INDEX IF NOT EXISTS idx_pr_commits_pr_pos ON pr_commits(pr_id, position);
 
 -- A submitted review verdict (approve/request-changes/comment).
-CREATE TABLE pr_reviews (
+CREATE TABLE IF NOT EXISTS pr_reviews (
   id             TEXT PRIMARY KEY,
   pr_id          TEXT NOT NULL REFERENCES pull_requests(id) ON DELETE CASCADE,
   reviewer_id    TEXT REFERENCES principals(id) ON DELETE SET NULL,
@@ -331,11 +342,11 @@ CREATE TABLE pr_reviews (
   submitted_at   INTEGER,
   created_at     INTEGER NOT NULL
 );
-CREATE INDEX idx_pr_reviews_pr ON pr_reviews(pr_id);
-CREATE INDEX idx_pr_reviews_reviewer ON pr_reviews(reviewer_id);
+CREATE INDEX IF NOT EXISTS idx_pr_reviews_pr ON pr_reviews(pr_id);
+CREATE INDEX IF NOT EXISTS idx_pr_reviews_reviewer ON pr_reviews(reviewer_id);
 
 -- Inline code comments (file + line), optionally grouped under a review.
-CREATE TABLE pr_review_comments (
+CREATE TABLE IF NOT EXISTS pr_review_comments (
   id             TEXT PRIMARY KEY,
   pr_id          TEXT NOT NULL REFERENCES pull_requests(id) ON DELETE CASCADE,
   review_id      TEXT REFERENCES pr_reviews(id) ON DELETE SET NULL,
@@ -353,14 +364,14 @@ CREATE TABLE pr_review_comments (
   created_at     INTEGER NOT NULL,
   updated_at     INTEGER NOT NULL
 );
-CREATE INDEX idx_pr_review_comments_pr ON pr_review_comments(pr_id, file_path);
-CREATE INDEX idx_pr_review_comments_review ON pr_review_comments(review_id);
+CREATE INDEX IF NOT EXISTS idx_pr_review_comments_pr ON pr_review_comments(pr_id, file_path);
+CREATE INDEX IF NOT EXISTS idx_pr_review_comments_review ON pr_review_comments(review_id);
 
 -- ============================================================================
 -- 7. Releases, assets, tags
 -- ============================================================================
 
-CREATE TABLE releases (
+CREATE TABLE IF NOT EXISTS releases (
   id             TEXT PRIMARY KEY,
   repo_id        TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
   tag_name       TEXT NOT NULL,
@@ -373,10 +384,10 @@ CREATE TABLE releases (
   created_at     INTEGER NOT NULL,
   published_at   INTEGER
 );
-CREATE UNIQUE INDEX uq_releases_repo_tag ON releases(repo_id, tag_name);
-CREATE INDEX idx_releases_repo_published ON releases(repo_id, published_at);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_releases_repo_tag ON releases(repo_id, tag_name);
+CREATE INDEX IF NOT EXISTS idx_releases_repo_published ON releases(repo_id, published_at);
 
-CREATE TABLE release_assets (
+CREATE TABLE IF NOT EXISTS release_assets (
   id             TEXT PRIMARY KEY,
   release_id     TEXT NOT NULL REFERENCES releases(id) ON DELETE CASCADE,
   name           TEXT NOT NULL,
@@ -388,13 +399,13 @@ CREATE TABLE release_assets (
   state          TEXT NOT NULL DEFAULT 'uploaded', -- 'uploading'|'uploaded'
   created_at     INTEGER NOT NULL
 );
-CREATE UNIQUE INDEX uq_release_assets_release_name ON release_assets(release_id, name);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_release_assets_release_name ON release_assets(release_id, name);
 
 -- ============================================================================
 -- 8. Forks (network graph)
 -- ============================================================================
 
-CREATE TABLE repo_forks (
+CREATE TABLE IF NOT EXISTS repo_forks (
   id                TEXT PRIMARY KEY,
   fork_repo_id      TEXT NOT NULL UNIQUE REFERENCES repositories(id) ON DELETE CASCADE,
   upstream_repo_id  TEXT REFERENCES repositories(id) ON DELETE SET NULL,
@@ -403,13 +414,13 @@ CREATE TABLE repo_forks (
   last_synced_at    INTEGER,
   created_at        INTEGER NOT NULL
 );
-CREATE INDEX idx_repo_forks_upstream ON repo_forks(upstream_repo_id);
+CREATE INDEX IF NOT EXISTS idx_repo_forks_upstream ON repo_forks(upstream_repo_id);
 
 -- ============================================================================
 -- 9. Webhooks and deliveries
 -- ============================================================================
 
-CREATE TABLE webhooks (
+CREATE TABLE IF NOT EXISTS webhooks (
   id             TEXT PRIMARY KEY,
   repo_id        TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
   url            TEXT NOT NULL,
@@ -421,9 +432,9 @@ CREATE TABLE webhooks (
   created_at     INTEGER NOT NULL,
   updated_at     INTEGER NOT NULL
 );
-CREATE INDEX idx_webhooks_repo ON webhooks(repo_id);
+CREATE INDEX IF NOT EXISTS idx_webhooks_repo ON webhooks(repo_id);
 
-CREATE TABLE webhook_deliveries (
+CREATE TABLE IF NOT EXISTS webhook_deliveries (
   id             TEXT PRIMARY KEY,
   webhook_id     TEXT NOT NULL REFERENCES webhooks(id) ON DELETE CASCADE,
   event          TEXT NOT NULL,
@@ -438,14 +449,14 @@ CREATE TABLE webhook_deliveries (
   delivered_at   INTEGER,
   created_at     INTEGER NOT NULL
 );
-CREATE INDEX idx_webhook_deliveries_webhook ON webhook_deliveries(webhook_id, created_at);
-CREATE INDEX idx_webhook_deliveries_status ON webhook_deliveries(status);
+CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_webhook ON webhook_deliveries(webhook_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_status ON webhook_deliveries(status);
 
 -- ============================================================================
 -- 10. Actions: workflows, runs, jobs, steps, artifacts, secrets
 -- ============================================================================
 
-CREATE TABLE workflows (
+CREATE TABLE IF NOT EXISTS workflows (
   id             TEXT PRIMARY KEY,
   repo_id        TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
   path           TEXT NOT NULL,            -- '.github/workflows/ci.yml'
@@ -457,9 +468,9 @@ CREATE TABLE workflows (
   created_at     INTEGER NOT NULL,
   updated_at     INTEGER NOT NULL
 );
-CREATE UNIQUE INDEX uq_workflows_repo_path ON workflows(repo_id, path);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_workflows_repo_path ON workflows(repo_id, path);
 
-CREATE TABLE workflow_runs (
+CREATE TABLE IF NOT EXISTS workflow_runs (
   id             TEXT PRIMARY KEY,
   repo_id        TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
   workflow_id    TEXT REFERENCES workflows(id) ON DELETE SET NULL,
@@ -478,13 +489,13 @@ CREATE TABLE workflow_runs (
   completed_at   INTEGER,
   created_at     INTEGER NOT NULL
 );
-CREATE UNIQUE INDEX uq_workflow_runs_number
+CREATE UNIQUE INDEX IF NOT EXISTS uq_workflow_runs_number
   ON workflow_runs(repo_id, workflow_path, run_number, run_attempt);
-CREATE INDEX idx_workflow_runs_repo_created ON workflow_runs(repo_id, created_at);
-CREATE INDEX idx_workflow_runs_status ON workflow_runs(status);
-CREATE INDEX idx_workflow_runs_workflow ON workflow_runs(workflow_id);
+CREATE INDEX IF NOT EXISTS idx_workflow_runs_repo_created ON workflow_runs(repo_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_workflow_runs_status ON workflow_runs(status);
+CREATE INDEX IF NOT EXISTS idx_workflow_runs_workflow ON workflow_runs(workflow_id);
 
-CREATE TABLE workflow_jobs (
+CREATE TABLE IF NOT EXISTS workflow_jobs (
   id             TEXT PRIMARY KEY,
   run_id         TEXT NOT NULL REFERENCES workflow_runs(id) ON DELETE CASCADE,
   job_key        TEXT,                     -- key in the workflow YAML
@@ -501,10 +512,10 @@ CREATE TABLE workflow_jobs (
   completed_at   INTEGER,
   created_at     INTEGER NOT NULL
 );
-CREATE INDEX idx_workflow_jobs_run ON workflow_jobs(run_id);
-CREATE INDEX idx_workflow_jobs_status ON workflow_jobs(status);
+CREATE INDEX IF NOT EXISTS idx_workflow_jobs_run ON workflow_jobs(run_id);
+CREATE INDEX IF NOT EXISTS idx_workflow_jobs_status ON workflow_jobs(status);
 
-CREATE TABLE workflow_steps (
+CREATE TABLE IF NOT EXISTS workflow_steps (
   id             TEXT PRIMARY KEY,
   job_id         TEXT NOT NULL REFERENCES workflow_jobs(id) ON DELETE CASCADE,
   number         INTEGER NOT NULL,
@@ -519,9 +530,9 @@ CREATE TABLE workflow_steps (
   completed_at   INTEGER,
   created_at     INTEGER NOT NULL
 );
-CREATE UNIQUE INDEX uq_workflow_steps_job_number ON workflow_steps(job_id, number);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_workflow_steps_job_number ON workflow_steps(job_id, number);
 
-CREATE TABLE workflow_run_artifacts (
+CREATE TABLE IF NOT EXISTS workflow_run_artifacts (
   id             TEXT PRIMARY KEY,
   run_id         TEXT NOT NULL REFERENCES workflow_runs(id) ON DELETE CASCADE,
   name           TEXT NOT NULL,
@@ -531,11 +542,11 @@ CREATE TABLE workflow_run_artifacts (
   expires_at     INTEGER,
   created_at     INTEGER NOT NULL
 );
-CREATE INDEX idx_workflow_run_artifacts_run ON workflow_run_artifacts(run_id);
-CREATE INDEX idx_workflow_run_artifacts_expires ON workflow_run_artifacts(expires_at);
+CREATE INDEX IF NOT EXISTS idx_workflow_run_artifacts_run ON workflow_run_artifacts(run_id);
+CREATE INDEX IF NOT EXISTS idx_workflow_run_artifacts_expires ON workflow_run_artifacts(expires_at);
 
 -- Actions secrets: repo-scoped, encrypted at rest, injected into runner only.
-CREATE TABLE workflow_secrets (
+CREATE TABLE IF NOT EXISTS workflow_secrets (
   id             TEXT PRIMARY KEY,
   repo_id        TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
   name           TEXT NOT NULL,
@@ -543,13 +554,13 @@ CREATE TABLE workflow_secrets (
   created_at     INTEGER NOT NULL,
   updated_at     INTEGER
 );
-CREATE UNIQUE INDEX uq_workflow_secrets_repo_name ON workflow_secrets(repo_id, name);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_workflow_secrets_repo_name ON workflow_secrets(repo_id, name);
 
 -- ============================================================================
 -- 11. Check runs and commit statuses
 -- ============================================================================
 
-CREATE TABLE check_runs (
+CREATE TABLE IF NOT EXISTS check_runs (
   id             TEXT PRIMARY KEY,
   repo_id        TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
   head_sha       TEXT NOT NULL,           -- commit under check (R2-authoritative)
@@ -568,10 +579,10 @@ CREATE TABLE check_runs (
   created_at     INTEGER NOT NULL,
   updated_at     INTEGER NOT NULL
 );
-CREATE INDEX idx_check_runs_repo_sha ON check_runs(repo_id, head_sha);
-CREATE INDEX idx_check_runs_workflow_run ON check_runs(workflow_run_id);
+CREATE INDEX IF NOT EXISTS idx_check_runs_repo_sha ON check_runs(repo_id, head_sha);
+CREATE INDEX IF NOT EXISTS idx_check_runs_workflow_run ON check_runs(workflow_run_id);
 
-CREATE TABLE commit_statuses (
+CREATE TABLE IF NOT EXISTS commit_statuses (
   id             TEXT PRIMARY KEY,
   repo_id        TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
   sha            TEXT NOT NULL,
@@ -584,4 +595,4 @@ CREATE TABLE commit_statuses (
 );
 -- Branch-protection required-check evaluation reads the LATEST state per context;
 -- keep every post for history, index for the "latest per (repo,sha,context)" query.
-CREATE INDEX idx_commit_statuses_repo_sha_ctx ON commit_statuses(repo_id, sha, context, created_at);
+CREATE INDEX IF NOT EXISTS idx_commit_statuses_repo_sha_ctx ON commit_statuses(repo_id, sha, context, created_at);

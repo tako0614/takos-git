@@ -30,6 +30,7 @@ import {
 import { routes } from "./router.ts";
 import { hasEmbeddedSpa, serveEmbeddedAsset } from "./spa-assets.ts";
 import { createDbClient, type D1Database } from "./db/index.ts";
+import { ensureSchema } from "./db/ensure-schema.ts";
 import { authorizeRepo, upsertPrincipal } from "./auth/acl.ts";
 import {
   ACTION_REQUIRED_SCOPE,
@@ -542,6 +543,10 @@ async function fetchHandler(
   if (request.method === "GET" && url.pathname === ICON_PATH) {
     return svgAsset(iconSvg);
   }
+  // Apply the D1 baseline schema on first use (self-contained install: no separate
+  // wrangler d1 migrations step). Cached per isolate; skipped entirely when the
+  // metadata plane is unconfigured (healthz/icon above already returned).
+  if (env.DB) await ensureSchema(env.DB);
   // Self-hosted Actions runner callback surface. A SEPARATE HMAC trust boundary
   // (ACTIONS_RUNNER_SECRET), dispatched here BEFORE the router so it is never
   // reachable via /api/v1, /git/, or /mcp. Returns null when the path is not an
