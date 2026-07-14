@@ -52,3 +52,20 @@ output "actions_logs_bucket_name" {
   description = "R2 bucket for Actions logs and artifacts (separate from the authoritative git object bucket), or null when enable_actions is false."
   value       = local.actions_enabled ? local.r2_actions_bucket : null
 }
+
+output "actions_workflow_queue_name" {
+  description = "Workflow run-tick queue name, or null when enable_actions is false."
+  value       = local.actions_enabled ? local.workflow_queue : null
+}
+
+# The runner Container image cannot be bound by the cloudflare provider 5.19.1;
+# these outputs feed the out-of-band wrangler `[[containers]]` step in CI that
+# attaches the image to the ActionsJobRunner Durable Object class.
+output "actions_runner_container" {
+  description = "Runner Container wiring for the wrangler `[[containers]]` step (image + class + max_instances). Null when enable_actions is false; empty image until actions_runner_image is set."
+  value = local.actions_enabled ? {
+    class_name    = "ActionsJobRunner"
+    image         = trimspace(var.actions_runner_image)
+    max_instances = var.actions_runner_max_instances
+  } : null
+}
