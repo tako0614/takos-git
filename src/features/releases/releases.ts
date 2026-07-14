@@ -13,7 +13,13 @@ import { SCOPES, roleAtLeast } from "../../contract/v1.ts";
 import type { RouteContext } from "../../router.ts";
 import { csrfGuard, requireRepoAccess } from "../repos/identity.ts";
 import { errorResponse, json } from "../repos/http.ts";
-import { buildReleasePublishedEvent, type ReleaseEvent } from "./events.ts";
+import {
+  buildReleaseDeletedEvent,
+  buildReleaseEditedEvent,
+  buildReleasePublishedEvent,
+  emitReleaseEvent,
+  type ReleaseEvent,
+} from "./events.ts";
 import type { ReleaseDto } from "./dto.ts";
 import {
   buildReleaseDto,
@@ -189,6 +195,7 @@ export async function createReleaseHandler(ctx: RouteContext): Promise<Response>
   const row = (await getReleaseByTag(db, repo.id, tag))!;
   const dto = await buildReleaseDto(db, row);
   const event = isDraft ? undefined : buildReleasePublishedEvent(storageKey, dto, now);
+  if (event) await emitReleaseEvent(event);
   return json(publishedEnvelope(dto, event), 201);
 }
 
@@ -271,9 +278,14 @@ export async function patchReleaseHandler(ctx: RouteContext): Promise<Response> 
 
   const row = (await getReleaseByTag(db, repo.id, ctx.params.tag))!;
   const dto = await buildReleaseDto(db, row);
+  const storageKey = storageKeyOf(repo);
+  // Publishing (draft→non-draft) fans out `release.published`; every other edit
+  // that changed a field fans out `release.edited`. Both go to the sink; only the
+  // published descriptor is echoed in the HTTP envelope (unchanged wire shape).
   const event = publishing
-    ? buildReleasePublishedEvent(storageKeyOf(repo), dto, now)
+    ? buildReleasePublishedEvent(storageKey, dto, now)
     : undefined;
+  await emitReleaseEvent(event ?? buildReleaseEditedEvent(storageKey, dto, now));
   return json(publishedEnvelope(dto, event));
 }
 
@@ -285,6 +297,9 @@ export async function deleteReleaseHandler(ctx: RouteContext): Promise<Response>
   const { db, repo } = access;
   const existing = await getReleaseByTag(db, repo.id, ctx.params.tag);
   if (!existing) return errorResponse(404, "not_found", "Release not found.");
+  // Snapshot the DTO before the row (and its assets) vanish so the deleted event
+  // carries the release that was removed.
+  const dto = await buildReleaseDto(db, existing);
   // The tag ref is intentionally left in place (GitHub parity: deleting a release
   // does not delete its git tag). Assets cascade-delete with the release row; R2
   // asset bytes are swept by the reconcile job keyed off the dropped rows.
@@ -292,6 +307,7 @@ export async function deleteReleaseHandler(ctx: RouteContext): Promise<Response>
     repo.id,
     ctx.params.tag,
   ]);
+  await emitReleaseEvent(buildReleaseDeletedEvent(storageKeyOf(repo), dto, db.now()));
   return json({ deleted: true });
 }
 

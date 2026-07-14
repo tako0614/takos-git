@@ -67,6 +67,19 @@ function makeArtifactClient(dispatch: ActionsJobDispatch): ArtifactClient {
       });
       if (!response.ok) throw new Error(`artifact upload failed: ${response.status}`);
     },
+    async download(name: string, destPath: string): Promise<void> {
+      const url =
+        `${dispatch.callbackBaseUrl}/internal/actions/artifacts` +
+        `?runId=${encodeURIComponent(dispatch.runId)}` +
+        `&jobId=${encodeURIComponent(dispatch.jobId)}` +
+        `&name=${encodeURIComponent(name)}`;
+      const response = await fetch(url, { headers: callbackHeaders(dispatch.callbackToken) });
+      if (!response.ok) throw new Error(`artifact download failed: ${response.status}`);
+      const archive = new Uint8Array(await response.arrayBuffer());
+      for (const member of readTar(archive)) {
+        await Bun.write(pathJoin(destPath, member.path), member.bytes);
+      }
+    },
   };
 }
 

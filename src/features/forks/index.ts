@@ -10,6 +10,16 @@
 export { registerForkRoutes, forkHandlers, forkRoutes } from "./routes.ts";
 
 export {
+  buildForkCreatedEvent,
+  buildForkSyncedEvent,
+  emitForkEvent,
+  setForkEventSink,
+  type ForkEvent,
+  type ForkEventSink,
+  type ForkEventType,
+} from "./events.ts";
+
+export {
   forkRepository,
   syncFork,
   copyRepoObjects,
