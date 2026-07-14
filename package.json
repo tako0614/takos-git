@@ -7,7 +7,7 @@
   "license": "AGPL-3.0-only",
   "scripts": {
     "build:worker": "bun run scripts/build-worker.ts",
-    "build:web": "cd web && vite build",
+    "build:web": "cd web && bun run build",
     "build": "bun run build:web && bun run build:worker",
     "dev:web": "cd web && vite",
     "smoke:postdeploy": "bun run scripts/post-deploy-smoke.ts",
