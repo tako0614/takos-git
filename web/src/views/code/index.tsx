@@ -1,113 +1,87 @@
-import { createResource, For, Show, Suspense, type JSX } from "solid-js";
+/**
+ * Code browser view family.
+ *
+ * The router points the whole code-browser route set at two exports:
+ *   - `CodeView`   → `/:owner/:repo`, `/tree/:branch/*path`,
+ *                    `/blob/:branch/*path`, `/commits/:branch?`, `/compare/*spec`
+ *   - `CommitView` → `/:owner/:repo/commit/:sha`
+ *
+ * `CodeView` is a thin dispatcher: it derives the active mode from the location
+ * and renders the matching screen, threading the repo owner/name (from
+ * `useRepo()`), the resolved ref, and the path/spec through as REACTIVE props
+ * (Solid compiles `foo={sig()}` prop expressions into getters, so screens stay
+ * live as the params change without remounting). Every screen owns its own
+ * `createResource` + loading/empty/error states and talks only to `reposApi`
+ * (plus the local `blame` wrapper), keeping the frozen shell/ui/api seam intact.
+ */
+import { createMemo, Match, Switch, type JSX } from "solid-js";
 import { useLocation, useParams } from "@solidjs/router";
 import { useRepo } from "../../app/RepoLayout.tsx";
-import { reposApi } from "../../api/repos.ts";
-import { Seam } from "../_seam.tsx";
-import {
-  Box,
-  BoxHeader,
-  Icons,
-  LoadingBlock,
-  Mono,
-  Sha,
-} from "../../ui/index.ts";
+import { DirectoryScreen } from "./DirectoryScreen.tsx";
+import { BlobScreen } from "./BlobScreen.tsx";
+import { CommitsScreen } from "./CommitsScreen.tsx";
+import { CompareScreen } from "./CompareScreen.tsx";
+import { CommitDetailScreen } from "./CommitDetailScreen.tsx";
 
-/**
- * Code tab placeholder. Serves the whole code browser route family; a 4b agent
- * replaces the body with the ported FileTree / FileViewer / CommitList /
- * PRDiffView components while keeping `useRepo()` + `reposApi` as the seam.
- */
 export function CodeView(): JSX.Element {
   const repo = useRepo();
   const params = useParams();
   const loc = useLocation();
 
-  // The active sub-route (for the placeholder header). 4b splits these into
-  // dedicated views; here one view proves each route resolves + data is live.
-  const mode = (): string => {
-    if (params.sha) return `commit ${params.sha.slice(0, 7)}`;
-    if (params.spec) return `compare ${decodeURIComponent(params.spec)}`;
-    if (loc.pathname.includes("/blob/")) return `blob ${params.path ?? ""}`;
-    if (loc.pathname.includes("/commits")) return "commit history";
-    if (loc.pathname.includes("/tree/")) return `tree ${params.path ?? ""}`;
-    return "code";
-  };
+  const owner = () => repo.owner();
+  const name = () => repo.repo();
+  const defaultBranch = () => repo.detail()?.defaultBranch || "main";
+  const cloneUrl = () => repo.detail()?.cloneUrl || "";
+  const branch = () => params.branch || defaultBranch();
+  const treePath = () => params.path || "";
+  const spec = () => params.spec || "";
 
-  const branch = () => params.branch || repo.detail()?.defaultBranch || "main";
-  const [tree] = createResource(
-    () => [repo.owner(), repo.repo(), branch(), params.path ?? ""] as const,
-    ([o, r, b, p]) => reposApi.tree(o, r, { ref: b, path: p }).catch(() => null),
-  );
+  const mode = createMemo<"blob" | "compare" | "commits" | "dir">(() => {
+    const p = loc.pathname;
+    if (p.includes("/blob/")) return "blob";
+    if (p.includes("/compare/")) return "compare";
+    if (p.includes("/commits")) return "commits";
+    return "dir"; // overview (path === "") + tree browsing
+  });
 
   return (
-    <Seam
-      feature="Code browser"
-      summary={`Active route: ${mode()} on ${repo.owner()}/${repo.repo()} @ ${branch()}. Port the takos code-browser components into web/src/views/code/.`}
-      apiModule="reposApi (api/repos.ts): tree, blob, commits, commit, compare, branches, tags, rawUrl"
-      components={[
-        "RepoDetailFiles / RepoDetailReadme",
-        "FileTree",
-        "FileViewer / CodeViewer / FileContentRenderer",
-        "CommitList",
-        "BranchesTab",
-        "PRDiffView (reused for /commit/:sha)",
-      ]}
-      routes={[
-        "/:owner/:repo",
-        "/:owner/:repo/tree/:branch/*path",
-        "/:owner/:repo/blob/:branch/*path",
-        "/:owner/:repo/commits/:branch?",
-        "/:owner/:repo/commit/:sha",
-        "/:owner/:repo/compare/*spec",
-      ]}
-    >
-      <Suspense fallback={<LoadingBlock label="Reading tree…" />}>
-        <Show
-          when={tree()}
-          fallback={<p class="text-sm text-muted">Empty repository or unreadable tree.</p>}
-        >
-          {(t) => (
-            <div class="space-y-2 text-sm">
-              <div class="flex items-center gap-2 text-muted">
-                <Icons.GitBranch class="h-4 w-4" /> <Mono>{t().branch}</Mono>
-                <Sha value={t().commit} />
-              </div>
-              <ul class="divide-y divide-border rounded border border-border">
-                <For each={t().entries.slice(0, 8)}>
-                  {(entry) => (
-                    <li class="flex items-center gap-2 px-3 py-1.5">
-                      <Show when={entry.kind === "tree"} fallback={<Icons.File class="h-4 w-4 text-muted" />}>
-                        <Icons.Folder class="h-4 w-4 text-accent" />
-                      </Show>
-                      <span class="font-mono text-xs">{entry.name}</span>
-                    </li>
-                  )}
-                </For>
-              </ul>
-              <Show when={t().entries.length > 8}>
-                <p class="text-xs text-subtle">+{t().entries.length - 8} more entries</p>
-              </Show>
-            </div>
-          )}
-        </Show>
-      </Suspense>
-    </Seam>
+    <Switch fallback={
+      <DirectoryScreen
+        owner={owner()}
+        repo={name()}
+        refName={branch()}
+        path={treePath()}
+        defaultBranch={defaultBranch()}
+        cloneUrl={cloneUrl()}
+      />
+    }>
+      <Match when={mode() === "blob"}>
+        <BlobScreen
+          owner={owner()}
+          repo={name()}
+          refName={branch()}
+          path={treePath()}
+          defaultBranch={defaultBranch()}
+        />
+      </Match>
+      <Match when={mode() === "compare"}>
+        <CompareScreen owner={owner()} repo={name()} spec={spec()} />
+      </Match>
+      <Match when={mode() === "commits"}>
+        <CommitsScreen
+          owner={owner()}
+          repo={name()}
+          refName={branch()}
+          defaultBranch={defaultBranch()}
+        />
+      </Match>
+    </Switch>
   );
 }
 
-/** A standalone commit/compare diff placeholder (also reachable inside CodeView). */
+/** Standalone commit detail (`/:owner/:repo/commit/:sha`). */
 export function CommitView(): JSX.Element {
   const repo = useRepo();
   const params = useParams();
-  return (
-    <Box>
-      <BoxHeader>
-        <Icons.GitCommit class="h-4 w-4" /> Commit {params.sha?.slice(0, 7)} — {repo.owner()}/{repo.repo()}
-      </BoxHeader>
-      <div class="p-4 text-sm text-muted">
-        Phase 4b renders the ported <code>PRDiffView</code> here from{" "}
-        <code>reposApi.commit()</code> / <code>reposApi.compare()</code>.
-      </div>
-    </Box>
-  );
+  return <CommitDetailScreen owner={repo.owner()} repo={repo.repo()} sha={params.sha || ""} />;
 }
