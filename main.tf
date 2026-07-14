@@ -10,10 +10,6 @@ terraform {
       source  = "hashicorp/http"
       version = "~> 3.5"
     }
-    random = {
-      source  = "hashicorp/random"
-      version = "~> 3.7"
-    }
   }
 }
 
@@ -67,15 +63,51 @@ variable "public_url" {
   }
 }
 
-variable "service_grant_signing_key" {
-  description = "Shared HMAC signing key for scoped service grants (64-char lowercase hex). When empty, a key is generated. Takosumi mints grants with the same value it reads from the service_grant_signing_key output."
+variable "takosumi_accounts_issuer_url" {
+  description = "Takosumi Accounts OIDC issuer used for browser sign-in and to validate opaque Interface OAuth bearer tokens."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = trimspace(var.takosumi_accounts_issuer_url) == "" || can(regex("^https://[^[:space:]]+$", trimspace(var.takosumi_accounts_issuer_url)))
+    error_message = "takosumi_accounts_issuer_url must be empty or an https URL."
+  }
+}
+
+variable "takosumi_accounts_client_id" {
+  description = "Optional OIDC client id for the takos-git browser session. Set it together with app_session_secret and takosumi_accounts_issuer_url."
+  type        = string
+  default     = ""
+}
+
+variable "takosumi_accounts_client_secret" {
+  description = "Optional confidential OIDC client secret for the takos-git browser session. Public PKCE clients may leave this empty."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "app_session_secret" {
+  description = "HMAC secret for the takos-git browser OAuth state and session cookies. Required when takosumi_accounts_client_id is set."
   type        = string
   default     = ""
   sensitive   = true
 
   validation {
-    condition     = trimspace(var.service_grant_signing_key) == "" || can(regex("^[a-f0-9]{64}$", trimspace(var.service_grant_signing_key)))
-    error_message = "service_grant_signing_key must be empty or a 64-character lowercase hex key."
+    condition     = trimspace(var.app_session_secret) == "" || length(var.app_session_secret) >= 32
+    error_message = "app_session_secret must be empty or at least 32 characters."
+  }
+}
+
+variable "published_mcp_auth_token" {
+  description = "Optional standalone bearer protecting /mcp for direct/self-host clients. When empty, only Interface OAuth is accepted and no static bearer is provisioned."
+  type        = string
+  default     = ""
+  sensitive   = true
+
+  validation {
+    condition     = trimspace(var.published_mcp_auth_token) == "" || length(trimspace(var.published_mcp_auth_token)) >= 32
+    error_message = "published_mcp_auth_token must be empty or at least 32 characters."
   }
 }
 
@@ -92,7 +124,10 @@ variable "env" {
       !contains([
         "BUCKET",
         "APP_URL",
-        "GIT_TOKEN_SIGNING_KEY",
+        "OIDC_ISSUER_URL",
+        "OIDC_CLIENT_ID",
+        "OIDC_CLIENT_SECRET",
+        "APP_SESSION_SECRET",
         "PUBLISHED_MCP_AUTH_TOKEN",
       ], name)
     ])
@@ -115,6 +150,59 @@ variable "enable_cloudflare_worker_script" {
   description = "Deploy the takos-git Worker script, bindings, route, and optional workers.dev enablement through OpenTofu."
   type        = bool
   default     = false
+}
+
+variable "enable_metadata" {
+  description = "Provision the D1 metadata plane (repositories, ACL, issues, PRs, releases, Actions state) and bind it to the Worker as DB. Git objects and refs stay authoritative in R2; D1 is fully rebuildable from R2 for every git-derived table. Off by default keeps takos-git R2-only."
+  type        = bool
+  default     = false
+}
+
+variable "enable_actions" {
+  description = "Provision the self-hosted Actions runner backing resources (Workflow Queue + Dead-Letter Queue, the runner-coordinator and job-runner Durable Object namespaces, and the Actions logs/artifacts R2 bucket) and bind them to the Worker. Requires enable_metadata and enable_cloudflare_worker_script. Off by default keeps takos-git a single-file, R2-only Worker with no Container/DO/Queue bindings."
+  type        = bool
+  default     = false
+}
+
+variable "actions_runner_secret" {
+  description = "HMAC key for the run-scoped /internal/actions/* routes and runner tokens. Required when enable_actions is true. Kept out of any repo; supplied from the operator environment."
+  type        = string
+  default     = ""
+  sensitive   = true
+
+  validation {
+    condition     = trimspace(var.actions_runner_secret) == "" || length(var.actions_runner_secret) >= 32
+    error_message = "actions_runner_secret must be empty or at least 32 characters."
+  }
+}
+
+variable "actions_secrets_key" {
+  description = "AES key used to encrypt Actions secrets at rest in D1. Required when enable_actions is true. Kept out of any repo; supplied from the operator environment."
+  type        = string
+  default     = ""
+  sensitive   = true
+
+  validation {
+    condition     = trimspace(var.actions_secrets_key) == "" || length(var.actions_secrets_key) >= 32
+    error_message = "actions_secrets_key must be empty or at least 32 characters."
+  }
+}
+
+variable "actions_runner_image" {
+  description = "Container image ref for the self-hosted Actions runner (built from containers/runner/Dockerfile and pushed by takos-git CI). Attached to the ActionsJobRunner Durable Object class through a wrangler `[[containers]]` step; the cloudflare provider 5.19.1 cannot express a container image binding. Informational for OpenTofu (surfaced as an output for the wrangler step)."
+  type        = string
+  default     = ""
+}
+
+variable "actions_runner_max_instances" {
+  description = "Maximum concurrent runner Container instances (wrangler `[[containers]].max_instances`). Applied by the wrangler container step, not by OpenTofu."
+  type        = number
+  default     = 10
+
+  validation {
+    condition     = var.actions_runner_max_instances >= 1 && var.actions_runner_max_instances <= 1000
+    error_message = "actions_runner_max_instances must be between 1 and 1000."
+  }
 }
 
 variable "worker_bundle_path" {
@@ -200,6 +288,8 @@ variable "worker_compatibility_flags" {
 locals {
   cloudflare_resources_enabled  = var.enable_cloudflare_resources
   cloudflare_worker_enabled     = local.cloudflare_resources_enabled && var.enable_cloudflare_worker_script
+  metadata_enabled              = local.cloudflare_resources_enabled && var.enable_metadata
+  actions_enabled               = local.cloudflare_resources_enabled && var.enable_actions
   cloudflare_route_enabled      = local.cloudflare_worker_enabled && trimspace(var.cloudflare_route_zone_id) != "" && trimspace(var.cloudflare_route_pattern) != ""
   worker_release_tag            = trimspace(var.worker_release_tag)
   worker_bundle_explicit_url    = trimspace(var.worker_bundle_url)
@@ -213,17 +303,29 @@ locals {
   worker_bundle_body            = local.worker_bundle_uses_url ? data.http.worker_bundle[0].response_body : null
   worker_bundle_content_sha256  = local.cloudflare_worker_enabled ? (local.worker_bundle_uses_url ? sha256(data.http.worker_bundle[0].response_body) : (local.worker_bundle_uses_manifest ? null : filesha256(local.worker_bundle_local_path))) : null
 
-  resource_prefix       = var.project_name
-  public_subdomain      = trimspace(var.public_subdomain) != "" ? trimspace(var.public_subdomain) : local.resource_prefix
-  runtime_name          = local.public_subdomain
-  workers_dev_url       = trimspace(var.cloudflare_workers_subdomain) != "" ? "https://${local.public_subdomain}.${trimspace(var.cloudflare_workers_subdomain)}.workers.dev" : null
-  launch_url            = trimspace(var.public_url) != "" ? trimspace(var.public_url) : local.workers_dev_url
-  provided_signing_key  = trimspace(var.service_grant_signing_key)
-  effective_signing_key = local.provided_signing_key != "" ? local.provided_signing_key : random_id.signing_key.hex
-  effective_mcp_auth    = random_id.mcp_auth_token.hex
-  extra_worker_env      = { for name, value in var.env : name => value if trimspace(value) != "" }
+  resource_prefix        = var.project_name
+  public_subdomain       = trimspace(var.public_subdomain) != "" ? trimspace(var.public_subdomain) : local.resource_prefix
+  runtime_name           = local.public_subdomain
+  workers_dev_url        = trimspace(var.cloudflare_workers_subdomain) != "" ? "https://${local.public_subdomain}.${trimspace(var.cloudflare_workers_subdomain)}.workers.dev" : null
+  launch_url             = trimspace(var.public_url) != "" ? trimspace(var.public_url) : local.workers_dev_url
+  accounts_issuer_url    = trimspace(var.takosumi_accounts_issuer_url)
+  accounts_client_id     = trimspace(var.takosumi_accounts_client_id)
+  accounts_client_secret = trimspace(var.takosumi_accounts_client_secret)
+  app_session_secret     = trimspace(var.app_session_secret)
+  app_workspace_id       = trimspace(lookup(var.env, "APP_WORKSPACE_ID", ""))
+  app_capsule_id         = trimspace(lookup(var.env, "APP_CAPSULE_ID", ""))
+  browser_auth_requested = local.accounts_client_id != "" || local.accounts_client_secret != "" || local.app_session_secret != ""
+  browser_auth_ready     = local.accounts_issuer_url != "" && local.accounts_client_id != "" && local.app_session_secret != "" && local.app_workspace_id != ""
+  provided_mcp_token     = trimspace(var.published_mcp_auth_token)
+  extra_worker_env       = { for name, value in var.env : name => value if trimspace(value) != "" }
+  actions_runner_secret  = trimspace(var.actions_runner_secret)
+  actions_secrets_key    = trimspace(var.actions_secrets_key)
 
   r2_objects_bucket = "${local.resource_prefix}-objects"
+  d1_metadata_name  = local.resource_prefix
+  r2_actions_bucket = "${local.resource_prefix}-actions"
+  workflow_queue    = "${local.resource_prefix}-workflows"
+  workflow_dlq      = "${local.resource_prefix}-workflows-dlq"
 }
 
 data "http" "worker_release_manifest" {
@@ -239,22 +341,6 @@ data "http" "worker_release_manifest" {
     attempts     = 3
     min_delay_ms = 500
     max_delay_ms = 5000
-  }
-}
-
-resource "random_id" "signing_key" {
-  byte_length = 32
-
-  keepers = {
-    project_name = local.resource_prefix
-  }
-}
-
-resource "random_id" "mcp_auth_token" {
-  byte_length = 32
-
-  keepers = {
-    project_name = local.resource_prefix
   }
 }
 
@@ -280,6 +366,78 @@ resource "cloudflare_r2_bucket" "objects" {
   name       = local.r2_objects_bucket
 }
 
+# --- Metadata plane (gated by enable_metadata) -------------------------------
+# D1 is the relational metadata plane only; git objects and refs stay in R2 and
+# every git-derived table is rebuildable from R2. Migrations are applied out of
+# band with `wrangler d1 migrations apply <db>` reading the id from the module
+# output below — the same output-then-wrangler pattern used for the Worker bundle.
+resource "cloudflare_d1_database" "metadata" {
+  count      = local.metadata_enabled ? 1 : 0
+  account_id = var.cloudflare_account_id
+  name       = local.d1_metadata_name
+}
+
+# --- Self-hosted Actions runner backing resources (gated by enable_actions) ---
+#
+# The self-hosted Actions runner is embedded in takos-git's OWN worker:
+#   - the run coordinator DO  (ActionsRunCoordinator, SQLite)         — bound below
+#   - the per-job Container DO (ActionsJobRunner)                     — bound below
+#   - the run-tick queue + DLQ + consumer                            — resources below
+#   - the logs/artifacts R2 bucket (R2_ACTIONS)                      — resource below
+# All of the above ARE expressed here and provision zero resources unless
+# enable_actions is true.
+#
+# CONTAINER IMAGE — the one part OpenTofu cannot express. The runner Container
+# image (built from `containers/runner/Dockerfile`, entrypoint the in-container
+# step server `containers/runner/src/executor-main.ts`) attaches to the
+# ActionsJobRunner Durable Object class. The cloudflare provider 5.19.1
+# `cloudflare_workers_script` schema has NO `containers` attribute, so the image
+# binding + `max_instances` MUST be applied out of band with a wrangler
+# `[[containers]]` step in takos-git CI, reading `actions_runner_image` /
+# `actions_runner_max_instances` from the module outputs:
+#
+#   # wrangler.toml (generated from the module outputs)
+#   [[containers]]
+#   class_name     = "ActionsJobRunner"
+#   image          = "<actions_runner_image>"
+#   max_instances  = <actions_runner_max_instances>
+#
+# This is the same output-then-wrangler pattern used for the D1 migrations and the
+# worker bundle. The DO namespace + the `new_sqlite_classes` migration for both DO
+# classes ARE declared on the worker script below, so only the image attachment is
+# deferred to wrangler. TODO(wrangler): apply the `[[containers]]` image binding.
+resource "cloudflare_queue" "workflows" {
+  count      = local.actions_enabled ? 1 : 0
+  account_id = var.cloudflare_account_id
+  queue_name = local.workflow_queue
+}
+
+resource "cloudflare_queue" "workflows_dlq" {
+  count      = local.actions_enabled ? 1 : 0
+  account_id = var.cloudflare_account_id
+  queue_name = local.workflow_dlq
+}
+
+resource "cloudflare_queue_consumer" "workflows" {
+  count             = local.actions_enabled && local.cloudflare_worker_enabled ? 1 : 0
+  account_id        = var.cloudflare_account_id
+  queue_id          = cloudflare_queue.workflows[0].queue_id
+  type              = "worker"
+  script_name       = cloudflare_workers_script.worker[0].script_name
+  dead_letter_queue = cloudflare_queue.workflows_dlq[0].queue_name
+
+  settings = {
+    batch_size  = 10
+    max_retries = 5
+  }
+}
+
+resource "cloudflare_r2_bucket" "actions" {
+  count      = local.actions_enabled ? 1 : 0
+  account_id = var.cloudflare_account_id
+  name       = local.r2_actions_bucket
+}
+
 resource "cloudflare_workers_script" "worker" {
   count               = local.cloudflare_worker_enabled ? 1 : 0
   account_id          = var.cloudflare_account_id
@@ -290,6 +448,14 @@ resource "cloudflare_workers_script" "worker" {
   main_module         = var.worker_main_module
   compatibility_date  = var.worker_compatibility_date
   compatibility_flags = var.worker_compatibility_flags
+
+  # SQLite-backed Durable Object classes for the self-hosted Actions runner. Only
+  # declared when Actions is enabled; the Phase-5 worker bundle must export both
+  # ActionsRunCoordinator and ActionsJobRunner for the apply to succeed.
+  migrations = local.actions_enabled ? {
+    new_tag            = "actions-v1"
+    new_sqlite_classes = ["ActionsRunCoordinator", "ActionsJobRunner"]
+  } : null
 
   bindings = concat(
     [
@@ -304,18 +470,86 @@ resource "cloudflare_workers_script" "worker" {
         text = local.launch_url != null ? local.launch_url : ""
       },
     ],
-    [
+    local.accounts_issuer_url != "" ? [
+      {
+        type = "plain_text"
+        name = "OIDC_ISSUER_URL"
+        text = local.accounts_issuer_url
+      },
+    ] : [],
+    local.browser_auth_ready ? [
+      {
+        type = "plain_text"
+        name = "OIDC_CLIENT_ID"
+        text = local.accounts_client_id
+      },
       {
         type = "secret_text"
-        name = "GIT_TOKEN_SIGNING_KEY"
-        text = local.effective_signing_key
+        name = "APP_SESSION_SECRET"
+        text = local.app_session_secret
       },
+    ] : [],
+    local.accounts_client_secret != "" ? [
+      {
+        type = "secret_text"
+        name = "OIDC_CLIENT_SECRET"
+        text = local.accounts_client_secret
+      },
+    ] : [],
+    local.provided_mcp_token != "" ? [
       {
         type = "secret_text"
         name = "PUBLISHED_MCP_AUTH_TOKEN"
-        text = local.effective_mcp_auth
+        text = local.provided_mcp_token
       },
-    ],
+    ] : [],
+    local.metadata_enabled ? [
+      {
+        type = "d1"
+        name = "DB"
+        id   = cloudflare_d1_database.metadata[0].id
+      },
+    ] : [],
+    local.actions_enabled ? [
+      {
+        # Actions run/job/step/secret state shares the collaboration-core D1.
+        type = "d1"
+        name = "ACTIONS_DB"
+        id   = cloudflare_d1_database.metadata[0].id
+      },
+      {
+        type       = "queue"
+        name       = "WORKFLOW_QUEUE"
+        queue_name = cloudflare_queue.workflows[0].queue_name
+      },
+      {
+        # Coordinator DO (SQLite). Class exported by the Phase-5 worker bundle.
+        type       = "durable_object_namespace"
+        name       = "ACTIONS_RUN"
+        class_name = "ActionsRunCoordinator"
+      },
+      {
+        # Container-runner DO (the self-hosted Actions runner image).
+        type       = "durable_object_namespace"
+        name       = "ACTIONS_JOB"
+        class_name = "ActionsJobRunner"
+      },
+      {
+        type        = "r2_bucket"
+        name        = "R2_ACTIONS"
+        bucket_name = cloudflare_r2_bucket.actions[0].name
+      },
+      {
+        type = "secret_text"
+        name = "ACTIONS_RUNNER_SECRET"
+        text = local.actions_runner_secret
+      },
+      {
+        type = "secret_text"
+        name = "ACTIONS_SECRETS_KEY"
+        text = local.actions_secrets_key
+      },
+    ] : [],
     [
       for name, value in local.extra_worker_env : {
         type = "plain_text"
@@ -326,6 +560,26 @@ resource "cloudflare_workers_script" "worker" {
   )
 
   lifecycle {
+    precondition {
+      condition     = local.accounts_issuer_url == "" || (local.app_workspace_id != "" && local.app_capsule_id != "")
+      error_message = "Interface OAuth requires env.APP_WORKSPACE_ID and env.APP_CAPSULE_ID whenever takosumi_accounts_issuer_url is configured."
+    }
+
+    precondition {
+      condition     = !local.browser_auth_requested || local.browser_auth_ready
+      error_message = "Browser auth requires takosumi_accounts_issuer_url, takosumi_accounts_client_id, app_session_secret, and env.APP_WORKSPACE_ID together."
+    }
+
+    precondition {
+      condition     = !local.actions_enabled || local.metadata_enabled
+      error_message = "enable_actions requires enable_metadata (Actions run/job/secret state shares the collaboration-core D1)."
+    }
+
+    precondition {
+      condition     = !local.actions_enabled || (local.actions_runner_secret != "" && local.actions_secrets_key != "")
+      error_message = "enable_actions requires actions_runner_secret and actions_secrets_key (each >= 32 chars)."
+    }
+
     precondition {
       condition = !local.worker_bundle_uses_manifest || (
         try(local.worker_release_manifest.kind, "") == "takosumi.worker-artifact@v1" &&

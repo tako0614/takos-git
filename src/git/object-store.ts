@@ -30,6 +30,13 @@ import {
 
 const OBJECT_PREFIX = "objects";
 
+export class GitObjectTooLargeError extends Error {
+  constructor(readonly maxBytes: number) {
+    super(`Git object exceeds the ${maxBytes}-byte read limit`);
+    this.name = "GitObjectTooLargeError";
+  }
+}
+
 function getObjectKey(sha: string): string {
   return `${OBJECT_PREFIX}/${sha.substring(0, 2)}/${sha.substring(2)}`;
 }
@@ -43,8 +50,10 @@ function toArrayBufferView(data: Uint8Array): Uint8Array<ArrayBuffer> {
 async function deflate(data: Uint8Array): Promise<Uint8Array> {
   const cs = new CompressionStream("deflate");
   const writer = cs.writable.getWriter();
-  writer.write(toArrayBufferView(data));
-  writer.close();
+  const write = (async () => {
+    await writer.write(toArrayBufferView(data));
+    await writer.close();
+  })();
 
   const chunks: Uint8Array[] = [];
   const reader = cs.readable.getReader();
@@ -53,22 +62,36 @@ async function deflate(data: Uint8Array): Promise<Uint8Array> {
     if (done) break;
     chunks.push(value);
   }
+  await write;
   return concatBytes(...chunks);
 }
 
-async function inflate(data: Uint8Array): Promise<Uint8Array> {
+async function inflate(
+  data: Uint8Array,
+  maxOutputBytes = Number.POSITIVE_INFINITY,
+): Promise<Uint8Array> {
   const ds = new DecompressionStream("deflate");
   const writer = ds.writable.getWriter();
-  writer.write(toArrayBufferView(data));
-  writer.close();
+  const write = (async () => {
+    await writer.write(toArrayBufferView(data));
+    await writer.close();
+  })();
 
   const chunks: Uint8Array[] = [];
+  let total = 0;
   const reader = ds.readable.getReader();
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
+    total += value.byteLength;
+    if (total > maxOutputBytes) {
+      await reader.cancel();
+      await write.catch(() => undefined);
+      throw new GitObjectTooLargeError(maxOutputBytes);
+    }
     chunks.push(value);
   }
+  await write;
   return concatBytes(...chunks);
 }
 
@@ -167,29 +190,39 @@ export async function putObject(
 export async function getRawObject(
   bucket: ObjectStoreBinding,
   sha: string,
+  maxBytes = Number.POSITIVE_INFINITY,
 ): Promise<Uint8Array | null> {
   if (!isValidSha(sha)) return null;
   const key = getObjectKey(sha);
   const obj = await bucket.get(key);
   if (!obj) return null;
   const compressed = new Uint8Array(await obj.arrayBuffer());
-  return inflate(compressed);
+  return inflate(compressed, maxBytes);
 }
 
 export async function getObject(
   bucket: ObjectStoreBinding,
   sha: string,
+  maxContentBytes = Number.POSITIVE_INFINITY,
 ): Promise<{ type: GitObjectType; content: Uint8Array } | null> {
-  const raw = await getRawObject(bucket, sha);
+  const maxRawBytes = Number.isFinite(maxContentBytes)
+    ? maxContentBytes + 128
+    : Number.POSITIVE_INFINITY;
+  const raw = await getRawObject(bucket, sha, maxRawBytes);
   if (!raw) return null;
-  return decodeObject(raw);
+  const object = decodeObject(raw);
+  if (object.content.byteLength > maxContentBytes) {
+    throw new GitObjectTooLargeError(maxContentBytes);
+  }
+  return object;
 }
 
 export async function getBlob(
   bucket: ObjectStoreBinding,
   sha: string,
+  maxBytes = Number.POSITIVE_INFINITY,
 ): Promise<Uint8Array | null> {
-  const obj = await getObject(bucket, sha);
+  const obj = await getObject(bucket, sha, maxBytes);
   if (!obj || obj.type !== "blob") return null;
   return obj.content;
 }
@@ -197,8 +230,9 @@ export async function getBlob(
 export async function getTreeEntries(
   bucket: ObjectStoreBinding,
   sha: string,
+  maxBytes = Number.POSITIVE_INFINITY,
 ): Promise<TreeEntry[] | null> {
-  const obj = await getObject(bucket, sha);
+  const obj = await getObject(bucket, sha, maxBytes);
   if (!obj || obj.type !== "tree") return null;
   return decodeTree(obj.content);
 }
@@ -206,8 +240,9 @@ export async function getTreeEntries(
 export async function getCommitData(
   bucket: ObjectStoreBinding,
   sha: string,
+  maxBytes = Number.POSITIVE_INFINITY,
 ): Promise<GitCommit | null> {
-  const obj = await getObject(bucket, sha);
+  const obj = await getObject(bucket, sha, maxBytes);
   if (!obj || obj.type !== "commit") return null;
   const commit = decodeCommit(obj.content);
   commit.sha = sha;

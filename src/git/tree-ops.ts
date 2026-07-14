@@ -21,8 +21,13 @@ function hasControlChars(value: string): boolean {
 }
 
 function isValidGitPathSegment(segment: string): boolean {
-  return !(!segment || segment === "." || segment === ".." ||
-    segment.includes("\0") || hasControlChars(segment));
+  return !(
+    !segment ||
+    segment === "." ||
+    segment === ".." ||
+    segment.includes("\0") ||
+    hasControlChars(segment)
+  );
 }
 
 export function isValidGitPath(path: string): boolean {
@@ -30,9 +35,12 @@ export function isValidGitPath(path: string): boolean {
   if (path.length === 0 || path.length > MAX_GIT_PATH_LENGTH) return false;
   if (path.includes("\0") || hasControlChars(path)) return false;
   if (
-    path.startsWith("/") || path.endsWith("/") || path.includes("\\") ||
+    path.startsWith("/") ||
+    path.endsWith("/") ||
+    path.includes("\\") ||
     path.includes("//")
-  ) return false;
+  )
+    return false;
   const segments = path.split("/");
   return segments.length > 0 && segments.every(isValidGitPathSegment);
 }
@@ -63,6 +71,7 @@ export async function getEntryAtPath(
   bucket: ObjectStoreBinding,
   rootTreeSha: string,
   path: string,
+  options?: { maxTreeBytes?: number },
 ): Promise<(TreeEntry & { type: "blob" | "tree" }) | null> {
   const normalizedPath = path.replace(/^\/+|\/+$/g, "");
   if (!normalizedPath) {
@@ -81,7 +90,11 @@ export async function getEntryAtPath(
     const part = parts[i];
     const isLast = i === parts.length - 1;
 
-    const entries = await getTreeEntries(bucket, currentTreeSha);
+    const entries = await getTreeEntries(
+      bucket,
+      currentTreeSha,
+      options?.maxTreeBytes,
+    );
     if (!entries) return null;
 
     const entry = entries.find((e) => e.name === part);
@@ -103,10 +116,11 @@ export async function listDirectory(
   bucket: ObjectStoreBinding,
   rootTreeSha: string,
   path = "",
+  options?: { maxTreeBytes?: number },
 ): Promise<TreeEntry[] | null> {
-  const entry = await getEntryAtPath(bucket, rootTreeSha, path);
+  const entry = await getEntryAtPath(bucket, rootTreeSha, path, options);
   if (!entry || entry.type !== "tree") return null;
-  return getTreeEntries(bucket, entry.sha);
+  return getTreeEntries(bucket, entry.sha, options?.maxTreeBytes);
 }
 
 export async function getBlobAtPath(
@@ -289,9 +303,11 @@ export async function createSingleFileTree(
   content: Uint8Array,
 ): Promise<string> {
   const blobSha = await putBlob(bucket, content);
-  return createTree(bucket, [{
-    mode: FILE_MODES.REGULAR_FILE,
-    name: fileName,
-    sha: blobSha,
-  }]);
+  return createTree(bucket, [
+    {
+      mode: FILE_MODES.REGULAR_FILE,
+      name: fileName,
+      sha: blobSha,
+    },
+  ]);
 }
