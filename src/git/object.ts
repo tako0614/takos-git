@@ -28,12 +28,10 @@ export function encodeBlob(content: Uint8Array): Uint8Array {
 export function encodeTree(entries: TreeEntry[]): Uint8Array {
   // Sort entries: git sorts by treating directory names as if they end with '/'
   const sorted = [...entries].sort((a, b) => {
-    const aName = a.mode === "40000" || a.mode === "040000"
-      ? a.name + "/"
-      : a.name;
-    const bName = b.mode === "40000" || b.mode === "040000"
-      ? b.name + "/"
-      : b.name;
+    const aName =
+      a.mode === "40000" || a.mode === "040000" ? a.name + "/" : a.name;
+    const bName =
+      b.mode === "40000" || b.mode === "040000" ? b.name + "/" : b.name;
     return aName < bName ? -1 : aName > bName ? 1 : 0;
   });
 
@@ -53,12 +51,10 @@ export function encodeTree(entries: TreeEntry[]): Uint8Array {
 
 export function encodeTreeContent(entries: TreeEntry[]): Uint8Array {
   const sorted = [...entries].sort((a, b) => {
-    const aName = a.mode === "40000" || a.mode === "040000"
-      ? a.name + "/"
-      : a.name;
-    const bName = b.mode === "40000" || b.mode === "040000"
-      ? b.name + "/"
-      : b.name;
+    const aName =
+      a.mode === "40000" || a.mode === "040000" ? a.name + "/" : a.name;
+    const bName =
+      b.mode === "40000" || b.mode === "040000" ? b.name + "/" : b.name;
     return aName < bName ? -1 : aName > bName ? 1 : 0;
   });
 
@@ -166,17 +162,38 @@ export function decodeObjectHeader(raw: Uint8Array): {
   const spaceIdx = headerStr.indexOf(" ");
   if (spaceIdx === -1) throw new Error("Invalid git object header");
 
-  const type = headerStr.substring(0, spaceIdx) as GitObjectType;
-  const size = parseInt(headerStr.substring(spaceIdx + 1), 10);
+  const typeValue = headerStr.substring(0, spaceIdx);
+  if (
+    typeValue !== "blob" &&
+    typeValue !== "tree" &&
+    typeValue !== "commit" &&
+    typeValue !== "tag"
+  ) {
+    throw new Error("Invalid git object header type");
+  }
+  const type = typeValue as GitObjectType;
+  const sizeText = headerStr.substring(spaceIdx + 1);
+  if (!/^(0|[1-9][0-9]*)$/u.test(sizeText)) {
+    throw new Error("Invalid git object header size");
+  }
+  const size = Number.parseInt(sizeText, 10);
+  if (!Number.isSafeInteger(size)) {
+    throw new Error("Invalid git object header size");
+  }
 
   return { type, size, contentOffset: nullIdx + 1 };
 }
 
-export function decodeObject(
-  raw: Uint8Array,
-): { type: GitObjectType; content: Uint8Array } {
-  const { type, contentOffset } = decodeObjectHeader(raw);
-  return { type, content: raw.subarray(contentOffset) };
+export function decodeObject(raw: Uint8Array): {
+  type: GitObjectType;
+  content: Uint8Array;
+} {
+  const { type, size, contentOffset } = decodeObjectHeader(raw);
+  const content = raw.subarray(contentOffset);
+  if (content.byteLength !== size) {
+    throw new Error("Invalid git object: declared size does not match content");
+  }
+  return { type, content };
 }
 
 export function decodeTree(content: Uint8Array): TreeEntry[] {
@@ -213,9 +230,8 @@ export function decodeTree(content: Uint8Array): TreeEntry[] {
 export function decodeCommit(content: Uint8Array): GitCommit {
   const text = TEXT_DECODER.decode(content);
   const blankLineIdx = text.indexOf("\n\n");
-  const headerSection = blankLineIdx !== -1
-    ? text.substring(0, blankLineIdx)
-    : text;
+  const headerSection =
+    blankLineIdx !== -1 ? text.substring(0, blankLineIdx) : text;
   const message = blankLineIdx !== -1 ? text.substring(blankLineIdx + 2) : "";
 
   let tree = "";
@@ -252,7 +268,10 @@ function parseSignature(raw: string): GitSignature {
 
   const name = raw.substring(0, emailStart).trim();
   const email = raw.substring(emailStart + 1, emailEnd);
-  const rest = raw.substring(emailEnd + 1).trim().split(" ");
+  const rest = raw
+    .substring(emailEnd + 1)
+    .trim()
+    .split(" ");
   const timestamp = parseInt(rest[0], 10);
   const tzOffset = rest[1] || "+0000";
 

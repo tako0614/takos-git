@@ -7,10 +7,14 @@ const outputs = await readCapsuleOutputs();
 const baseInput =
   process.env.TAKOS_GIT_URL ??
   process.env.TAKOS_GIT_HTTP_BASE_URL?.replace(/\/git\/?$/, "") ??
-  stringOutput(outputs, "url", "public_url", "launch_url") ??
+  stringOutput(outputs, "launch_url") ??
   process.env.TAKOSUMI_CAPSULE_PUBLIC_URL ??
   "";
-const token = process.env.TAKOS_GIT_ACCESS_TOKEN ?? "";
+const legacyToken = process.env.TAKOS_GIT_ACCESS_TOKEN ?? "";
+const mcpToken = process.env.TAKOS_GIT_MCP_TOKEN ?? legacyToken;
+const readToken = process.env.TAKOS_GIT_READ_TOKEN ?? legacyToken;
+const writeToken = process.env.TAKOS_GIT_WRITE_TOKEN ?? legacyToken;
+const hostingReadToken = process.env.TAKOS_GIT_HOSTING_READ_TOKEN ?? "";
 const repo = process.env.TAKOS_GIT_SMOKE_REPO ?? "";
 const skipRefs = process.env.TAKOS_GIT_SKIP_REFS === "1";
 const delegateCleanupToDestroy =
@@ -139,8 +143,11 @@ await expectOk(healthUrl);
 const checks = ["root", "health"];
 
 if (!skipRefs) {
-  if (!token)
-    fail("TAKOS_GIT_ACCESS_TOKEN is required unless TAKOS_GIT_SKIP_REFS=1");
+  if (!mcpToken || !readToken || !writeToken) {
+    fail(
+      "TAKOS_GIT_MCP_TOKEN, TAKOS_GIT_READ_TOKEN, and TAKOS_GIT_WRITE_TOKEN are required unless TAKOS_GIT_SKIP_REFS=1",
+    );
+  }
   if (!repo)
     fail("TAKOS_GIT_SMOKE_REPO is required unless TAKOS_GIT_SKIP_REFS=1");
   const normalizedRepo = repoPath(repo);
@@ -150,12 +157,26 @@ if (!skipRefs) {
   const tempRoot = await mkdtemp(resolve(tmpdir(), "takos-git-smoke-"));
   let repositoryCreated = false;
   try {
-    await callMcp(baseUrl, token, "git_repo_create", { repo });
+    await callMcp(baseUrl, mcpToken, "git_repo_create", { repo });
     repositoryCreated = true;
     checks.push("repository.create");
 
+    if (hostingReadToken) {
+      const hostingRepo = await expectOk(
+        new URL(`/api/v1/repos/${normalizedRepo}`, baseUrl),
+        { headers: { authorization: `Bearer ${hostingReadToken}` } },
+      );
+      const payload = (await hostingRepo.json()) as {
+        repository?: { name?: string };
+      };
+      if (payload.repository?.name !== repo) {
+        fail("hosting API did not return the created repository");
+      }
+      checks.push("hosting.repository-read");
+    }
+
     const refs = await expectOk(refsUrl, {
-      headers: { authorization: `Bearer ${token}` },
+      headers: { authorization: `Bearer ${readToken}` },
     });
     const contentType = refs.headers.get("content-type") ?? "";
     if (!contentType.includes("application/x-git-upload-pack-advertisement")) {
@@ -165,11 +186,17 @@ if (!skipRefs) {
 
     const sourceDir = resolve(tempRoot, "source");
     const cloneDir = resolve(tempRoot, "clone");
-    await runGit(tempRoot, token, "init", "--initial-branch=main", sourceDir);
-    await runGit(sourceDir, token, "config", "user.name", "Takosumi E2E");
+    await runGit(
+      tempRoot,
+      writeToken,
+      "init",
+      "--initial-branch=main",
+      sourceDir,
+    );
+    await runGit(sourceDir, writeToken, "config", "user.name", "Takosumi E2E");
     await runGit(
       sourceDir,
-      token,
+      writeToken,
       "config",
       "user.email",
       "e2e@example.invalid",
@@ -178,20 +205,20 @@ if (!skipRefs) {
       resolve(sourceDir, "README.md"),
       "takos-git functional e2e\n",
     );
-    await runGit(sourceDir, token, "add", "README.md");
-    await runGit(sourceDir, token, "commit", "-m", "functional e2e");
+    await runGit(sourceDir, writeToken, "add", "README.md");
+    await runGit(sourceDir, writeToken, "commit", "-m", "functional e2e");
     await runGit(
       sourceDir,
-      token,
+      writeToken,
       "remote",
       "add",
       "origin",
       repoUrl.toString(),
     );
-    await runGit(sourceDir, token, "push", "-u", "origin", "main");
+    await runGit(sourceDir, writeToken, "push", "-u", "origin", "main");
     checks.push("smart-http.push");
 
-    await runGit(tempRoot, token, "clone", repoUrl.toString(), cloneDir);
+    await runGit(tempRoot, readToken, "clone", repoUrl.toString(), cloneDir);
     if (
       (await readFile(resolve(cloneDir, "README.md"), "utf8")) !==
       "takos-git functional e2e\n"
@@ -201,7 +228,7 @@ if (!skipRefs) {
     checks.push("smart-http.clone");
   } finally {
     if (repositoryCreated && !delegateCleanupToDestroy) {
-      await callMcp(baseUrl, token, "git_repo_delete", { repo });
+      await callMcp(baseUrl, mcpToken, "git_repo_delete", { repo });
     }
     await rm(tempRoot, { recursive: true, force: true });
   }
@@ -209,7 +236,7 @@ if (!skipRefs) {
     checks.push("repository.cleanup-delegated-to-destroy");
   } else {
     const deletedRefs = await fetch(refsUrl, {
-      headers: { authorization: `Bearer ${token}` },
+      headers: { authorization: `Bearer ${readToken}` },
     });
     if (deletedRefs.status !== 404) {
       fail(`deleted repository remained readable: ${deletedRefs.status}`);
@@ -230,5 +257,6 @@ console.log(
     ok: true,
     service: "takos-git",
     checkedRefs: !skipRefs,
+    checkedHosting: hostingReadToken !== "",
   }),
 );
