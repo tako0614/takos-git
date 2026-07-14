@@ -15,6 +15,10 @@
     "check": "bunx tsc --noEmit",
     "check:web": "cd web && tsc --noEmit"
   },
+  "dependencies": {
+    "yaml": "^2.5.0",
+    "zod": "^3.23.0"
+  },
   "devDependencies": {
     "typescript": "^5.6.0"
   }
