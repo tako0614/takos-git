@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.4.1 — install fixes: D1 self-migration + upgrade provider bridge
+
+Makes v0.4 actually install/upgrade cleanly via Takosumi/OpenTofu.
+
+- **The Worker self-applies the D1 baseline schema on first use** (guarded by a
+  `schema_migrations` ledger; the DDL is now fully `IF NOT EXISTS`). A fresh install
+  no longer needs a separate `wrangler d1 migrations apply` step — otherwise D1 was
+  empty and every collaboration endpoint 500'd.
+- **Upgrade provider bridge:** re-declares the `hashicorp/random` provider (pinned to
+  the runner mirror's `3.9.0`, added to the lockfile) so an offline/mirror-only runner
+  can plan an upgrade from a pre-0.4 install and destroy the orphaned
+  `random_id.signing_key` / `random_id.mcp_auth_token` resources still in its state.
+  v0.4 creates no `random_*` resources; the declaration is a one-cycle bridge.
+
 ## v0.4.0 — GitHub-parity forge + self-hosted Actions
 
 The big one: takos-git grows from a read-only Git Smart-HTTP hosting shell into a
