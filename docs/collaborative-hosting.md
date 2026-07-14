@@ -92,7 +92,9 @@ reader へ絞り込む。repository ごとに Takosumi Interface を量産しな
 
 - webhook delivery with retry and audit evidence
 - check run / status API
-- runner Interface を使う Actions dispatch。Takos agent implementation を埋め込まない
+- **self-hosted Actions runner**: Actions の実行層は takos-git 自身の Worker に埋め込んだ
+  Cloudflare Container + Durable Object。外部 runner Capsule でも Takos agent でもない
+  (詳細は下記「Self-hosted Actions runner」)
 - Git LFS, release assets, import/mirror jobs
 - asynchronous code index and search
 - protocol v2 / shallow clone / partial clone の compatibility evidence
@@ -106,6 +108,80 @@ reader へ絞り込む。repository ごとに Takosumi Interface を量産しな
 
 GitHub REST/GraphQL API や GitHub Actions の完全互換は目標にしない。必要な integration は
 versioned capability として追加し、未対応 API を GitHub 互換として広告しない。
+
+## Self-hosted Actions runner
+
+Actions の実行層は takos-git 自身の Worker に埋め込む。これは
+[`github-parity-build.md`](github-parity-build.md) の Decision record の正本判断であり、旧稿の
+「runner Interface を使う Actions dispatch」を **上書き** する。**外部 runner Capsule ではなく、
+Takos agent でもない**。旧 Takos product 側の Actions 実行層 (`TakosRuntimeContainer` /
+`RUNTIME_HOST` / `src/worker/runtime/queues/workflow-*`) は **retire** 済みで、この
+self-hosted runner が唯一の後継。shim も dual path も Takos runtime への依存も持たない。
+
+### 実行トポロジ
+
+```text
+receive-pack success
+  └─ push-trigger → 5a control plane (parse → plan → persist → project)
+       └─ WORKFLOW_QUEUE  { runId, repoId }
+            └─ queue() consumer
+                 └─ ACTIONS_RUN.idFromName(runId)   ActionsRunCoordinator (SQLite DO)
+                      ├─ needs-DAG gate / skip 伝播 / concurrency budget / timeout alarm / cancel
+                      └─ ACTIONS_JOB.idFromName(jobId)   ActionsJobRunner (Container DO)
+                           └─ runner Container   in-container step executor
+                                ├─ GET  /internal/actions/checkout   (run-pin tree を tar で取得)
+                                ├─ POST /internal/actions/logs        (redacted log を R2_ACTIONS へ)
+                                └─ POST /internal/actions/artifacts    (artifact を R2_ACTIONS へ)
+```
+
+- **Coordinator DO (`ActionsRunCoordinator`)**: run 単位の直列状態を持つ。5a が書いた
+  `workflow_jobs` / `workflow_steps` を読み、`needs` DAG を評価して READY な job だけを
+  Container DO に dispatch する。matrix job は job_key を共有し、集約 conclusion は最悪 cell。
+  prerequisite が success 以外に settle したら dependent は skip。job timeout は alarm で
+  reap。状態遷移は 5a callback (`startRun` / `startJob` / `updateStep` / `completeJob` /
+  `cancelRun`) だけを通し、二重 source of truth を作らない。再配送に対して idempotent。
+- **Container DO (`ActionsJobRunner`)**: per-job で runner Container を起動し、job body を
+  forward し、`ActionsJobResult` を coordinator に relay する。timeout / cancellation と
+  RunnerProfile 相当の resource / network / secret policy (`default-deny` egress、bounded
+  CPU/memory、runner-only secret、redacted log) を課す。
+- **In-container executor** (`containers/runner/src/`): job body を受け取り、run-pin tree を
+  checkout してから各 `StepExecContract` step を workspace で実行する。`shell` /
+  `working-directory` / `env` / `continue-on-error` / `timeout-minutes` を尊重し、log を
+  stream する。MVP の `uses:` は `checkout` と `upload-artifact` のみで、それ以外は `run:`
+  shell。secret 値は run step の process env として注入し、全 log から **redact** する。
+
+### R2 と run-pin
+
+git data の正本は R2。run は作成時の commit を内部 ref `refs/takos-actions/<runId>` に
+**pin** する (refs-doc と同じ ETag CAS 規律、`src/git/refs-store.ts`)。pin は git-visible な
+refs doc の外に隔離した per-repo pin document (`git/v2/actions-pins/<repo>.json`) に置き、
+smart-http では advertise されず client から push もできない。これにより run 実行中に
+force-push が並行しても、runner が build する tree は動かない。log は
+`R2_ACTIONS` の `logs/<repoId>/<runId>/<jobId>.log`、artifact は
+`artifacts/<repoId>/<runId>/<name>` (+ `workflow_run_artifacts` 行) に seal する。
+
+### Trust boundary
+
+`/internal/actions/{checkout,logs,artifacts}` は Interface OAuth / browser session とは
+**別の HMAC trust boundary**。container の callback は run 単位に mint した
+`ACTIONS_RUNNER_SECRET` bearer (runId+jobId を bind) で認証する。fail-closed
+(secret 未設定なら常に 401) で、router より前に dispatch し、`/api/v1` / `/git/` / `/mcp`
+からは到達不能。checkout の repo / commit は token を信用せず runId から D1/R2 で解決する。
+
+### Deploy (operator)
+
+backing 資源 (Queue + DLQ、`ACTIONS_RUN` / `ACTIONS_JOB` DO namespace + `new_sqlite_classes`
+migration、`R2_ACTIONS`、secret) は `enable_actions` gate 配下で `main.tf` が管理する
+(default false で `tofu validate` / `plan` は zero resource)。runner Container image
+(`containers/runner/Dockerfile`) だけは cloudflare provider 5.19.1 が表現できないため、
+CI が image を build/push し、module output (`actions_runner_container`) を読む wrangler
+`[[containers]]` step で `ActionsJobRunner` class に attach する (bundle / D1 migration と
+同じ output-then-wrangler pattern)。
+
+### Follow-ups (documented, out of MVP)
+
+live-tail WebSocket log、`setup-*` / cache などの action、cross-run の `concurrency:`
+supersede、runner autoscaling、native git-clone credential helper 経由の checkout。
 
 ## Migration from Takos
 
