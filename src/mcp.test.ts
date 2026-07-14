@@ -1,16 +1,16 @@
 import { describe, expect, test } from "bun:test";
 
-import { mintGitToken } from "./git-token.ts";
 import { MemoryBucket } from "./test-bucket.ts";
-import worker, { type Env } from "./worker.ts";
+import worker, { createGitWorker, type Env } from "./worker.ts";
+import { createDbClient } from "./db/client.ts";
+import { createFakeD1 } from "./db/fake.ts";
+import { migrationSql } from "./db/migration-sql.ts";
 
-const SIGNING_KEY = "mcp-test-signing-key";
 const MCP_TOKEN = "generated-published-mcp-token";
 
 function env(): Env {
   return {
     BUCKET: new MemoryBucket(),
-    GIT_TOKEN_SIGNING_KEY: SIGNING_KEY,
     PUBLISHED_MCP_AUTH_TOKEN: MCP_TOKEN,
   };
 }
@@ -74,7 +74,7 @@ describe("takos-git MCP", () => {
       .toBe(true);
   });
 
-  test("generated publication secret can create, inspect, list, and delete repos", async () => {
+  test("explicit standalone publication secret can create, inspect, list, and delete repos", async () => {
     const target = env();
     const created = await call(target, MCP_TOKEN, "git_repo_create", { repo: "acme/widgets" });
     expect((created.result as { structuredContent: { repo: string } }).structuredContent.repo)
@@ -93,35 +93,78 @@ describe("takos-git MCP", () => {
       .toBe(true);
   });
 
-  test("signed grants enforce prefix and read/write capabilities", async () => {
-    const target = env();
-    const scoped = await mintGitToken(SIGNING_KEY, {
-      v: 1,
-      ws: "workspace_a",
-      sub: "consumer_a",
-      pfx: "acme",
-      cap: ["r", "w"],
-      aud: "source.git.smart_http",
-      iat: Math.floor(Date.now() / 1000),
-    });
-    await call(target, scoped, "git_repo_create", { repo: "acme/allowed" });
-    const denied = await call(target, scoped, "git_repo_create", { repo: "other/denied" });
-    expect((denied.error as { message: string }).message).toContain("outside the grant scope");
+  test("with the metadata plane, git_repo_create/delete write and remove the D1 row", async () => {
+    const fake = createFakeD1(migrationSql);
+    const target: Env = {
+      BUCKET: new MemoryBucket(),
+      PUBLISHED_MCP_AUTH_TOKEN: MCP_TOKEN,
+      DB: fake,
+    };
+    await call(target, MCP_TOKEN, "git_repo_create", { repo: "acme/widgets" });
+    const db = createDbClient(fake);
+    const created = await db.queryOne<{ storage_key: string }>(
+      `SELECT storage_key FROM repositories WHERE storage_key = 'acme/widgets'`,
+    );
+    expect(created?.storage_key).toBe("acme/widgets");
 
-    const listed = await call(target, scoped, "git_repo_list");
-    expect((listed.result as { structuredContent: { repos: string[] } }).structuredContent.repos)
-      .toEqual(["acme/allowed"]);
+    await call(target, MCP_TOKEN, "git_repo_delete", { repo: "acme/widgets" });
+    const gone = await db.queryOne(
+      `SELECT storage_key FROM repositories WHERE storage_key = 'acme/widgets'`,
+    );
+    expect(gone).toBeNull();
+  });
 
-    const readOnly = await mintGitToken(SIGNING_KEY, {
-      v: 1,
-      ws: "workspace_a",
-      sub: "consumer_b",
-      pfx: "acme",
-      cap: ["r"],
-      aud: "source.git.smart_http",
-      iat: Math.floor(Date.now() / 1000),
-    });
-    const writeDenied = await call(target, readOnly, "git_repo_delete", { repo: "acme/allowed" });
-    expect((writeDenied.error as { message: string }).message).toContain("outside the grant scope");
+  test("Interface OAuth accepts only the exact mcp.invoke audience and owner evidence", async () => {
+    const interfaceWorker = createGitWorker(async () =>
+      Response.json({
+        token_use: "interface_oauth",
+        sub: "principal_git",
+        aud: "https://git.example/mcp",
+        scope: "mcp.invoke",
+        takosumi: {
+          workspace_id: "workspace_a",
+          capsule_id: "capsule_git",
+          interface_id: "interface_git_mcp",
+          interface_binding_id: "binding_mcp",
+          interface_resolved_revision: 2,
+        },
+      }),
+    );
+    const target: Env = {
+      BUCKET: new MemoryBucket(),
+      APP_URL: "https://git.example",
+      OIDC_ISSUER_URL: "https://accounts.example",
+      APP_WORKSPACE_ID: "workspace_a",
+      APP_CAPSULE_ID: "capsule_git",
+    };
+    const response = await interfaceWorker.fetch(
+      mcpRequest("taksrv_git_mcp", "tools/list"),
+      target,
+    );
+    expect(response.status).toBe(200);
+
+    const wrongScopeWorker = createGitWorker(async () =>
+      Response.json({
+        token_use: "interface_oauth",
+        sub: "principal_git",
+        aud: "https://git.example/mcp",
+        scope: "source.git.smart_http.read",
+        takosumi: {
+          workspace_id: "workspace_a",
+          capsule_id: "capsule_git",
+          interface_id: "interface_git_mcp",
+          interface_binding_id: "binding_mcp",
+          interface_resolved_revision: 2,
+        },
+      }),
+    );
+    expect(
+      (
+        await wrongScopeWorker.fetch(
+          mcpRequest("taksrv_git_wrong_scope", "tools/list"),
+          target,
+        )
+      ).status,
+    ).toBe(401);
   });
 });

@@ -1,0 +1,192 @@
+@import "tailwindcss";
+
+/*
+ * takos-git design tokens — a dense, GitHub-like palette on a system font stack.
+ *
+ * Theme model: JS (`lib/theme.ts`) always writes a CONCRETE `data-theme`
+ * (`light` | `dark`) on <html>, resolving `system` at load + on OS change. So
+ * CSS only needs light defaults on `:root` and a dark override block, and the
+ * Tailwind `dark:` variant keys off `[data-theme=dark]` — this makes the ported
+ * takos views' `dark:` utilities work under our explicit toggle. Before JS runs,
+ * `prefers-color-scheme` seeds the right palette to avoid a flash.
+ */
+
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+:root {
+  /* GitHub Primer-ish light scale */
+  --canvas-default: #ffffff;
+  --canvas-subtle: #f6f8fa;
+  --canvas-inset: #eff2f5;
+  --fg-default: #1f2328;
+  --fg-muted: #59636e;
+  --fg-subtle: #818b98;
+  --fg-on-emphasis: #ffffff;
+  --border-default: #d1d9e0;
+  --border-muted: #e6ebf1;
+  --accent-fg: #0969da;
+  --accent-emphasis: #0969da;
+  --accent-subtle: #ddf4ff;
+  --success-fg: #1a7f37;
+  --success-emphasis: #1f883d;
+  --success-subtle: #dafbe1;
+  --danger-fg: #cf222e;
+  --danger-emphasis: #cf222e;
+  --danger-subtle: #ffebe9;
+  --attention-fg: #9a6700;
+  --attention-emphasis: #bf8700;
+  --attention-subtle: #fff8c5;
+  --done-fg: #8250df;
+  --done-emphasis: #8250df;
+  --done-subtle: #fbefff;
+  --neutral-emphasis: #59636e;
+  --neutral-muted: rgba(129, 139, 152, 0.2);
+  --shadow-sm: 0 1px 0 rgba(31, 35, 40, 0.04);
+  --shadow-md: 0 3px 6px rgba(140, 149, 159, 0.15);
+  --overlay-backdrop: rgba(31, 35, 40, 0.5);
+}
+
+[data-theme="dark"] {
+  /* GitHub Primer-ish dark scale */
+  --canvas-default: #0d1117;
+  --canvas-subtle: #151b23;
+  --canvas-inset: #010409;
+  --fg-default: #f0f6fc;
+  --fg-muted: #9198a1;
+  --fg-subtle: #6e7681;
+  --fg-on-emphasis: #ffffff;
+  --border-default: #3d444d;
+  --border-muted: #21262d;
+  --accent-fg: #4493f8;
+  --accent-emphasis: #1f6feb;
+  --accent-subtle: rgba(56, 139, 253, 0.1);
+  --success-fg: #3fb950;
+  --success-emphasis: #238636;
+  --success-subtle: rgba(46, 160, 67, 0.15);
+  --danger-fg: #f85149;
+  --danger-emphasis: #da3633;
+  --danger-subtle: rgba(248, 81, 73, 0.1);
+  --attention-fg: #d29922;
+  --attention-emphasis: #9e6a03;
+  --attention-subtle: rgba(187, 128, 9, 0.15);
+  --done-fg: #ab7df8;
+  --done-emphasis: #8957e5;
+  --done-subtle: rgba(163, 113, 247, 0.1);
+  --neutral-emphasis: #6e7681;
+  --neutral-muted: rgba(110, 118, 129, 0.4);
+  --shadow-sm: 0 0 transparent;
+  --shadow-md: 0 3px 6px rgba(1, 4, 9, 0.5);
+  --overlay-backdrop: rgba(1, 4, 9, 0.8);
+}
+
+/* Pre-JS: honor OS preference so the first paint isn't wrong. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --canvas-default: #0d1117;
+    --canvas-subtle: #151b23;
+    --canvas-inset: #010409;
+    --fg-default: #f0f6fc;
+    --fg-muted: #9198a1;
+    --fg-subtle: #6e7681;
+    --border-default: #3d444d;
+    --border-muted: #21262d;
+    --accent-fg: #4493f8;
+    --accent-emphasis: #1f6feb;
+    --accent-subtle: rgba(56, 139, 253, 0.1);
+    --success-fg: #3fb950;
+    --danger-fg: #f85149;
+    --attention-fg: #d29922;
+    --done-fg: #ab7df8;
+    --neutral-muted: rgba(110, 118, 129, 0.4);
+    --overlay-backdrop: rgba(1, 4, 9, 0.8);
+  }
+}
+
+/* Expose the semantic tokens as Tailwind theme colors → `bg-canvas`,
+ * `text-fg`, `border-border`, `text-accent`, etc. The default Tailwind palette
+ * (zinc/emerald/…) that the ported views use ships alongside these. */
+@theme inline {
+  --color-canvas: var(--canvas-default);
+  --color-canvas-subtle: var(--canvas-subtle);
+  --color-canvas-inset: var(--canvas-inset);
+  --color-fg: var(--fg-default);
+  --color-muted: var(--fg-muted);
+  --color-subtle: var(--fg-subtle);
+  --color-on-emphasis: var(--fg-on-emphasis);
+  --color-border: var(--border-default);
+  --color-border-muted: var(--border-muted);
+  --color-accent: var(--accent-fg);
+  --color-accent-emphasis: var(--accent-emphasis);
+  --color-accent-subtle: var(--accent-subtle);
+  --color-success: var(--success-fg);
+  --color-success-emphasis: var(--success-emphasis);
+  --color-success-subtle: var(--success-subtle);
+  --color-danger: var(--danger-fg);
+  --color-danger-emphasis: var(--danger-emphasis);
+  --color-danger-subtle: var(--danger-subtle);
+  --color-attention: var(--attention-fg);
+  --color-attention-subtle: var(--attention-subtle);
+  --color-done: var(--done-fg);
+  --color-done-subtle: var(--done-subtle);
+
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial,
+    sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+  --font-mono:
+    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--canvas-default);
+  color: var(--fg-default);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+:where(a) {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* A thin top progress bar the shell shows during route transitions. */
+@keyframes tg-indeterminate {
+  0% {
+    transform: translateX(-100%) scaleX(0.3);
+  }
+  50% {
+    transform: translateX(0%) scaleX(0.5);
+  }
+  100% {
+    transform: translateX(100%) scaleX(0.3);
+  }
+}
+
+.tg-route-bar {
+  position: fixed;
+  inset: 0 0 auto 0;
+  height: 2px;
+  z-index: 60;
+  background: var(--accent-emphasis);
+  transform-origin: left;
+  animation: tg-indeterminate 1.1s ease-in-out infinite;
+}
+
+/* Focus ring shared by interactive primitives. */
+.tg-focus:focus-visible {
+  outline: 2px solid var(--accent-emphasis);
+  outline-offset: -1px;
+}
+
+::selection {
+  background: var(--accent-subtle);
+}

@@ -209,6 +209,13 @@ interface RefCommand {
   readonly name: string;
 }
 
+/**
+ * One applied ref update, handed to the optional post-apply hook after a
+ * successful atomic receive-pack write. Consumed by the Actions push-trigger to
+ * discover + queue workflow runs (best-effort; see {@link handleReceivePack}).
+ */
+export type AppliedRefUpdate = RefCommand;
+
 interface ReceiveRequest {
   readonly commands: readonly RefCommand[];
   readonly capabilities: ReadonlySet<string>;
@@ -402,10 +409,32 @@ function nextRefsDoc(
   return { refs: records, defaultBranch };
 }
 
+export interface ReceivePackHooks {
+  /**
+   * Optional best-effort hook fired ONLY after the atomic refs-doc write
+   * succeeds, with the applied ref commands. A throwing/rejecting hook never
+   * affects the push result (it is caught and ignored). Absent by default, so the
+   * clone/push path is unchanged when no hook is supplied.
+   */
+  readonly onApplied?: (
+    updates: readonly AppliedRefUpdate[],
+  ) => void | Promise<void>;
+  /**
+   * Optional per-ref authorization gate, evaluated for EVERY advertised ref
+   * command BEFORE any object write or the R2 refs-doc CAS. Returning false for a
+   * ref rejects the whole (atomic) push with `protected_ref`. This is where the
+   * metadata plane's branch-protection rule engine enforces protected branches on
+   * a direct push (`src/auth/acl.ts`); absent when no D1 plane is configured, so
+   * the DB-less clone/push path is unchanged.
+   */
+  readonly authorizeRef?: (refName: string) => Promise<boolean> | boolean;
+}
+
 export async function handleReceivePack(
   bucket: ObjectStoreBinding,
   repo: string,
   requestBody: Uint8Array,
+  hooks?: ReceivePackHooks,
 ): Promise<Response> {
   const objectStore = repositoryObjectStore(bucket, repo);
   let receive: ReceiveRequest;
@@ -440,6 +469,20 @@ export async function handleReceivePack(
         receive.commands,
         "delete-refs capability required",
       );
+    }
+  }
+
+  // Per-ref authorization (branch protection) BEFORE any object write or the R2
+  // CAS. Every ref command must clear the gate; a single denial rejects the whole
+  // atomic push. No-op when no hook is supplied (DB-less deploy).
+  if (hooks?.authorizeRef) {
+    for (const command of receive.commands) {
+      if (!(await hooks.authorizeRef(command.name))) {
+        return receiveResponse(
+          receive.commands,
+          `protected ref: ${command.name}`,
+        );
+      }
     }
   }
 
@@ -495,6 +538,14 @@ export async function handleReceivePack(
   );
   if (!written) {
     return receiveResponse(receive.commands, "concurrent ref update");
+  }
+  if (hooks?.onApplied) {
+    // Best-effort: workflow discovery must never break a committed push.
+    try {
+      await hooks.onApplied(receive.commands);
+    } catch {
+      // swallow — refs already advanced authoritatively in R2.
+    }
   }
   return receiveResponse(receive.commands);
 }
