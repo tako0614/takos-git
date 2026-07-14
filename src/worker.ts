@@ -465,8 +465,11 @@ async function fetchHandler(
   // /internal/actions/* route, so existing dispatch is untouched; fail-closed.
   const internalActions = await handleInternalActionsRoute(request, env, url);
   if (internalActions) return internalActions;
+  // The built SPA owns "/" when an assets binding is present; the inline console
+  // is only the minimal fallback for a deploy without the web build.
   if (
     request.method === "GET" &&
+    !env.ASSETS &&
     (url.pathname === "/" || url.pathname === "/ui")
   ) {
     return html(gitConsoleHtml(url.origin));
