@@ -10,6 +10,15 @@ terraform {
       source  = "hashicorp/http"
       version = "~> 3.5"
     }
+    # Declared (pinned to the runner provider-mirror version) ONLY so an upgrade
+    # from a pre-0.4 install can destroy the orphaned random_id.signing_key /
+    # random_id.mcp_auth_token resources still in its state. v0.4+ creates no
+    # random_* resources (secrets are operator-provided); this can be removed once
+    # no installs carry the legacy resources.
+    random = {
+      source  = "hashicorp/random"
+      version = "= 3.9.0"
+    }
   }
 }
 
@@ -214,7 +223,7 @@ variable "worker_bundle_path" {
 variable "worker_release_tag" {
   description = "GitHub release tag whose takosumi-artifact.json selects the default Worker bundle and SHA-256. Set empty to use worker_bundle_path."
   type        = string
-  default     = "v0.4.0"
+  default     = "v0.4.1"
 
   validation {
     condition     = trimspace(var.worker_release_tag) == "" || can(regex("^v[0-9]+\\.[0-9]+\\.[0-9]+([-+][0-9A-Za-z.-]+)?$", trimspace(var.worker_release_tag)))
