@@ -183,23 +183,113 @@ export async function effectiveRole(
 }
 
 // ============================================================================
-// Branch protection hook (Phase 3 fills the rule engine)
+// Branch protection gate (Phase 3 rule engine)
 // ============================================================================
 
+interface ProtectionRuleRow {
+  pattern: string;
+  required_reviews: number;
+  restrict_push: number;
+  push_allowlist: string | null;
+  enforce_admins: number;
+}
+
+/** fnmatch-style branch glob: `*` within a segment, `**` across segments. */
+function matchBranchPattern(pattern: string, branch: string): boolean {
+  if (pattern === branch) return true;
+  let out = "^";
+  for (let index = 0; index < pattern.length; index += 1) {
+    const char = pattern[index];
+    if (char === "*") {
+      if (pattern[index + 1] === "*") {
+        out += ".*";
+        index += 1;
+      } else {
+        out += "[^/]*";
+      }
+    } else if (char === "?") {
+      out += "[^/]";
+    } else {
+      out += char.replace(/[.+^${}()|[\]\\]/gu, "\\$&");
+    }
+  }
+  out += "$";
+  try {
+    return new RegExp(out, "u").test(branch);
+  } catch {
+    return false;
+  }
+}
+
+function parseIdAllowlist(value: string | null): string[] {
+  if (!value) return [];
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed)
+      ? parsed.filter((entry): entry is string => typeof entry === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
 /**
- * Placeholder for the branch-protection gate. Phase 3 evaluates
- * `branch_protection_rules` here (require-PR, required approvals/checks,
- * restrict-push, force-push) against `opts.ref` BEFORE the R2 refs-doc CAS. Until
- * then it never grants extra access — it can only DENY, so leaving it permissive
- * cannot open a hole (repo-role + scope already gate the write).
+ * Evaluate `branch_protection_rules` for a ref-advancing action, BEFORE the R2
+ * refs-doc CAS. Fail-closed: a query error or a matched rule the principal cannot
+ * satisfy returns `false` (→ `protected_ref`). It only ever ADDS denials, never
+ * grants access (repo role + scope already gate the write).
+ *
+ * - `contents.write` (direct push): restrict-push allowlist is enforced; a rule
+ *   that requires reviews refuses the direct push (changes must land via a PR).
+ * - `pulls.merge`: restrict-push allowlist is enforced and a matched rule raises
+ *   the floor to `maintainer`; required approvals/status checks are verified by
+ *   the merge handler (Phase 3b) against `pr_reviews`/`commit_statuses` before the
+ *   CAS — that is the designated hook.
+ *
+ * Admins (role ≥ maintainer) bypass a rule unless it sets `enforce_admins`.
  */
 async function checkBranchProtection(
-  _db: DbClient,
-  _repo: RepoAclRow,
-  _principal: Principal,
-  _role: Role,
-  _ref: string | undefined,
+  db: DbClient,
+  repo: RepoAclRow,
+  principal: Principal,
+  role: Role,
+  action: RepoAction,
+  ref: string | undefined,
 ): Promise<boolean> {
+  // No concrete ref (e.g. the smart-HTTP repo-level edge check passes ref "*"):
+  // per-ref protection is enforced where the old→new update is known.
+  if (!ref || ref === "*") return true;
+  const branch = ref.startsWith("refs/heads/")
+    ? ref.slice("refs/heads/".length)
+    : ref;
+  if (branch === "" || branch === "*") return true;
+
+  let rules: ProtectionRuleRow[];
+  try {
+    rules = await db.query<ProtectionRuleRow>(
+      `SELECT pattern, required_reviews, restrict_push, push_allowlist, enforce_admins
+         FROM branch_protection_rules WHERE repo_id = ?`,
+      [repo.id],
+    );
+  } catch {
+    return false; // fail closed
+  }
+
+  for (const rule of rules) {
+    if (!matchBranchPattern(rule.pattern, branch)) continue;
+    const adminBypass =
+      rule.enforce_admins === 0 && roleAtLeast(role, "maintainer");
+    if (adminBypass) continue;
+    if (rule.restrict_push === 1) {
+      const allow = parseIdAllowlist(rule.push_allowlist);
+      if (!allow.includes(principal.id)) return false;
+    }
+    if (action === "contents.write") {
+      if (rule.required_reviews > 0) return false;
+    } else if (action === "pulls.merge") {
+      if (!roleAtLeast(role, "maintainer")) return false;
+    }
+  }
   return true;
 }
 
@@ -257,6 +347,7 @@ export async function authorizeRepo(
       repo,
       ctx.principal,
       role,
+      action,
       opts?.ref,
     );
     if (!ok) return deny(403, "protected_ref");
