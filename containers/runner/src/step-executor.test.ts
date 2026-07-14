@@ -61,6 +61,7 @@ interface Recorder {
   readonly logs: string[];
   readonly checkouts: string[];
   readonly artifacts: Array<{ name: string; path: string }>;
+  readonly downloads: Array<{ name: string; path: string }>;
   readonly deps: {
     checkout: CheckoutClient;
     artifacts: ArtifactClient;
@@ -74,10 +75,12 @@ function recorder(workspaceDir: string): Recorder {
   const logs: string[] = [];
   const checkouts: string[] = [];
   const artifacts: Array<{ name: string; path: string }> = [];
+  const downloads: Array<{ name: string; path: string }> = [];
   return {
     logs,
     checkouts,
     artifacts,
+    downloads,
     deps: {
       checkout: {
         async checkout(dest: string): Promise<void> {
@@ -87,6 +90,9 @@ function recorder(workspaceDir: string): Recorder {
       artifacts: {
         async upload(name: string, path: string): Promise<void> {
           artifacts.push({ name, path });
+        },
+        async download(name: string, path: string): Promise<void> {
+          downloads.push({ name, path });
         },
       },
       logs: {
@@ -198,7 +204,48 @@ describe("executeJob — real shell", () => {
     expect(rec.artifacts).toEqual([{ name: "build", path: `${ws}/dist/out.txt` }]);
   });
 
-  test("an unsupported uses: fails the step with a clear message", async () => {
+  test("uses: download-artifact invokes the artifact client with the resolved dest", async () => {
+    const ws = await makeWorkspace();
+    const rec = recorder(ws);
+    const out = await executeJob(
+      dispatch([
+        step({
+          stepId: "s1",
+          number: 1,
+          uses: "actions/download-artifact@v4",
+          with: { name: "build", path: "incoming" },
+        }),
+      ]),
+      { ...rec.deps, spawn: spawnShell },
+    );
+    expect(out.steps[0].conclusion).toBe("success");
+    expect(rec.downloads).toEqual([{ name: "build", path: `${ws}/incoming` }]);
+  });
+
+  test("download-artifact defaults its dest to the workspace root", async () => {
+    const ws = await makeWorkspace();
+    const rec = recorder(ws);
+    const out = await executeJob(
+      dispatch([step({ stepId: "s1", number: 1, uses: "actions/download-artifact@v4", with: { name: "build" } })]),
+      { ...rec.deps, spawn: spawnShell },
+    );
+    expect(out.steps[0].conclusion).toBe("success");
+    expect(rec.downloads).toEqual([{ name: "build", path: ws }]);
+  });
+
+  test("download-artifact without with.name fails with a clear message", async () => {
+    const ws = await makeWorkspace();
+    const rec = recorder(ws);
+    const out = await executeJob(
+      dispatch([step({ stepId: "s1", number: 1, uses: "actions/download-artifact@v4" })]),
+      { ...rec.deps, spawn: spawnShell },
+    );
+    expect(out.steps[0].conclusion).toBe("failure");
+    expect(rec.downloads).toEqual([]);
+    expect(out.steps[0].errorMessage).toContain("requires a `with.name`");
+  });
+
+  test("an unsupported uses: fails the step, listing the supported actions", async () => {
     const ws = await makeWorkspace();
     const rec = recorder(ws);
     const out = await executeJob(
@@ -207,6 +254,7 @@ describe("executeJob — real shell", () => {
     );
     expect(out.steps[0].conclusion).toBe("failure");
     expect(out.steps[0].errorMessage).toContain("unsupported action");
+    expect(out.steps[0].errorMessage).toContain("download-artifact");
   });
 
   test("a timed-out step yields a timed_out conclusion (injected spawn)", async () => {

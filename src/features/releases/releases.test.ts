@@ -1,7 +1,8 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 
 import { RouteRegistry, type RouterEnv } from "../../router.ts";
 import { registerReleaseRoutes } from "./routes.ts";
+import { setReleaseEventSink, type ReleaseEvent } from "./events.ts";
 import {
   get,
   interfaceUserInfoFetch,
@@ -167,6 +168,70 @@ describe("releases CRUD", () => {
     expect(del.status).toBe(200);
     const gone = await dispatch(reg, get(`${RR}/releases/v3`, "taksrv_alice_r"), handle.env);
     expect(gone.status).toBe(404);
+  });
+});
+
+describe("release domain events", () => {
+  afterEach(() => setReleaseEventSink(null));
+
+  test("publish, edit, and delete each emit a release event to the sink", async () => {
+    const handle = makeEnv();
+    const reg = router();
+    await seedOwned(handle);
+    const events: ReleaseEvent[] = [];
+    setReleaseEventSink((event) => {
+      events.push(event);
+    });
+
+    await dispatch(
+      reg,
+      jsonRequest("POST", `${RR}/releases`, { tag: "v1", target: "main" }, "taksrv_alice_w"),
+      handle.env,
+    );
+    await dispatch(
+      reg,
+      jsonRequest("PATCH", `${RR}/releases/v1`, { name: "One point oh" }, "taksrv_alice_w"),
+      handle.env,
+    );
+    await dispatch(
+      reg,
+      jsonRequest("DELETE", `${RR}/releases/v1`, undefined, "taksrv_alice_w"),
+      handle.env,
+    );
+
+    expect(events.map((e) => e.event)).toEqual([
+      "release.published",
+      "release.edited",
+      "release.deleted",
+    ]);
+    expect(events.every((e) => e.repo === "alice/web")).toBe(true);
+    expect(events[0]?.release.tag).toBe("v1");
+    expect(events[1]?.release.name).toBe("One point oh");
+    expect(events[2]?.action).toBe("deleted");
+  });
+
+  test("creating a draft emits nothing until it is published", async () => {
+    const handle = makeEnv();
+    const reg = router();
+    await seedOwned(handle);
+    const events: ReleaseEvent[] = [];
+    setReleaseEventSink((event) => {
+      events.push(event);
+    });
+
+    await dispatch(
+      reg,
+      jsonRequest("POST", `${RR}/releases`, { tag: "d9", target: "main", is_draft: true }, "taksrv_alice_w"),
+      handle.env,
+    );
+    expect(events).toHaveLength(0);
+
+    await dispatch(
+      reg,
+      jsonRequest("PATCH", `${RR}/releases/d9`, { is_draft: false }, "taksrv_alice_w"),
+      handle.env,
+    );
+    expect(events.map((e) => e.event)).toEqual(["release.published"]);
   });
 });
 

@@ -1,11 +1,11 @@
 /**
  * Cross-feature runtime event bridge (integrator-owned).
  *
- * The issues and pulls features emit typed domain-event descriptors through a
- * settable, process-wide sink and never import the webhooks feature themselves
- * (so each stays testable + shippable in isolation). This module is the ONE place
- * that closes the loop: it installs those sinks so each emitted event fans out
- * through the webhooks feature's `dispatchWebhook` seam.
+ * The issues, pulls, releases and forks features emit typed domain-event
+ * descriptors through a settable, process-wide sink and never import the webhooks
+ * feature themselves (so each stays testable + shippable in isolation). This
+ * module is the ONE place that closes the loop: it installs those sinks so each
+ * emitted event fans out through the webhooks feature's `dispatchWebhook` seam.
  *
  * The sink is (re)installed per request with a closure over the current `env` —
  * `env.DB` / `env.BUCKET` are the same stable bindings for every request in an
@@ -13,17 +13,18 @@
  * Emission is best-effort (a throwing sink never disturbs the originating
  * mutation, which has already committed), matching each feature's contract.
  *
- * Deferred wiring (see the integration report):
- *  - releases: emits no runtime sink — its handlers return the `release.published`
- *    descriptor inside the HTTP envelope only. Bridging it would require editing
- *    the releases handlers, so `release` webhook fan-out is NOT wired here.
- *  - forks: emits no domain-event descriptor at all, so `fork` fan-out is likewise
- *    not wired.
+ * Event → webhook name mapping installed here:
+ *  - issues  → `issues` / `issue_comment`
+ *  - pulls   → `pull_request` / `pull_request_review` / `push`
+ *  - releases → `release`
+ *  - forks   → `fork` (on the upstream) / `push` (on the fork, upstream-sync)
  */
 
 import { createDbClient, type DbClient } from "../db/index.ts";
+import { setForkEventSink, type ForkEvent } from "./forks/events.ts";
 import { setDomainEventSink, type DomainEvent } from "./issues/events.ts";
 import { setRepoEventSink, type RepoEvent } from "./pulls/events.ts";
+import { setReleaseEventSink } from "./releases/events.ts";
 import { getRepoRow } from "./repos/repositories.ts";
 import { webhookEncryptionKey } from "./webhooks/crypto.ts";
 import { dispatchWebhook, type DispatchDeps } from "./webhooks/service.ts";
@@ -56,6 +57,15 @@ function pullWebhookEvent(type: RepoEvent["type"]): string {
   return "pull_request";
 }
 
+/**
+ * Map a forks `ForkEvent.type` onto the top-level webhook event name. A created
+ * fork fires `fork` on the upstream; an upstream sync advances the fork's ref so
+ * it fires `push` on the fork.
+ */
+function forkWebhookEvent(type: ForkEvent["type"]): string {
+  return type === "fork.synced" ? "push" : "fork";
+}
+
 function dispatchDeps(env: BridgeEnv): DispatchDeps {
   return {
     encryptionKey: webhookEncryptionKey(env as never),
@@ -80,6 +90,8 @@ export function installEventBridge(env: BridgeEnv): void {
   if (!env.DB) {
     setDomainEventSink(null);
     setRepoEventSink(null);
+    setReleaseEventSink(null);
+    setForkEventSink(null);
     return;
   }
   const db: DbClient = createDbClient(env.DB);
@@ -112,6 +124,34 @@ export function installEventBridge(env: BridgeEnv): void {
       row.id,
       pullWebhookEvent(event.type),
       { action: event.type, ...event.payload },
+      deps,
+    );
+  });
+
+  setReleaseEventSink(async (event) => {
+    const parts = splitStorageKey(event.repo);
+    if (!parts) return;
+    const row = await getRepoRow(db, parts.owner, parts.name);
+    if (!row) return;
+    await dispatchWebhook(
+      db,
+      row.id,
+      "release",
+      { action: event.action, release: event.release },
+      deps,
+    );
+  });
+
+  setForkEventSink(async (event) => {
+    const parts = splitStorageKey(event.repo);
+    if (!parts) return;
+    const row = await getRepoRow(db, parts.owner, parts.name);
+    if (!row) return;
+    await dispatchWebhook(
+      db,
+      row.id,
+      forkWebhookEvent(event.type),
+      { ...event.payload },
       deps,
     );
   });
