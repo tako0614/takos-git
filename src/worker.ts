@@ -41,6 +41,10 @@ import { registerReleaseRoutes } from "./features/releases/routes.ts";
 import { registerForkRoutes } from "./features/forks/index.ts";
 import { registerWebhookRoutes } from "./features/webhooks/routes.ts";
 import { registerChecksRoutes } from "./features/checks/routes.ts";
+import {
+  onPushDiscoverWorkflows,
+  registerActionsRoutes,
+} from "./features/actions/index.ts";
 import { installEventBridge } from "./features/event-bridge.ts";
 import iconSvg from "../public/icons/takos-git.svg" with { type: "text" };
 
@@ -52,6 +56,7 @@ registerReleaseRoutes(routes);
 registerForkRoutes(routes);
 registerWebhookRoutes(routes);
 registerChecksRoutes(routes);
+registerActionsRoutes(routes);
 
 /** The native Cloudflare Workers static-assets binding (subset we use). */
 export interface AssetFetcher {
@@ -72,6 +77,20 @@ export interface Env {
   APP_SESSION_SECRET?: string;
   APP_WORKSPACE_ID?: string;
   APP_CAPSULE_ID?: string;
+
+  // --- Self-hosted Actions runner bindings (main.tf `enable_actions`) ---
+  // All optional/undefined when Actions is off; the control plane degrades to
+  // "runs stay queued" and Phase 5b fills the execution fabric behind them.
+  /** Actions run/job/step/secret D1 (shares the collaboration-core DB). */
+  ACTIONS_DB?: D1Database;
+  /** Run-tick queue → Phase-5b coordinator DO. Absent ⇒ runs stay `queued`. */
+  WORKFLOW_QUEUE?: { send(message: { runId: string; repoId: string }): Promise<void> };
+  /** Logs + artifacts bucket, distinct from the authoritative git BUCKET. */
+  R2_ACTIONS?: ObjectStoreBinding;
+  /** AES key material for Actions secret encryption at rest. */
+  ACTIONS_SECRETS_KEY?: string;
+  /** HMAC key for the run-scoped /internal/actions/* routes (Phase 5b). */
+  ACTIONS_RUNNER_SECRET?: string;
 }
 
 // Tightened from the inline console's `script-src 'unsafe-inline'`: Vite emits
@@ -525,7 +544,14 @@ async function fetchHandler(
     if (body.length > MAX_RECEIVE_PACK_BYTES) {
       return json({ error: "receive_pack_too_large" }, 413);
     }
-    return handleReceivePack(env.BUCKET, route.repo, body);
+    // Best-effort Actions discovery after a successful push. Only wired when the
+    // metadata plane is configured, so the clone/push path (and its E2E) is
+    // untouched when Actions/D1 are off; the hook itself is D1-guarded + caught.
+    const onApplied = env.DB
+      ? (updates: readonly { name: string; oldSha: string; newSha: string }[]) =>
+          onPushDiscoverWorkflows(env, route.repo, updates)
+      : undefined;
+    return handleReceivePack(env.BUCKET, route.repo, body, onApplied);
   }
   return handleUploadPack(env.BUCKET, route.repo, body);
 }
