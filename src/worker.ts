@@ -28,6 +28,7 @@ import {
   verifyInterfaceOAuthCredential,
 } from "./interface-oauth-auth.ts";
 import { routes } from "./router.ts";
+import { hasEmbeddedSpa, serveEmbeddedAsset } from "./spa-assets.ts";
 import { createDbClient, type D1Database } from "./db/index.ts";
 import { authorizeRepo, upsertPrincipal } from "./auth/acl.ts";
 import {
@@ -145,17 +146,25 @@ function withAppSecurityHeaders(response: Response, pathname: string): Response 
   });
 }
 
-/** Serve the built SPA (or 404 when no asset binding is configured). */
+/**
+ * Serve the built SPA: from the `env.ASSETS` binding when present (dev harness /
+ * a static-assets deploy), else from the SPA embedded in the Worker bundle at
+ * build time (the self-contained install artifact). 404 when neither is present.
+ */
 async function staticFallback(
   request: Request,
   env: Env,
   url: URL,
 ): Promise<Response> {
-  if (
-    (request.method === "GET" || request.method === "HEAD") &&
-    env.ASSETS
-  ) {
-    return withAppSecurityHeaders(await env.ASSETS.fetch(request), url.pathname);
+  if (request.method === "GET" || request.method === "HEAD") {
+    if (env.ASSETS) {
+      return withAppSecurityHeaders(
+        await env.ASSETS.fetch(request),
+        url.pathname,
+      );
+    }
+    const embedded = serveEmbeddedAsset(url.pathname);
+    if (embedded) return withAppSecurityHeaders(embedded, url.pathname);
   }
   return json({ error: "not_found" }, 404);
 }
@@ -539,11 +548,13 @@ async function fetchHandler(
   // /internal/actions/* route, so existing dispatch is untouched; fail-closed.
   const internalActions = await handleInternalActionsRoute(request, env, url);
   if (internalActions) return internalActions;
-  // The built SPA owns "/" when an assets binding is present; the inline console
-  // is only the minimal fallback for a deploy without the web build.
+  // The built SPA owns "/" whenever it is available (ASSETS binding OR embedded in
+  // the Worker bundle); the inline console is only the minimal fallback for a
+  // deploy that shipped no web build at all.
   if (
     request.method === "GET" &&
     !env.ASSETS &&
+    !hasEmbeddedSpa() &&
     (url.pathname === "/" || url.pathname === "/ui")
   ) {
     return html(gitConsoleHtml(url.origin));

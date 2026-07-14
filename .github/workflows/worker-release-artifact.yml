@@ -53,6 +53,11 @@ jobs:
       - run: bun install
       - run: bun run check
       - run: bun test
+      # The SPA is embedded into dist/worker.js, so it must be built first.
+      - name: Build SPA (embedded into the Worker artifact)
+        run: |
+          (cd web && bun install)
+          bun run build:web
       - run: bun run build:worker
 
       - name: Write Takosumi artifact manifest
