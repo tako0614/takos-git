@@ -33,8 +33,11 @@ describe("release version and Capsule contract", () => {
       /variable\s+"worker_release_tag"\s*\{([\s\S]*?)\n\}/,
     )?.[1];
     expect(releaseVariable).toBeDefined();
-    expect(releaseVariable).toContain('default     = "v0.4.1"');
-    expect(releaseVariable).not.toContain(`default     = "v${packageVersion}"`);
+    const releaseDefault = releaseVariable?.match(
+      /^\s*default\s*=\s*"([^"]+)"\s*$/m,
+    )?.[1];
+    expect(releaseDefault).toBe("v0.4.1");
+    expect(releaseDefault).not.toBe(`v${packageVersion}`);
     expect(mcpSource).toContain(
       `serverInfo: { name: "takos-git", version: "${packageVersion}" }`,
     );
