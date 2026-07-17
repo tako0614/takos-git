@@ -56,11 +56,14 @@ Takosumi-managed Git, hosting, and MCP calls use service-side Interfaces that
 explicitly map the ordinary `api_url` / `hosting_api_url` / `mcp_url` Outputs
 as resource URIs. Their
 declarations list the permissions above, and InterfaceBindings grant only the
-needed permissions. The Worker verifies exact audience, scope, Workspace,
-Capsule, Interface, Binding, and resolved revision through Accounts UserInfo.
-The service-side InstallConfig supplies `APP_WORKSPACE_ID` and `APP_CAPSULE_ID`
-through the ordinary non-secret `env` input; declarations and credentials do
-not enter Outputs.
+needed permissions. Accounts revalidates current Core Interface/Binding state
+before UserInfo reports the token active. The Worker then verifies exact
+audience, scope, Workspace, Capsule, subject, and complete Interface/Binding
+evidence shape. Interface ids and resolved revisions are not static module
+inputs or Worker env, avoiding a first-apply dependency on Interfaces that
+materialize only after apply. The service-side InstallConfig supplies
+`APP_WORKSPACE_ID` and `APP_CAPSULE_ID` through the ordinary non-secret `env`
+input; declarations and credentials do not enter Outputs.
 
 An explicitly supplied `PUBLISHED_MCP_AUTH_TOKEN` is retained only as
 standalone direct/self-host MCP authentication. It is not InterfaceBinding
@@ -108,9 +111,13 @@ tofu apply \
   -var enable_cloudflare_resources=true \
   -var enable_cloudflare_worker_script=true \
   -var cloudflare_account_id=<id> \
-  -var public_subdomain=<service-subdomain> \
-  -var cloudflare_workers_subdomain=<workers-dev-subdomain>
+  -var public_url=https://git.example \
+  -var takosumi_accounts_issuer_url=https://accounts.example \
+  -var 'env={APP_WORKSPACE_ID="<workspace-id>",APP_CAPSULE_ID="<capsule-id>"}'
 ```
+
+`public_url` and `takosumi_accounts_issuer_url` are bare HTTPS origins with no
+userinfo, path, query, or fragment (a trailing slash is canonicalized away).
 
 Hosted installs consume `worker_bundle_url` + `worker_bundle_sha256` from a Git
 release or CI artifact. Do not commit `dist/worker.js`.
@@ -123,6 +130,19 @@ and explicit policy in the service-side InstallConfig. Non-secret target values
 such as the bucket name are explicit service configuration. Takosumi contains
 no Git-specific cleanup logic and never infers commands or credentials from an
 OpenTofu Output.
+
+The lifecycle action runs `bun run git:pre-destroy`. It reads the allowlisted
+`cloudflare_account_id`, `object_bucket_name`, and optional
+`actions_logs_bucket_name` from `TAKOSUMI_OUTPUTS_JSON`. Takosumi runners also
+deliver one validated non-secret provider entry per resolved ProviderBinding as
+`TAKOSUMI_PROVIDER_CONFIGS_JSON`. An empty Cloudflare `configuration` or the
+official default `base_url` selects the provider's direct API transport; a
+custom `base_url` uses that exact transport. This does not infer billing,
+managed-capacity, or ownership authority from the URL. A missing default
+Cloudflare entry fails before the provider token is sent anywhere. Direct
+CLI/self-host execution without a Takosumi envelope must explicitly set
+`TAKOS_GIT_CLOUDFLARE_API_MODE=direct`. The action empties both buckets in
+bounded pages and removes every temporary cleaner before returning.
 
 Standalone direct/self-host clients may explicitly supply
 `published_mcp_auth_token` from external secret management. The module injects

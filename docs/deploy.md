@@ -14,7 +14,7 @@ a direct/self-host deploy.
 | Layer | Created by | Notes |
 | --- | --- | --- |
 | Worker script + bindings, R2 buckets, D1 database, Queue, DO namespaces | `tofu apply` (`main.tf`) | provider 5.19.1 — DO/queue configured inside `cloudflare_workers_script` |
-| D1 schema (migration `0001`) | `wrangler d1 migrations apply` reading the `metadata_database_id` output | tofu cannot apply D1 migrations |
+| D1 schema | released Worker self-migration | forward-only `schema_migrations` ledger; no separate wrangler migration step |
 | Actions runner **container image** attach | `wrangler` `[[containers]]` step reading the `actions_runner_container` output | provider 5.19.1 has **no** container attribute — this is the one part tofu can't express |
 | Worker code bundle (`dist/worker.js`) + SPA (`web/dist`) | CI/release artifact (`worker_bundle_url` + `worker_bundle_sha256`) | `dist/` is not committed |
 | Human identity + short-lived Interface credentials | Takosumi Accounts (OIDC) | issuer/client registered out of band |
@@ -26,6 +26,7 @@ a direct/self-host deploy.
   `client_secret` (confidential client), and the redirect URI
   `https://<public-host>/api/auth/callback` in its `redirectUris`.
 - The install-target **Workspace id** (`APP_WORKSPACE_ID`) — only its members can sign in.
+- The install-target **Capsule id** (`APP_CAPSULE_ID`).
 - A random **`app_session_secret`** ≥ 32 chars (session cookie HMAC).
 - Random **`actions_runner_secret`** (HMAC for the `/internal/actions/*` runner routes)
   and **`actions_secrets_key`** (AES key for workflow-secret encryption at rest) — only
@@ -47,14 +48,15 @@ tofu apply \
   -var enable_cloudflare_worker_script=true \
   -var enable_metadata=true \
   -var cloudflare_account_id=<id> \
-  -var public_subdomain=<service-subdomain> \        # or -var public_url=https://git.example.com
-  -var cloudflare_workers_subdomain=<workers-dev-subdomain> \
+  -var public_url=https://git.example.com \
   -var takosumi_accounts_issuer_url=<issuer> \
   -var takosumi_accounts_client_id=<client-id> \
   -var app_session_secret=<32+ char secret> \
-  # confidential client only:
+  -var 'env={APP_WORKSPACE_ID="<workspace-id>",APP_CAPSULE_ID="<capsule-id>"}' \
   -var takosumi_accounts_client_secret=<secret>
 ```
+
+Omit `takosumi_accounts_client_secret` for a public PKCE client.
 
 Add self-hosted Actions:
 
@@ -73,14 +75,12 @@ Git Smart-HTTP (scope-only) + MCP, but `/api/v1` returns 503 and the SPA has no 
 Read the outputs: `launch_url`, `api_url`, `hosting_api_url`, `mcp_url`,
 `metadata_database_id`, and (when Actions on) `actions_runner_container`.
 
-## 2. Apply the D1 schema
+## 2. Verify the self-applied D1 schema
 
-```sh
-wrangler d1 migrations apply <db-name> --remote   # db id/name from the metadata output
-```
-
-This runs `migrations/0001_init.sql` (principals, owners, repos, ACL, issues, PRs,
-reviews, releases, forks, webhooks, checks, workflows, …).
+The released Worker embeds the forward-only migrations and applies them
+idempotently on its first D1-backed request. Call `GET /api/v1/ping` and verify a
+non-500 response; no separate `wrangler d1 migrations apply` step is part of the
+Capsule install.
 
 ## 3. Attach the Actions runner container (Actions only)
 

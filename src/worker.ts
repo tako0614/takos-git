@@ -25,6 +25,7 @@ import { handleMcp } from "./mcp.ts";
 import { handleForgeApi } from "./forge-api.ts";
 import {
   hasValidInterfaceOAuthConfiguration,
+  interfaceAudience,
   verifyInterfaceOAuthCredential,
 } from "./interface-oauth-auth.ts";
 import { routes } from "./router.ts";
@@ -421,20 +422,6 @@ function tokenFromRequest(request: Request): string | null {
   }
 }
 
-function interfaceResourceUri(
-  request: Request,
-  env: Env,
-  path: string,
-): string {
-  const requestUrl = new URL(request.url);
-  const base = env.APP_URL?.trim() || requestUrl.origin;
-  try {
-    return new URL(path, `${base.replace(/\/$/u, "")}/`).href;
-  } catch {
-    return "";
-  }
-}
-
 /** Parse `/git/<repo>/<suffix>` where <repo> may contain one `/` and an optional `.git`. */
 function parseGitPath(
   pathname: string,
@@ -621,7 +608,7 @@ async function fetchHandler(
     service === "git-receive-pack"
       ? "source.git.smart_http.write"
       : "source.git.smart_http.read";
-  const audience = interfaceResourceUri(request, env, "/git");
+  const audience = interfaceAudience(env.APP_URL, "/git");
   if (
     !hasValidInterfaceOAuthConfiguration({
       issuerUrl: env.OIDC_ISSUER_URL,

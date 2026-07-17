@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.5.0 — plain Capsule and hardened Interface authorization
+
+- Removes the Takosumi-specific provider wrapper and repository manifest. The
+  repository root is the only plain OpenTofu Capsule entry; service-side
+  InstallConfig blueprints own Interface declarations and Binding proposals.
+- Requires explicit canonical public/issuer origins for Smart HTTP, hosting API,
+  and MCP Interface OAuth. Caller Host values never become OAuth audience
+  authority, and public/issuer URLs are canonical bare HTTPS origins.
+- Makes `git:pre-destroy` consume allowlisted lifecycle outputs, empty both Git
+  and optional Actions R2 buckets in bounded pages, and always remove its
+  temporary hash-token cleaner even after an ambiguous upload response.
+- Pins every mirrored provider exactly and adds reproducible pull-request and
+  release quality lanes. The random provider remains only as the pre-0.4 state
+  destroy bridge and creates no resources.
+
 ## v0.4.1 — install fixes: D1 self-migration + upgrade provider bridge
 
 Makes v0.4 actually install/upgrade cleanly via Takosumi/OpenTofu.

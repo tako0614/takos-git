@@ -166,5 +166,29 @@ describe("takos-git MCP", () => {
         )
       ).status,
     ).toBe(401);
+
+    const invalidRevisionWorker = createGitWorker(async () =>
+      Response.json({
+        token_use: "interface_oauth",
+        sub: "principal_git",
+        aud: "https://git.example/mcp",
+        scope: "mcp.invoke",
+        takosumi: {
+          workspace_id: "workspace_a",
+          capsule_id: "capsule_git",
+          interface_id: "interface_git_mcp",
+          interface_binding_id: "binding_mcp",
+          interface_resolved_revision: 0,
+        },
+      }),
+    );
+    expect(
+      (
+        await invalidRevisionWorker.fetch(
+          mcpRequest("taksrv_git_invalid_revision", "tools/list"),
+          target,
+        )
+      ).status,
+    ).toBe(401);
   });
 });

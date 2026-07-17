@@ -38,6 +38,7 @@ import { createDbClient, type D1Binding, type DbClient } from "./db/index.ts";
 import type { ObjectStoreBinding } from "./git/types.ts";
 import {
   hasValidInterfaceOAuthConfiguration,
+  interfaceAudience,
   verifyInterfaceOAuthCredential,
 } from "./interface-oauth-auth.ts";
 
@@ -117,13 +118,8 @@ function bearerToken(request: Request): string | null {
   return match?.[1]?.trim() || null;
 }
 
-function hostingAudience(request: Request, env: RouterEnv): string {
-  const base = env.APP_URL?.trim() || new URL(request.url).origin;
-  try {
-    return new URL("/api/v1", `${base.replace(/\/$/u, "")}/`).href;
-  } catch {
-    return "";
-  }
+function hostingAudience(env: RouterEnv): string {
+  return interfaceAudience(env.APP_URL, "/api/v1");
 }
 
 /** Interface scope ceiling a route enforces: explicit, else derived from action. */
@@ -366,7 +362,7 @@ async function authenticate(
       }),
     };
   }
-  const audience = hostingAudience(request, env);
+  const audience = hostingAudience(env);
   if (
     !hasValidInterfaceOAuthConfiguration({
       issuerUrl: env.OIDC_ISSUER_URL,

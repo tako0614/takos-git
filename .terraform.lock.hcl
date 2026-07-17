@@ -27,7 +27,7 @@ provider "registry.opentofu.org/cloudflare/cloudflare" {
 
 provider "registry.opentofu.org/hashicorp/http" {
   version     = "3.6.0"
-  constraints = "~> 3.5"
+  constraints = "3.6.0"
   hashes = [
     "h1:0n4RBz9zNw6TTddh5+x7E8L2+qzPXNwKhK4uoZ/DUwE=",
     "h1:22Ob7lpzMBSqdrCvoFN5EgmhGPHPBovV/9qo0c/Cd+A=",

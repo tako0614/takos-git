@@ -7,6 +7,7 @@ import {
 } from "./browser-auth.ts";
 
 const ENV: BrowserAuthEnv = {
+  APP_URL: "https://git.example",
   OIDC_ISSUER_URL: "https://accounts.example",
   OIDC_CLIENT_ID: "takos-git-client",
   OIDC_CLIENT_SECRET: "client-secret",
@@ -46,6 +47,9 @@ describe("takos-git browser auth", () => {
       location.href.startsWith("https://accounts.example/oauth/authorize"),
     ).toBe(true);
     expect(location.searchParams.get("client_id")).toBe("takos-git-client");
+    expect(location.searchParams.get("redirect_uri")).toBe(
+      "https://git.example/api/auth/callback",
+    );
     expect(location.searchParams.get("code_challenge_method")).toBe("S256");
     expect(location.searchParams.get("code_challenge")?.length).toBeGreaterThan(
       20,
@@ -174,5 +178,27 @@ describe("takos-git browser auth", () => {
     );
     expect(response?.status).toBe(302);
     expect(response?.headers.get("location")).toBe("/");
+  });
+
+  test("rejects caller-controlled callback origins and issuer paths", async () => {
+    const callbackOrigin = await handleBrowserAuth(
+      new Request("https://attacker.example/api/auth/login"),
+      ENV,
+    );
+    expect(
+      new URL(callbackOrigin?.headers.get("location") ?? "").searchParams.get(
+        "redirect_uri",
+      ),
+    ).toBe("https://git.example/api/auth/callback");
+
+    const issuerPath = await handleBrowserAuth(
+      new Request("https://git.example/api/auth/login"),
+      { ...ENV, OIDC_ISSUER_URL: "https://accounts.example/tenant" },
+    );
+    expect(issuerPath?.status).toBe(503);
+    expect(await issuerPath?.json()).toMatchObject({
+      error: "browser_auth_unconfigured",
+      missing: ["OIDC_ISSUER_URL"],
+    });
   });
 });

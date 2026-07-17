@@ -38,8 +38,13 @@ output "object_bucket_name" {
   value       = local.r2_objects_bucket
 }
 
+output "cloudflare_account_id" {
+  description = "Non-secret Cloudflare account identifier used by service-owned lifecycle actions."
+  value       = trimspace(var.cloudflare_account_id)
+}
+
 output "metadata_database_id" {
-  description = "D1 metadata database id for the post-apply `wrangler d1 migrations apply` step. Null when enable_metadata is false."
+  description = "D1 metadata database id. The Worker self-applies forward-only migrations; null when enable_metadata is false."
   value       = try(cloudflare_d1_database.metadata[0].id, null)
 }
 
