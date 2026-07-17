@@ -96,10 +96,7 @@ describe("R2 pre-destroy adapter", () => {
       expect(source).not.toContain("for(;;)");
       expect(source).not.toContain("provider-secret");
     }
-    expect(uploadedBucketNames).toEqual([
-      "git-e2e-objects",
-      "git-e2e-actions",
-    ]);
+    expect(uploadedBucketNames).toEqual(["git-e2e-objects", "git-e2e-actions"]);
     expect(JSON.stringify(result)).not.toContain("provider-secret");
     expect(JSON.stringify(result)).not.toContain("authorization");
   });
@@ -220,9 +217,17 @@ describe("R2 pre-destroy adapter", () => {
           object_bucket_name: { value: "git-e2e-objects" },
         }),
         TAKOSUMI_PROVIDER_CONFIGS_JSON: JSON.stringify({
-          "cloudflare/cloudflare": {
-            base_url: "https://app.takosumi.test/compat/cloudflare/client/v4",
-          },
+          format: "takosumi.provider-configurations@v1",
+          providers: [
+            {
+              provider: "registry.opentofu.org/cloudflare/cloudflare",
+              alias: null,
+              configuration: {
+                base_url:
+                  "https://app.takosumi.test/compat/cloudflare/client/v4",
+              },
+            },
+          ],
         }),
       },
       fetchImpl,
@@ -266,7 +271,7 @@ describe("R2 pre-destroy adapter", () => {
     expect(called).toBe(false);
   });
 
-  test("rejects secret-bearing provider config before any provider call", async () => {
+  test("rejects the retired provider-config map shape before any provider call", async () => {
     let called = false;
     await expect(
       purgeR2BeforeDestroy(
@@ -279,8 +284,75 @@ describe("R2 pre-destroy adapter", () => {
           TAKOSUMI_PROVIDER_CONFIGS_JSON: JSON.stringify({
             "cloudflare/cloudflare": {
               base_url: "https://app.takosumi.test/compat/cloudflare/client/v4",
-              api_token: "must-not-be-delivered-here",
             },
+          }),
+        },
+        async () => {
+          called = true;
+          return api();
+        },
+      ),
+    ).rejects.toThrow("TAKOSUMI_PROVIDER_CONFIGS_JSON.format");
+    expect(called).toBe(false);
+  });
+
+  test("keeps direct mode explicit and separate from managed provider configuration", async () => {
+    let called = false;
+    await expect(
+      purgeR2BeforeDestroy(
+        {
+          CLOUDFLARE_API_TOKEN: "compat-provider-secret",
+          CLOUDFLARE_ACCOUNT_ID: "virtual-account",
+          TAKOS_GIT_CLOUDFLARE_API_MODE: "direct",
+          TAKOS_GIT_R2_BUCKET_NAME: "git-e2e-objects",
+          TAKOSUMI_PROVIDER_CONFIGS_JSON: JSON.stringify({
+            format: "takosumi.provider-configurations@v1",
+            providers: [
+              {
+                provider: "registry.opentofu.org/cloudflare/cloudflare",
+                alias: null,
+                configuration: {
+                  base_url:
+                    "https://app.takosumi.test/compat/cloudflare/client/v4",
+                },
+              },
+            ],
+          }),
+        },
+        async () => {
+          called = true;
+          return api();
+        },
+      ),
+    ).rejects.toThrow("direct Cloudflare mode must not consume");
+    expect(called).toBe(false);
+  });
+
+  test("rejects secret-bearing provider config before any provider call", async () => {
+    let called = false;
+    await expect(
+      purgeR2BeforeDestroy(
+        {
+          CLOUDFLARE_API_TOKEN: "compat-provider-secret",
+          TAKOSUMI_OUTPUTS_JSON: JSON.stringify({
+            cloudflare_account_id: { value: "virtual-account" },
+            object_bucket_name: { value: "git-e2e-objects" },
+          }),
+          TAKOSUMI_PROVIDER_CONFIGS_JSON: JSON.stringify({
+            format: "takosumi.provider-configurations@v1",
+            providers: [
+              {
+                provider: "registry.opentofu.org/cloudflare/cloudflare",
+                alias: null,
+                configuration: {
+                  base_url:
+                    "https://app.takosumi.test/compat/cloudflare/client/v4",
+                  nested: {
+                    api_token: "must-not-be-delivered-here",
+                  },
+                },
+              },
+            ],
           }),
         },
         async () => {
@@ -312,9 +384,17 @@ describe("R2 pre-destroy adapter", () => {
             object_bucket_name: { value: "git-e2e-objects" },
           }),
           TAKOSUMI_PROVIDER_CONFIGS_JSON: JSON.stringify({
-            "cloudflare/cloudflare": {
-              base_url: "https://app.takosumi.test/compat/cloudflare/client/v4",
-            },
+            format: "takosumi.provider-configurations@v1",
+            providers: [
+              {
+                provider: "registry.opentofu.org/cloudflare/cloudflare",
+                alias: null,
+                configuration: {
+                  base_url:
+                    "https://app.takosumi.test/compat/cloudflare/client/v4",
+                },
+              },
+            ],
           }),
         },
         fetchImpl,
@@ -326,7 +406,9 @@ describe("R2 pre-destroy adapter", () => {
 
   test("generated cleaner contains only a token hash and performs one page per invocation", () => {
     const source = r2CleanerWorkerSource("a".repeat(64));
-    expect(source).toContain(`EXPECTED_TOKEN_SHA256=${JSON.stringify("a".repeat(64))}`);
+    expect(source).toContain(
+      `EXPECTED_TOKEN_SHA256=${JSON.stringify("a".repeat(64))}`,
+    );
     expect(source).toContain("env.BUCKET.list({limit:1000})");
     expect(source).not.toContain("while(");
     expect(source).not.toContain("for(;;)");

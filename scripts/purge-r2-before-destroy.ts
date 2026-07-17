@@ -1,10 +1,10 @@
 import { createHash, randomBytes } from "node:crypto";
 
 const DEFAULT_API_BASE_URL = "https://api.cloudflare.com/client/v4";
-const CLOUDFLARE_PROVIDER_SOURCES = [
-  "cloudflare/cloudflare",
-  "registry.opentofu.org/cloudflare/cloudflare",
-] as const;
+const PROVIDER_CONFIGURATIONS_FORMAT =
+  "takosumi.provider-configurations@v1" as const;
+const CLOUDFLARE_PROVIDER_SOURCE =
+  "registry.opentofu.org/cloudflare/cloudflare";
 const MAX_PAGES = 100_000;
 const MAX_READY_ATTEMPTS = 10;
 
@@ -38,6 +38,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function containsSecretLikeKey(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some(containsSecretLikeKey);
+  if (!isRecord(value)) return false;
+  return Object.entries(value).some(
+    ([key, entry]) =>
+      /(secret|token|password|credential|private_?key|api_?key)/iu.test(key) ||
+      containsSecretLikeKey(entry),
+  );
+}
+
 function outputValue(value: unknown): string | undefined {
   if (typeof value === "string") return value;
   if (isRecord(value) && typeof value.value === "string") return value.value;
@@ -67,13 +77,17 @@ function outputBucketNames(
   const directObject = env.TAKOS_GIT_R2_BUCKET_NAME?.trim();
   const directActions = env.TAKOS_GIT_ACTIONS_R2_BUCKET_NAME?.trim();
   if (directObject) {
-    return [...new Set([directObject, directActions].filter(Boolean))] as string[];
+    return [
+      ...new Set([directObject, directActions].filter(Boolean)),
+    ] as string[];
   }
   if (!outputs) throw new Error("TAKOSUMI_OUTPUTS_JSON is required");
   const objectBucket = outputValue(outputs.object_bucket_name)?.trim();
   if (!objectBucket) throw new Error("object_bucket_name output is required");
   const actionsBucket = outputValue(outputs.actions_logs_bucket_name)?.trim();
-  return [...new Set([objectBucket, actionsBucket].filter(Boolean))] as string[];
+  return [
+    ...new Set([objectBucket, actionsBucket].filter(Boolean)),
+  ] as string[];
 }
 
 function httpsApiBase(value: string, name: string): string {
@@ -90,7 +104,9 @@ function httpsApiBase(value: string, name: string): string {
     url.search !== "" ||
     url.hash !== ""
   ) {
-    throw new Error(`${name} must be an HTTPS URL without credentials, query, or fragment`);
+    throw new Error(
+      `${name} must be an HTTPS URL without credentials, query, or fragment`,
+    );
   }
   return url.href.replace(/\/+$/u, "");
 }
@@ -107,21 +123,41 @@ function providerApiBase(env: PurgeR2Environment): string | undefined {
   if (!isRecord(configs)) {
     throw new Error("TAKOSUMI_PROVIDER_CONFIGS_JSON must be an object");
   }
-  const entries = CLOUDFLARE_PROVIDER_SOURCES.map((source) => configs[source]).filter(
-    (value) => value !== undefined,
-  );
-  if (entries.length > 1) {
-    throw new Error("TAKOSUMI_PROVIDER_CONFIGS_JSON contains duplicate Cloudflare provider sources");
+  if (configs.format !== PROVIDER_CONFIGURATIONS_FORMAT) {
+    throw new Error(
+      `TAKOSUMI_PROVIDER_CONFIGS_JSON.format must be ${PROVIDER_CONFIGURATIONS_FORMAT}`,
+    );
   }
-  const config = entries[0];
-  if (config === undefined) return undefined;
-  if (!isRecord(config)) {
-    throw new Error("Cloudflare provider config must be an object");
+  if (!Array.isArray(configs.providers)) {
+    throw new Error(
+      "TAKOSUMI_PROVIDER_CONFIGS_JSON.providers must be an array",
+    );
   }
-  for (const key of Object.keys(config)) {
-    if (/(secret|token|password|credential|private_?key|api_?key)/iu.test(key)) {
-      throw new Error("TAKOSUMI_PROVIDER_CONFIGS_JSON must contain only non-secret provider configuration");
+  const entries = configs.providers.filter((entry) => {
+    if (!isRecord(entry)) {
+      throw new Error(
+        "TAKOSUMI_PROVIDER_CONFIGS_JSON.providers entries must be objects",
+      );
     }
+    return (
+      entry.provider === CLOUDFLARE_PROVIDER_SOURCE && entry.alias === null
+    );
+  });
+  if (entries.length > 1) {
+    throw new Error(
+      "TAKOSUMI_PROVIDER_CONFIGS_JSON contains duplicate default Cloudflare provider entries",
+    );
+  }
+  const entry = entries[0];
+  if (entry === undefined) return undefined;
+  const config = entry.configuration;
+  if (!isRecord(config)) {
+    throw new Error("Cloudflare provider configuration must be an object");
+  }
+  if (containsSecretLikeKey(config)) {
+    throw new Error(
+      "TAKOSUMI_PROVIDER_CONFIGS_JSON must contain only non-secret provider configuration",
+    );
   }
   const baseUrl = config.base_url;
   if (typeof baseUrl !== "string" || !baseUrl.trim()) return undefined;
@@ -136,25 +172,13 @@ function apiExecutionContext(env: PurgeR2Environment): {
   if (mode !== "" && mode !== "direct") {
     throw new Error("TAKOS_GIT_CLOUDFLARE_API_MODE must be empty or direct");
   }
-  const serviceBase = env.TAKOS_GIT_PURGE_API_BASE_URL?.trim();
   const configuredProviderBase = providerApiBase(env);
-  if (serviceBase && configuredProviderBase) {
-    throw new Error("configure only one of TAKOS_GIT_PURGE_API_BASE_URL or TAKOSUMI_PROVIDER_CONFIGS_JSON");
-  }
-  if (serviceBase) {
-    return {
-      apiBase: httpsApiBase(serviceBase, "TAKOS_GIT_PURGE_API_BASE_URL"),
-      directCloudflare: mode === "direct",
-    };
-  }
-  if (configuredProviderBase) {
-    return {
-      apiBase: configuredProviderBase,
-      directCloudflare:
-        mode === "direct" || configuredProviderBase === DEFAULT_API_BASE_URL,
-    };
-  }
   if (mode === "direct") {
+    if (configuredProviderBase) {
+      throw new Error(
+        "direct Cloudflare mode must not consume TAKOSUMI_PROVIDER_CONFIGS_JSON",
+      );
+    }
     return {
       apiBase: httpsApiBase(
         env.CLOUDFLARE_API_BASE_URL ?? DEFAULT_API_BASE_URL,
@@ -163,12 +187,20 @@ function apiExecutionContext(env: PurgeR2Environment): {
       directCloudflare: true,
     };
   }
+  if (configuredProviderBase) {
+    return {
+      apiBase: configuredProviderBase,
+      directCloudflare: false,
+    };
+  }
   throw new Error(
     "Cloudflare API base is unresolved; lifecycle execution must provide non-secret TAKOSUMI_PROVIDER_CONFIGS_JSON or explicitly select direct mode",
   );
 }
 
-function responseCleanerOrigin(payload: Record<string, unknown>): string | undefined {
+function responseCleanerOrigin(
+  payload: Record<string, unknown>,
+): string | undefined {
   const result = payload.result;
   if (!isRecord(result)) return undefined;
   const value =
