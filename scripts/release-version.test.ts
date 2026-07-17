@@ -28,12 +28,13 @@ const packageJson = JSON.parse(packageSource) as {
 const packageVersion = packageJson.version;
 
 describe("release version and Capsule contract", () => {
-  test("keeps artifact selection and embedded MCP version aligned", () => {
+  test("keeps the embedded MCP version aligned without selecting an unpublished artifact", () => {
     const releaseVariable = moduleSource.match(
       /variable\s+"worker_release_tag"\s*\{([\s\S]*?)\n\}/,
     )?.[1];
     expect(releaseVariable).toBeDefined();
-    expect(releaseVariable).toContain(`default     = "v${packageVersion}"`);
+    expect(releaseVariable).toContain('default     = "v0.4.1"');
+    expect(releaseVariable).not.toContain(`default     = "v${packageVersion}"`);
     expect(mcpSource).toContain(
       `serverInfo: { name: "takos-git", version: "${packageVersion}" }`,
     );
