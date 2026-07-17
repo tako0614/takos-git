@@ -31,6 +31,7 @@ import {
 import type { DbClient } from "../../db/index.ts";
 import {
   hasValidInterfaceOAuthConfiguration,
+  interfaceAudience,
   verifyInterfaceOAuthCredential,
 } from "../../interface-oauth-auth.ts";
 import type { RouteContext } from "../../router.ts";
@@ -71,13 +72,8 @@ function bearerToken(request: Request): string | null {
   return match?.[1]?.trim() || null;
 }
 
-function hostingAudience(request: Request, env: RouteContext["env"]): string {
-  const base = env.APP_URL?.trim() || new URL(request.url).origin;
-  try {
-    return new URL("/api/v1", `${base.replace(/\/$/u, "")}/`).href;
-  } catch {
-    return "";
-  }
+function hostingAudience(env: RouteContext["env"]): string {
+  return interfaceAudience(env.APP_URL, "/api/v1");
 }
 
 /** The anonymous read-only context. */
@@ -123,7 +119,7 @@ export async function resolveIdentity(
   // 2. Interface OAuth bearer (automation; scope-capped).
   const token = bearerToken(request);
   if (token) {
-    const audience = hostingAudience(request, env);
+    const audience = hostingAudience(env);
     if (
       !hasValidInterfaceOAuthConfiguration({
         issuerUrl: env.OIDC_ISSUER_URL,

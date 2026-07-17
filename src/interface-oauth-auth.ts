@@ -41,6 +41,7 @@ function userInfoEndpoint(issuerUrl?: string): URL | null {
       issuer.protocol !== "https:" ||
       issuer.username !== "" ||
       issuer.password !== "" ||
+      issuer.pathname !== "/" ||
       issuer.search !== "" ||
       issuer.hash !== ""
     ) {
@@ -67,6 +68,30 @@ function canonicalResourceUri(value: string): string | null {
     return resource.href;
   } catch {
     return null;
+  }
+}
+
+/** Build an Interface audience only from an explicitly configured bare HTTPS origin. */
+export function interfaceAudience(
+  configuredOrigin: string | undefined,
+  path: string,
+): string {
+  if (!configuredOrigin?.trim() || !path.startsWith("/")) return "";
+  try {
+    const origin = new URL(configuredOrigin.trim());
+    if (
+      origin.protocol !== "https:" ||
+      origin.username !== "" ||
+      origin.password !== "" ||
+      origin.pathname !== "/" ||
+      origin.search !== "" ||
+      origin.hash !== ""
+    ) {
+      return "";
+    }
+    return new URL(path, origin).href;
+  } catch {
+    return "";
   }
 }
 
@@ -159,9 +184,11 @@ export type InterfaceCredential =
  * Validate one invocation-only Takosumi Interface OAuth credential, returning the
  * proven InterfaceBinding evidence on success.
  *
- * The Accounts UserInfo response is the authority for the opaque token. The
- * Capsule independently checks the exact resource URI, permission, owning
- * Workspace/Capsule, and the complete InterfaceBinding revision evidence.
+ * Accounts revalidates the opaque token against current Core state before
+ * UserInfo returns it active. The Capsule independently checks the exact
+ * resource URI, permission, owning Workspace/Capsule, subject, and complete
+ * InterfaceBinding evidence shape. It does not pin Interface ids or revisions
+ * into static deployment configuration.
  */
 export async function verifyInterfaceOAuthCredential(
   request: Request,

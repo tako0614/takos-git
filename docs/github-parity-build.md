@@ -749,9 +749,9 @@ Identity/namespace: `principals`, `owners`, `org_memberships` · Repos: `reposit
 
 ### Migration delivery
 
-D1 DDL ships as Cloudflare **D1 migrations** in a repo-root `migrations/` directory (absent today — `ls migrations/` returns nothing), applied with `wrangler d1 migrations apply <db> --remote`. Files are numbered and forward-only: `0001_baseline.sql` creating all tables above, subsequent `NNNN_*.sql` for additive changes. Each `CREATE TABLE`/`CREATE INDEX` is idempotent-safe within its migration; we never rewrite an applied migration (the stale-ledger hazard noted for yurucommu in memory is avoided by treating the applied ledger as immutable and only ever appending).
+D1 DDL ships as numbered, forward-only SQL under `migrations/` and is embedded into the released Worker. The Worker applies it idempotently on first D1 use through `schema_migrations`; no separate wrangler migration command is required. Each `CREATE TABLE`/`CREATE INDEX` stays idempotent-safe, and an applied migration is never rewritten.
 
-`main.tf` must be extended alongside this schema: today it provisions only `cloudflare_r2_bucket` + the worker script. Add a `cloudflare_d1_database` resource and bind it to the worker (`[[d1_databases]]` binding, e.g. `DB`), so the self-hoster's single `tofu apply` provisions R2 **and** D1. Migrations run as a post-apply `wrangler d1 migrations apply` step reading the D1 database id from module output — the same output-then-wrangler pattern the repo already uses for the worker artifact. R2 remains the authoritative Git store; D1 is provisioned as the metadata plane and is fully rebuildable from R2 for every git-derived table.
+`main.tf` provisions the `cloudflare_d1_database` and binds it as `DB`, so the self-hoster's single `tofu apply` provisions R2 **and** D1. The released Worker embeds the forward-only migrations and self-applies them through its `schema_migrations` ledger on first D1 use; there is no post-apply wrangler migration step. R2 remains the authoritative Git store; D1 is the metadata plane and is fully rebuildable from R2 for every git-derived table.
 
 ---
 
