@@ -184,9 +184,11 @@ export type InterfaceCredential =
  * Validate one invocation-only Takosumi Interface OAuth credential, returning the
  * proven InterfaceBinding evidence on success.
  *
- * The Accounts UserInfo response is the authority for the opaque token. The
- * Capsule independently checks the exact resource URI, permission, owning
- * Workspace/Capsule, and the complete InterfaceBinding revision evidence.
+ * Accounts revalidates the opaque token against current Core state before
+ * UserInfo returns it active. The Capsule independently checks the exact
+ * resource URI, permission, owning Workspace/Capsule, subject, and complete
+ * InterfaceBinding evidence shape. It does not pin Interface ids or revisions
+ * into static deployment configuration.
  */
 export async function verifyInterfaceOAuthCredential(
   request: Request,

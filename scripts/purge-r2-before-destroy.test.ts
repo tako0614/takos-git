@@ -188,7 +188,7 @@ describe("R2 pre-destroy adapter", () => {
     expect(called).toBe(false);
   });
 
-  test("uses the delivered managed provider base and provider-returned cleaner origin", async () => {
+  test("uses the delivered custom provider base and provider-returned cleaner origin", async () => {
     const urls: string[] = [];
     const fetchImpl: PurgeFetch = async (input, init) => {
       const url = input instanceof Request ? input.url : input.toString();
@@ -251,7 +251,7 @@ describe("R2 pre-destroy adapter", () => {
     expect(urls.some((url) => url.includes("workers/subdomain"))).toBe(false);
   });
 
-  test("never sends a provider token when execution context has no API base", async () => {
+  test("never sends a provider token when execution context has no provider envelope", async () => {
     let called = false;
     await expect(
       purgeR2BeforeDestroy(
@@ -267,9 +267,86 @@ describe("R2 pre-destroy adapter", () => {
           return api();
         },
       ),
-    ).rejects.toThrow("Cloudflare API base is unresolved");
+    ).rejects.toThrow("Cloudflare provider transport is unresolved");
     expect(called).toBe(false);
   });
+
+  test("requires an explicit default Cloudflare entry in the canonical envelope", async () => {
+    let called = false;
+    await expect(
+      purgeR2BeforeDestroy(
+        {
+          CLOUDFLARE_API_TOKEN: "provider-secret",
+          TAKOSUMI_OUTPUTS_JSON: JSON.stringify({
+            cloudflare_account_id: { value: "account-123" },
+            object_bucket_name: { value: "git-e2e-objects" },
+          }),
+          TAKOSUMI_PROVIDER_CONFIGS_JSON: JSON.stringify({
+            format: "takosumi.provider-configurations@v1",
+            providers: [],
+          }),
+        },
+        async () => {
+          called = true;
+          return api();
+        },
+      ),
+    ).rejects.toThrow("must contain the default Cloudflare provider entry");
+    expect(called).toBe(false);
+  });
+
+  for (const configuration of [
+    {},
+    { base_url: "https://api.cloudflare.com/client/v4" },
+  ]) {
+    test(`uses direct provider transport for ${JSON.stringify(configuration)}`, async () => {
+      const urls: string[] = [];
+      const fetchImpl: PurgeFetch = async (input, init) => {
+        const url = input instanceof Request ? input.url : input.toString();
+        urls.push(url);
+        const method = init?.method ?? "GET";
+        if (url.endsWith("/workers/subdomain") && method === "GET") {
+          return api({ result: { subdomain: "fixture" } });
+        }
+        if (url.endsWith("/subdomain") && method === "POST") return api();
+        if (url.endsWith(".workers.dev/purge") && method === "POST") {
+          return Response.json({ ok: true, deleted: 0, done: true });
+        }
+        if (method === "DELETE") return api();
+        return api();
+      };
+
+      const result = await purgeR2BeforeDestroy(
+        {
+          CLOUDFLARE_API_TOKEN: "provider-secret",
+          TAKOSUMI_OUTPUTS_JSON: JSON.stringify({
+            cloudflare_account_id: { value: "account-123" },
+            object_bucket_name: { value: "git-e2e-objects" },
+          }),
+          TAKOSUMI_PROVIDER_CONFIGS_JSON: JSON.stringify({
+            format: "takosumi.provider-configurations@v1",
+            providers: [
+              {
+                provider: "registry.opentofu.org/cloudflare/cloudflare",
+                alias: null,
+                configuration,
+              },
+            ],
+          }),
+        },
+        fetchImpl,
+        async () => undefined,
+      );
+
+      expect(result.status).toBe("succeeded");
+      expect(urls).toContain(
+        "https://api.cloudflare.com/client/v4/accounts/account-123/workers/subdomain",
+      );
+      expect(urls.some((url) => url.includes("fixture.workers.dev/purge"))).toBe(
+        true,
+      );
+    });
+  }
 
   test("rejects the retired provider-config map shape before any provider call", async () => {
     let called = false;
@@ -296,7 +373,7 @@ describe("R2 pre-destroy adapter", () => {
     expect(called).toBe(false);
   });
 
-  test("keeps direct mode explicit and separate from managed provider configuration", async () => {
+  test("keeps standalone direct mode separate from Takosumi provider configuration", async () => {
     let called = false;
     await expect(
       purgeR2BeforeDestroy(
@@ -364,7 +441,7 @@ describe("R2 pre-destroy adapter", () => {
     expect(called).toBe(false);
   });
 
-  test("managed cleanup fails closed and removes the cleaner when no invocation origin is returned", async () => {
+  test("custom provider cleanup fails closed and removes the cleaner when no invocation origin is returned", async () => {
     let removed = false;
     const fetchImpl: PurgeFetch = async (input, init) => {
       const url = input instanceof Request ? input.url : input.toString();

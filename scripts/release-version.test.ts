@@ -66,6 +66,9 @@ describe("release version and Capsule contract", () => {
     expect(outputsSource).toContain('output "cloudflare_account_id"');
     expect(moduleSource).not.toContain('resource "takosumi_interface"');
     expect(moduleSource).not.toContain('source  = "takosjp/takosumi"');
+    expect(moduleSource).not.toContain("INTERFACE_ID");
+    expect(moduleSource).not.toContain("INTERFACE_BINDING_ID");
+    expect(moduleSource).not.toContain("INTERFACE_RESOLVED_REVISION");
   });
 
   test("pins mirrored providers and retains only the legacy random destroy bridge", () => {

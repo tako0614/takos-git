@@ -72,6 +72,7 @@ describe("Interface OAuth verifier", () => {
   });
 
   test("rejects mismatched or incomplete authorization evidence", async () => {
+    expect(await verify({ ...validClaims, sub: "" })).toBe(false);
     expect(
       await verify({ ...validClaims, aud: "https://git.example/mcp" }),
     ).toBe(false);
