@@ -133,16 +133,17 @@ function providerApiBase(env: PurgeR2Environment): string | undefined {
       "TAKOSUMI_PROVIDER_CONFIGS_JSON.providers must be an array",
     );
   }
-  const entries = configs.providers.filter((entry) => {
+  const entries: Record<string, unknown>[] = [];
+  for (const entry of configs.providers as unknown[]) {
     if (!isRecord(entry)) {
       throw new Error(
         "TAKOSUMI_PROVIDER_CONFIGS_JSON.providers entries must be objects",
       );
     }
-    return (
-      entry.provider === CLOUDFLARE_PROVIDER_SOURCE && entry.alias === null
-    );
-  });
+    if (entry.provider === CLOUDFLARE_PROVIDER_SOURCE && entry.alias === null) {
+      entries.push(entry);
+    }
+  }
   if (entries.length > 1) {
     throw new Error(
       "TAKOSUMI_PROVIDER_CONFIGS_JSON contains duplicate default Cloudflare provider entries",
