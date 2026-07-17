@@ -28,7 +28,7 @@ const packageJson = JSON.parse(packageSource) as {
 const packageVersion = packageJson.version;
 
 describe("release version and Capsule contract", () => {
-  test("keeps the embedded MCP version aligned without selecting an unpublished artifact", () => {
+  test("keeps the module default and embedded MCP version aligned with the published release", () => {
     const releaseVariable = moduleSource.match(
       /variable\s+"worker_release_tag"\s*\{([\s\S]*?)\n\}/,
     )?.[1];
@@ -36,8 +36,7 @@ describe("release version and Capsule contract", () => {
     const releaseDefault = releaseVariable?.match(
       /^\s*default\s*=\s*"([^"]+)"\s*$/m,
     )?.[1];
-    expect(releaseDefault).toBe("v0.4.1");
-    expect(releaseDefault).not.toBe(`v${packageVersion}`);
+    expect(releaseDefault).toBe(`v${packageVersion}`);
     expect(mcpSource).toContain(
       `serverInfo: { name: "takos-git", version: "${packageVersion}" }`,
     );
