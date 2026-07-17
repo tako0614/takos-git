@@ -11,6 +11,7 @@ const MAX_PROFILE_FIELD_LENGTH = 512;
 const MAX_WORKSPACE_MEMBERSHIPS = 256;
 
 export interface BrowserAuthEnv {
+  APP_URL?: string;
   OIDC_ISSUER_URL?: string;
   OIDC_CLIENT_ID?: string;
   OIDC_CLIENT_SECRET?: string;
@@ -60,12 +61,12 @@ function issuerBase(value: string | undefined): URL | null {
       issuer.protocol !== "https:" ||
       issuer.username !== "" ||
       issuer.password !== "" ||
+      issuer.pathname !== "/" ||
       issuer.search !== "" ||
       issuer.hash !== ""
     ) {
       return null;
     }
-    issuer.pathname = issuer.pathname.replace(/\/$/u, "");
     return issuer;
   } catch {
     return null;
@@ -73,12 +74,33 @@ function issuerBase(value: string | undefined): URL | null {
 }
 
 function endpoint(issuer: URL, path: string): URL {
-  const basePath = issuer.pathname.replace(/\/+$/u, "");
-  return new URL(`${basePath}${path}`, issuer.origin);
+  return new URL(path, issuer.origin);
+}
+
+function publicOrigin(value: string | undefined): URL | null {
+  const configured = configuredValue(value);
+  if (!configured) return null;
+  try {
+    const origin = new URL(configured);
+    if (
+      origin.protocol !== "https:" ||
+      origin.username !== "" ||
+      origin.password !== "" ||
+      origin.pathname !== "/" ||
+      origin.search !== "" ||
+      origin.hash !== ""
+    ) {
+      return null;
+    }
+    return origin;
+  } catch {
+    return null;
+  }
 }
 
 export function browserAuthMissing(env: BrowserAuthEnv): readonly string[] {
   const missing: string[] = [];
+  if (!publicOrigin(env.APP_URL)) missing.push("APP_URL");
   if (!issuerBase(env.OIDC_ISSUER_URL)) missing.push("OIDC_ISSUER_URL");
   const clientId = configuredValue(env.OIDC_CLIENT_ID);
   if (!clientId || clientId.length > 512) missing.push("OIDC_CLIENT_ID");
@@ -238,8 +260,9 @@ function safeReturnTo(value: string | null): string {
   }
 }
 
-function callbackUrl(request: Request): string {
-  return new URL("/api/auth/callback", new URL(request.url).origin).href;
+function callbackUrl(env: BrowserAuthEnv): string {
+  const origin = publicOrigin(env.APP_URL);
+  return origin ? new URL("/api/auth/callback", origin).href : "";
 }
 
 async function readBoundedJson(response: Response): Promise<unknown> {
@@ -306,7 +329,6 @@ function optionalProfileField(value: unknown): string | null {
 }
 
 async function exchangeCode(
-  request: Request,
   env: BrowserAuthEnv,
   code: string,
   codeVerifier: string,
@@ -319,7 +341,7 @@ async function exchangeCode(
     grant_type: "authorization_code",
     code,
     client_id: clientId,
-    redirect_uri: callbackUrl(request),
+    redirect_uri: callbackUrl(env),
     code_verifier: codeVerifier,
   });
   const clientSecret = configuredValue(env.OIDC_CLIENT_SECRET);
@@ -473,7 +495,7 @@ export async function handleBrowserAuth(
     const authorize = endpoint(issuer, "/oauth/authorize");
     authorize.searchParams.set("response_type", "code");
     authorize.searchParams.set("client_id", clientId);
-    authorize.searchParams.set("redirect_uri", callbackUrl(request));
+    authorize.searchParams.set("redirect_uri", callbackUrl(env));
     authorize.searchParams.set("scope", "openid profile email");
     authorize.searchParams.set("state", state.state);
     authorize.searchParams.set(
@@ -526,7 +548,6 @@ export async function handleBrowserAuth(
       });
     }
     const accessToken = await exchangeCode(
-      request,
       env,
       code,
       state.codeVerifier,

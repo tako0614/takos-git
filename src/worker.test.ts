@@ -139,8 +139,8 @@ describe("takos-git worker", () => {
     expect(res.headers.get("content-type")).toContain("image/svg+xml");
     const body = await res.text();
     expect(body).toContain("<svg");
-    // Drift guard: the served bytes must equal the repo-owned asset the store
-    // card (`.well-known/tcs.json`) and the OpenTofu icon output point at.
+    // Drift guard: the served bytes must equal the repo-owned asset referenced
+    // by the service-side InstallConfig launcher Interface document.
     const onDisk = await Bun.file(
       new URL("../public/icons/takos-git.svg", import.meta.url),
     ).text();
@@ -191,6 +191,18 @@ describe("takos-git worker", () => {
       env,
     );
     expect(res.status).toBe(401);
+  });
+
+  test("never derives Interface audience authority from the caller Host", async () => {
+    const { env } = await setup();
+    const res = await worker.fetch(
+      new Request(
+        `https://attacker.example/git/${REPO}.git/info/refs?service=git-upload-pack`,
+        { headers: { authorization: `Bearer ${READ_TOKEN}` } },
+      ),
+      { ...env, APP_URL: undefined },
+    );
+    expect(res.status).toBe(503);
   });
 
   test("upload-pack returns a packfile for an advertised want", async () => {

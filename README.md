@@ -45,9 +45,12 @@ tofu apply \
   -var enable_cloudflare_resources=true \
   -var enable_cloudflare_worker_script=true \
   -var cloudflare_account_id=<id> \
-  -var public_subdomain=<service-subdomain> \
-  -var cloudflare_workers_subdomain=<workers-dev-subdomain>
+  -var public_url=https://git.example \
+  -var takosumi_accounts_issuer_url=https://accounts.example \
+  -var 'env={APP_WORKSPACE_ID="<workspace-id>",APP_CAPSULE_ID="<capsule-id>"}'
 ```
+
+`public_url` と `takosumi_accounts_issuer_url` は path / query / fragment / userinfo を持たない HTTPS origin を指定します（末尾 `/` は正規化されます）。
 
 hosted 環境からのインストールでは、Git release や CI artifact の
 `worker_bundle_url` + `worker_bundle_sha256` を読み込みます。`dist/worker.js` は commit しません。
@@ -73,8 +76,8 @@ hosted 環境からのインストールでは、Git release や CI artifact の
 Takosumi-managed な Git/hosting/MCP 呼び出しは、通常の `api_url` / `hosting_api_url` /
 `mcp_url` Output を resource URI に
 明示 mapping した service-side Interface と InterfaceBinding を使います。Interface/blueprint は上記
-permission を明示し、Worker は Accounts UserInfo から audience、scope、Workspace、Capsule、Interface、
-Binding、resolved revision を fail-closed 検証します。managed InstallConfig は通常の `env` input 経由で
+permission を明示し、Worker は Accounts UserInfo から audience、scope、Workspace、Capsule と、
+完全な Interface / Binding / positive revision evidence を fail-closed 検証します。managed InstallConfig は通常の `env` input 経由で
 `APP_WORKSPACE_ID` と `APP_CAPSULE_ID` を渡します。宣言・credential は Output に入れません。
 
 `PUBLISHED_MCP_AUTH_TOKEN` は直接/self-host deployment 用の standalone MCP bearer としてだけ残し、
@@ -101,7 +104,12 @@ repo や Output に書きません。
 空でない R2 bucket を削除できません。そのため Takosumi 管理の実行では、operator が
 service-side InstallConfig に、レビュー済み OpenTofu destroy の前に bucket を空にする
 versioned `pre_destroy` lifecycle action と明示的な policy を設定します。対象 bucket などの
-non-secret 値もその service-side 設定で明示します。Takosumi 自体は Git 固有の後片付け
+non-secret 値は allowlisted `cloudflare_account_id` / `object_bucket_name` /
+`actions_logs_bucket_name` Output として `TAKOSUMI_OUTPUTS_JSON` に渡します。managed runner は
+`base_url` を含む検証済み non-secret provider config も `TAKOSUMI_PROVIDER_CONFIGS_JSON` に渡し、
+direct Cloudflare は `TAKOS_GIT_CLOUDFLARE_API_MODE=direct` を明示します。API base が未解決なら
+provider token を送信する前に失敗し、`bun run git:pre-destroy` が bounded page 単位で空にします。
+Takosumi 自体は Git 固有の後片付け
 ロジックを持たず、OpenTofu Output からコマンドや認証情報を推論しません。
 
 ### MCP standalone bearer

@@ -41,6 +41,7 @@ function userInfoEndpoint(issuerUrl?: string): URL | null {
       issuer.protocol !== "https:" ||
       issuer.username !== "" ||
       issuer.password !== "" ||
+      issuer.pathname !== "/" ||
       issuer.search !== "" ||
       issuer.hash !== ""
     ) {
@@ -67,6 +68,30 @@ function canonicalResourceUri(value: string): string | null {
     return resource.href;
   } catch {
     return null;
+  }
+}
+
+/** Build an Interface audience only from an explicitly configured bare HTTPS origin. */
+export function interfaceAudience(
+  configuredOrigin: string | undefined,
+  path: string,
+): string {
+  if (!configuredOrigin?.trim() || !path.startsWith("/")) return "";
+  try {
+    const origin = new URL(configuredOrigin.trim());
+    if (
+      origin.protocol !== "https:" ||
+      origin.username !== "" ||
+      origin.password !== "" ||
+      origin.pathname !== "/" ||
+      origin.search !== "" ||
+      origin.hash !== ""
+    ) {
+      return "";
+    }
+    return new URL(path, origin).href;
+  } catch {
+    return "";
   }
 }
 
