@@ -2,6 +2,7 @@
 
 import {
   hasValidInterfaceOAuthConfiguration,
+  interfaceAudience,
   verifyInterfaceOAuthCredential,
 } from "./interface-oauth-auth.ts";
 import {
@@ -121,14 +122,7 @@ async function authorize(
       return { kind: "capsule" };
     }
   }
-  const requestUrl = new URL(request.url);
-  const base = env.APP_URL?.trim() || requestUrl.origin;
-  let audience = "";
-  try {
-    audience = new URL("/mcp", `${base.replace(/\/$/u, "")}/`).href;
-  } catch {
-    // Invalid configuration remains a fail-closed empty audience.
-  }
+  const audience = interfaceAudience(env.APP_URL, "/mcp");
   const interfaceOAuthConfigured = hasValidInterfaceOAuthConfiguration({
     issuerUrl: env.OIDC_ISSUER_URL,
     audience,
@@ -385,7 +379,7 @@ export async function handleMcp(
     return jsonRpcResult(body.id, {
       protocolVersion: MCP_PROTOCOL_VERSION,
       capabilities: { tools: {} },
-      serverInfo: { name: "takos-git", version: "0.4.1" },
+      serverInfo: { name: "takos-git", version: "0.5.0" },
     });
   }
   if (body.method === "notifications/initialized")

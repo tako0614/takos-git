@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 
-import { verifyInterfaceOAuthBearer } from "./interface-oauth-auth.ts";
+import {
+  interfaceAudience,
+  verifyInterfaceOAuthBearer,
+} from "./interface-oauth-auth.ts";
 
 const TOKEN = "taksrv_git_test_token";
 const PERMISSION = "source.git.smart_http.read";
@@ -37,7 +40,7 @@ function verify(
     overrides.token ?? TOKEN,
     overrides.permission ?? PERMISSION,
     {
-      issuerUrl: "https://accounts.example/issuer",
+      issuerUrl: "https://accounts.example/",
       expectedAudience: "https://git.example/git",
       expectedWorkspaceId: overrides.workspaceId ?? "workspace_a",
       expectedCapsuleId: overrides.capsuleId ?? "capsule_git",
@@ -54,11 +57,22 @@ function verify(
 }
 
 describe("Interface OAuth verifier", () => {
+  test("builds audiences only from an explicit bare HTTPS origin", () => {
+    expect(interfaceAudience("https://git.example/", "/git")).toBe(
+      "https://git.example/git",
+    );
+    expect(interfaceAudience("https://git.example/nested", "/git")).toBe("");
+    expect(interfaceAudience("https://user@git.example", "/git")).toBe("");
+    expect(interfaceAudience("http://git.example", "/git")).toBe("");
+    expect(interfaceAudience(undefined, "/git")).toBe("");
+  });
+
   test("accepts exact audience, permission, owner, Binding, and revision evidence", async () => {
     expect(await verify(validClaims)).toBe(true);
   });
 
   test("rejects mismatched or incomplete authorization evidence", async () => {
+    expect(await verify({ ...validClaims, sub: "" })).toBe(false);
     expect(
       await verify({ ...validClaims, aud: "https://git.example/mcp" }),
     ).toBe(false);
@@ -86,7 +100,10 @@ describe("Interface OAuth verifier", () => {
     expect(
       await verify({
         ...validClaims,
-        takosumi: { ...validClaims.takosumi, interface_id: undefined },
+        takosumi: {
+          ...validClaims.takosumi,
+          interface_id: "",
+        },
       }),
     ).toBe(false);
     expect(
@@ -94,8 +111,14 @@ describe("Interface OAuth verifier", () => {
         ...validClaims,
         takosumi: {
           ...validClaims.takosumi,
-          interface_resolved_revision: -1,
+          interface_resolved_revision: 0,
         },
+      }),
+    ).toBe(false);
+    expect(
+      await verify({
+        ...validClaims,
+        scope: `${PERMISSION} source.git.smart_http.write`,
       }),
     ).toBe(false);
   });
@@ -113,5 +136,27 @@ describe("Interface OAuth verifier", () => {
     expect(await verify(validClaims, { workspaceId: "" })).toBe(false);
     expect(await verify(validClaims, { capsuleId: "" })).toBe(false);
     expect(await verify(validClaims, { status: 302 })).toBe(false);
+  });
+
+  test("rejects a non-origin issuer before UserInfo lookup", async () => {
+    let called = false;
+    expect(
+      await verifyInterfaceOAuthBearer(
+        new Request("https://git.example/git/acme/widgets.git/info/refs"),
+        TOKEN,
+        PERMISSION,
+        {
+          issuerUrl: "https://accounts.example/tenant",
+          expectedAudience: "https://git.example/git",
+          expectedWorkspaceId: "workspace_a",
+          expectedCapsuleId: "capsule_git",
+          fetchImpl: async () => {
+            called = true;
+            return Response.json(validClaims);
+          },
+        },
+      ),
+    ).toBe(false);
+    expect(called).toBe(false);
   });
 });

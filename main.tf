@@ -8,7 +8,7 @@ terraform {
     }
     http = {
       source  = "hashicorp/http"
-      version = "~> 3.5"
+      version = "= 3.6.0"
     }
     # Declared (pinned to the runner provider-mirror version) ONLY so an upgrade
     # from a pre-0.4 install can destroy the orphaned random_id.signing_key /
@@ -62,24 +62,24 @@ variable "public_subdomain" {
 }
 
 variable "public_url" {
-  description = "Canonical public URL for the git service. When empty, launch_url is derived from public_subdomain and cloudflare_workers_subdomain."
+  description = "Canonical HTTPS origin for the git service (an optional trailing slash is removed). When empty, launch_url is derived from public_subdomain and cloudflare_workers_subdomain."
   type        = string
   default     = ""
 
   validation {
-    condition     = trimspace(var.public_url) == "" || can(regex("^https://[^[:space:]]+$", var.public_url))
-    error_message = "public_url must be empty or an https URL."
+    condition     = trimspace(var.public_url) == "" || can(regex("^https://([A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?|\\[[0-9A-Fa-f:]+\\])(:[0-9]{1,5})?/?$", trimspace(var.public_url)))
+    error_message = "public_url must be empty or a bare HTTPS origin with no userinfo, path, query, or fragment."
   }
 }
 
 variable "takosumi_accounts_issuer_url" {
-  description = "Takosumi Accounts OIDC issuer used for browser sign-in and to validate opaque Interface OAuth bearer tokens."
+  description = "Bare HTTPS Takosumi Accounts issuer origin (an optional trailing slash is removed) used for browser sign-in and Interface OAuth UserInfo validation."
   type        = string
   default     = ""
 
   validation {
-    condition     = trimspace(var.takosumi_accounts_issuer_url) == "" || can(regex("^https://[^[:space:]]+$", trimspace(var.takosumi_accounts_issuer_url)))
-    error_message = "takosumi_accounts_issuer_url must be empty or an https URL."
+    condition     = trimspace(var.takosumi_accounts_issuer_url) == "" || can(regex("^https://([A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?|\\[[0-9A-Fa-f:]+\\])(:[0-9]{1,5})?/?$", trimspace(var.takosumi_accounts_issuer_url)))
+    error_message = "takosumi_accounts_issuer_url must be empty or a bare HTTPS origin with no userinfo, path, query, or fragment."
   }
 }
 
@@ -223,7 +223,9 @@ variable "worker_bundle_path" {
 variable "worker_release_tag" {
   description = "GitHub release tag whose takosumi-artifact.json selects the default Worker bundle and SHA-256. Set empty to use worker_bundle_path."
   type        = string
-  default     = "v0.4.1"
+  # Keep the last published artifact until the coordinated v0.5.0 lifecycle
+  # blockers are resolved and that exact release has passed public readback.
+  default = "v0.4.1"
 
   validation {
     condition     = trimspace(var.worker_release_tag) == "" || can(regex("^v[0-9]+\\.[0-9]+\\.[0-9]+([-+][0-9A-Za-z.-]+)?$", trimspace(var.worker_release_tag)))
@@ -316,8 +318,9 @@ locals {
   public_subdomain       = trimspace(var.public_subdomain) != "" ? trimspace(var.public_subdomain) : local.resource_prefix
   runtime_name           = local.public_subdomain
   workers_dev_url        = trimspace(var.cloudflare_workers_subdomain) != "" ? "https://${local.public_subdomain}.${trimspace(var.cloudflare_workers_subdomain)}.workers.dev" : null
-  launch_url             = trimspace(var.public_url) != "" ? trimspace(var.public_url) : local.workers_dev_url
-  accounts_issuer_url    = trimspace(var.takosumi_accounts_issuer_url)
+  public_origin          = trimsuffix(trimspace(var.public_url), "/")
+  launch_url             = local.public_origin != "" ? local.public_origin : local.workers_dev_url
+  accounts_issuer_url    = trimsuffix(trimspace(var.takosumi_accounts_issuer_url), "/")
   accounts_client_id     = trimspace(var.takosumi_accounts_client_id)
   accounts_client_secret = trimspace(var.takosumi_accounts_client_secret)
   app_session_secret     = trimspace(var.app_session_secret)
@@ -377,9 +380,8 @@ resource "cloudflare_r2_bucket" "objects" {
 
 # --- Metadata plane (gated by enable_metadata) -------------------------------
 # D1 is the relational metadata plane only; git objects and refs stay in R2 and
-# every git-derived table is rebuildable from R2. Migrations are applied out of
-# band with `wrangler d1 migrations apply <db>` reading the id from the module
-# output below — the same output-then-wrangler pattern used for the Worker bundle.
+# every git-derived table is rebuildable from R2. The released Worker embeds and
+# self-applies its forward-only schema through a schema_migrations ledger.
 resource "cloudflare_d1_database" "metadata" {
   count      = local.metadata_enabled ? 1 : 0
   account_id = var.cloudflare_account_id
@@ -411,10 +413,10 @@ resource "cloudflare_d1_database" "metadata" {
 #   image          = "<actions_runner_image>"
 #   max_instances  = <actions_runner_max_instances>
 #
-# This is the same output-then-wrangler pattern used for the D1 migrations and the
-# worker bundle. The DO namespace + the `new_sqlite_classes` migration for both DO
-# classes ARE declared on the worker script below, so only the image attachment is
-# deferred to wrangler. TODO(wrangler): apply the `[[containers]]` image binding.
+# D1 schema migrations self-apply inside the released Worker. The DO namespace +
+# the `new_sqlite_classes` migration for both DO classes ARE declared on the worker
+# script below, so only the container image attachment is deferred to wrangler.
+# TODO(wrangler): apply the `[[containers]]` image binding.
 resource "cloudflare_queue" "workflows" {
   count      = local.actions_enabled ? 1 : 0
   account_id = var.cloudflare_account_id
