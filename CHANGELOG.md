@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.5.1 — Capsule Source Options
+
+- Publish the optional provider-neutral deployment chooser for the existing
+  Cloudflare OpenTofu Capsule.
+
 ## v0.5.0 — plain Capsule and hardened Interface authorization
 
 - Removes the Takosumi-specific provider wrapper and repository manifest. The
