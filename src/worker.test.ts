@@ -5,6 +5,10 @@ import { MemoryBucket } from "./test-bucket.ts";
 import { seedRepo } from "./seed.ts";
 import { concatBytes } from "./git/sha1.ts";
 import { PKT_FLUSH, pktLineString } from "./git/pack-common.ts";
+import { putObject } from "./git/object-store.ts";
+import { readPack } from "./git/pack-reader.ts";
+import { readRepoRefsSnapshot, writeRepoRefs } from "./git/refs-store.ts";
+import { repositoryObjectStore } from "./git/repo-object-store.ts";
 import { createDbClient } from "./db/client.ts";
 import { createFakeD1 } from "./db/fake.ts";
 import { migrationSql } from "./db/migration-sql.ts";
@@ -230,6 +234,66 @@ describe("takos-git worker", () => {
     expect(head).toContain("PACK");
   });
 
+  test("upload-pack includes an annotated tag object and its peeled commit", async () => {
+    const { env, seeded } = await setup();
+    const objects = repositoryObjectStore(env.BUCKET, REPO);
+    const tagSha = await putObject(
+      objects,
+      "tag",
+      new TextEncoder().encode(
+        `object ${seeded.commitSha}\ntype commit\ntag v1.0.0\ntagger Takos Git <git@takos.test> 1700000000 +0000\n\nrelease\n`,
+      ),
+    );
+    const snapshot = await readRepoRefsSnapshot(env.BUCKET, REPO);
+    expect(snapshot).not.toBeNull();
+    expect(
+      await writeRepoRefs(
+        env.BUCKET,
+        REPO,
+        {
+          refs: [
+            ...snapshot!.doc.refs,
+            { name: "refs/tags/v1.0.0", sha: tagSha },
+          ],
+          defaultBranch: snapshot!.doc.defaultBranch,
+        },
+        snapshot!.etag,
+      ),
+    ).toBe(true);
+
+    const body = concatBytes(
+      pktLineString(`want ${tagSha}\n`),
+      PKT_FLUSH,
+      pktLineString("done\n"),
+    );
+    const response = await worker.fetch(
+      req("POST", `/git/${REPO}.git/git-upload-pack`, {
+        token: READ_TOKEN,
+        body,
+      }),
+      env,
+    );
+
+    expect(response.status).toBe(200);
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    const unpacked = await readPack(bytes.subarray(8)); // strip "0008NAK\n"
+    expect(unpacked.map((object) => object.sha)).toContain(tagSha);
+    expect(unpacked.map((object) => object.sha)).toContain(seeded.commitSha);
+  });
+
+  test("rejects an upload-pack request larger than 1 MiB", async () => {
+    const { env } = await setup();
+    const response = await worker.fetch(
+      req("POST", `/git/${REPO}.git/git-upload-pack`, {
+        token: READ_TOKEN,
+        body: new Uint8Array(1024 * 1024 + 1),
+      }),
+      env,
+    );
+    expect(response.status).toBe(413);
+    expect(await response.json()).toEqual({ error: "upload_pack_too_large" });
+  });
+
   test("rejects a want that is not an advertised tip (IDOR guard)", async () => {
     const { env } = await setup();
     const body = concatBytes(
@@ -329,6 +393,41 @@ describe("takos-git worker", () => {
     );
     expect(res.status).toBe(200);
     expect(await res.text()).toContain("pack: shorter than 12-byte header");
+  });
+
+  test("receive-pack rejects an annotated tag with a missing target", async () => {
+    const { env } = await setup();
+    const objects = repositoryObjectStore(env.BUCKET, REPO);
+    const tagSha = await putObject(
+      objects,
+      "tag",
+      new TextEncoder().encode(
+        `object ${"a".repeat(40)}\ntype commit\ntag broken\ntagger Takos Git <git@takos.test> 1700000000 +0000\n\nbroken\n`,
+      ),
+    );
+    const body = concatBytes(
+      pktLineString(
+        `${"0".repeat(40)} ${tagSha} refs/tags/broken\0report-status delete-refs ofs-delta atomic\n`,
+      ),
+      PKT_FLUSH,
+    );
+    const response = await worker.fetch(
+      req("POST", `/git/${REPO}.git/git-receive-pack`, {
+        token: WRITE_TOKEN,
+        body,
+      }),
+      env,
+    );
+    expect(response.status).toBe(200);
+    expect(await response.text()).toContain("reachable object is missing");
+
+    const refs = await worker.fetch(
+      req("GET", `/git/${REPO}.git/info/refs?service=git-upload-pack`, {
+        token: READ_TOKEN,
+      }),
+      env,
+    );
+    expect(await refs.text()).not.toContain("refs/tags/broken");
   });
 
   test("dispatches /api/v1/ping through the route registry", async () => {

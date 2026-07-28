@@ -109,6 +109,7 @@ function emitLabeled(
   payload: Record<string, unknown>,
 ): void {
   emitDomainEvent(
+    ctx.scope,
     buildEvent({
       type,
       repoId: access.repo.id,

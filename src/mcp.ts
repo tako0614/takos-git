@@ -17,7 +17,11 @@ import type { ObjectStoreBinding } from "./git/types.ts";
 import { createDbClient, type D1Binding, type DbClient } from "./db/index.ts";
 import { upsertPrincipal } from "./auth/acl.ts";
 import { ensureOwnerForNamespace } from "./features/repos/owners.ts";
-import { provisionRepo } from "./features/repos/repositories.ts";
+import {
+  deleteRepository,
+  getRepoRow,
+  provisionRepo,
+} from "./features/repos/repositories.ts";
 
 const MCP_PROTOCOL_VERSION = "2025-03-26";
 const MAX_MCP_BODY_BYTES = 1024 * 1024;
@@ -242,6 +246,7 @@ const TOOLS: readonly ToolDefinition[] = [
         const principal =
           auth.kind === "interface"
             ? await upsertPrincipal(db, {
+                issuer: env.OIDC_ISSUER_URL ?? "",
                 subject: auth.subject,
                 kind: "service_account",
                 bindingId: auth.bindingId,
@@ -301,12 +306,16 @@ const TOOLS: readonly ToolDefinition[] = [
     },
     async call(args, { env, db }) {
       const repo = requireRepo(args);
-      const deleted = await deleteRepo(env.BUCKET, repo);
-      // Remove the D1 metadata row too (cascades collaborators/issues/…). R2 is
-      // the authoritative existence signal, so a missing D1 row is not an error.
       if (db) {
-        await db.run(`DELETE FROM repositories WHERE storage_key = ?`, [repo]);
+        const [owner, name] = repo.split("/");
+        const row = await getRepoRow(db, owner as string, name as string);
+        if (!row) throw new Error("repository not found");
+        const deletion = await deleteRepository(env.BUCKET, db, row);
+        return { repo, deleted: true, ...deletion };
       }
+      // R2-only installs have no durable relational ledger/scheduler. Keep the
+      // legacy synchronous cleanup path rather than pretending it is queued.
+      const deleted = await deleteRepo(env.BUCKET, repo);
       if (!deleted) throw new Error("repository not found");
       return { repo, deleted: true };
     },

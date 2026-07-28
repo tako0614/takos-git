@@ -1,70 +1,47 @@
-# AGENTS.md — takos-git
+# AGENTS.md
 
-Standalone installable collaborative Git hosting Capsule. It provides standard
-Git Smart HTTP plus an app-owned browser/API collaboration surface. Sibling to
-takos-storage; **not** part of the Takos worker.
+> このファイルは `takos-control/engineering.policy.json` と `ecosystem.repos.json` から generator v1 で生成されています。手編集しないでください。
 
-## Boundaries
+## Repository
 
-- OSS installable Capsule listed by the Takosumi Store as discovery metadata
-  only. Plain OpenTofu module + prebuilt Worker.
-- **Distinct from** product-specific workspace filesystem services and
-  `storage.object` (the object store). Do not reuse those names.
-- Standard Git Smart HTTP clone/fetch/push. `git-upload-pack` requires
-  `source.git.smart_http.read` and `git-receive-pack` requires
-  `source.git.smart_http.write`; normal branch updates are fast-forward only.
-- Repository metadata, browser UI, code browsing, Issues, pull requests,
-  reviews, releases, webhooks, and checks belong here as they are implemented.
-  Takosumi owns installation/identity/Interface authorization, not Git product
-  state. Follow `docs/collaborative-hosting.md` for the migration order.
-- `/mcp` is the repository-lifecycle surface and publishes exactly
-  `git_repo_list/create/info/delete`. Clone, commit, fetch, and push remain
-  standard Git CLI operations rather than custom MCP tools.
-- Git Smart HTTP uses short-lived Accounts-backed Interface OAuth credentials
-  (`taksrv_`). Clone/fetch requires `source.git.smart_http.read`; push requires
-  `source.git.smart_http.write`. The Worker verifies audience, Workspace,
-  Capsule, Interface, Binding, and resolved revision through the configured
-  issuer. There is no app-local grant minting or signing key.
-- Browser sessions use Accounts authorization-code + PKCE and require exact
-  membership in `APP_WORKSPACE_ID`. The hosting read API also accepts a
-  short-lived `source.git.hosting.read` Interface OAuth credential with
-  `hosting_api_url` as its exact audience.
-- The R2 bucket (objects + per-repo refs) is provisioned by this module's own
-  `main.tf`, not by the takos deploy module.
-- The published MCP server accepts a `mcp.invoke` Interface OAuth credential.
-  An explicitly supplied `PUBLISHED_MCP_AUTH_TOKEN` is retained only as
-  ordinary direct/self-host standalone auth and is not an InterfaceBinding
-  credential. Empty configuration creates no static credential.
+- Scope: Standalone installable collaborative Git hosting Capsule and source collaboration API.
+- Repository kind: `product`
+- Direct sibling dependencies: なし
+- Repository gate: `bun run check`
+- Canonical docs: [README.md](README.md), [docs/collaborative-hosting.md](docs/collaborative-hosting.md), [docs/github-parity-build.md](docs/github-parity-build.md)
 
-## Engine
+## Ownership
 
-`src/git/` is lifted from `takos/src/worker/application/services/takos-git/local/`
-(object-store / pack / pack-common / object / tree-ops / sha1 / git-objects) and
-made self-contained: no `infra/db`, no drizzle, no accounts. Refs are a per-repo
-JSON blob (`refs-store.ts`); reachability walks objects straight from R2
-(`reachability.ts`). Receive-pack validates pack checksums, materializes deltas,
-verifies object closure and fast-forward branch updates, then replaces the
-per-repo refs document once. Keep this subset pure (R2 + Web Crypto only) so it
-typechecks without `@cloudflare/workers-types`.
+- Owns: Git Smart HTTP object and ref data plane / Repository and forge state plus browser, API, and MCP surfaces / Embedded self-hosted Actions execution design and runtime
+- Does not own: Takos chat, agent, or workspace shell / Takosumi install, Run, state, output, audit, or identity authority / The storage.object service
+- Hazards: Actions execution is not deployable until isolation and resource limits are complete. / Legacy Git code in Takos is migration debt, not shared ownership.
 
-The hosting layer (`browser-auth.ts`, `forge-api.ts`, and later metadata/UI
-modules) may compose the pure engine but must not move Takos shell, chat,
-Space/account tables, or Takosumi handler implementation into this repo.
+## Required workflow
 
-## Tasks
+- repo固有の挙動・契約・architectureは、このrepo自身のsourceとdocsを正本にします。共通工学ルールをこのrepoで再定義しません。
+- 通常変更はこのrepo内に閉じます。横断変更はtask ledgerに対象repoと順序を宣言し、unrelatedなdirty workを変更・stage・commitしません。
+- handoff前に `bun run check` を実行します。これはread-onlyで、`format-check`, `lint-or-static-analysis`, `type-or-compile`, `portable-tests`, `portable-build` を完全に検証し、未実装項目をskipしてはいけません。
+- このrepoにformat writerはありません。`bun run fmt` は存在せず、実行するとcoreutilsのfmt(1)が動いて何もせず成功します。formatを直すときはformatterを直接呼びます。
+- task ledgerが必要な条件: The change modifies more than one repository. / The work changes production or release behavior. / The work changes a persisted schema or migrates data. / The work changes security, identity, credentials, authorization, billing, or authority. / The work destructively changes data or repository history.
+- secret、credential、production記録、private keyをrepoへcommitしません。
 
-- `bun test` — unit + REAL Git CLI clone/push/reclone/non-fast-forward E2E
-  (`git-clone.test.ts` runs git against `Bun.serve`; skips if no git binary).
-- `bun run check` — `bunx tsc --noEmit`.
-- `bun run build:worker` — emit local `dist/worker.js` for self-host applies;
-  hosted installs should use `worker_bundle_url` + `worker_bundle_sha256` from a
-  Git release or CI artifact. Do not commit built output.
-- `tofu fmt` / `tofu validate`.
+## Deploy
 
-## Conventions
+- このrepoがproduction targetを持つなら、入口は `bun run deploy` 一つです。無ければ作ります。承認待ちの列も、登録する先もありません。entrypointは副作用なしの `--contract` で、自分に立つtriggerと各obligationの果たし方を宣言します。
+- 実行するかどうかはoperatorの判断です。task ledger、branch名、green checkのいずれもdeployを承認しません。逆に、どれも欠けているからといってdeployが禁止されるわけでもありません。
+- どのsurfaceも次のobligationを負います。
 
-- `outputs.tf` publishes ordinary module results only: canonical `launch_url`,
-  `api_url`, `hosting_api_url`, `mcp_url`, and provider-native runtime/bucket identifiers. Runtime
-  Interface declarations and credentials are Takosumi-side configuration, not
-  nested OpenTofu outputs. The direct MCP bearer remains sensitive state plus a
-  provider secret binding and must not be published as an output.
+  - **provenance**: The published bytes belong to one reviewed commit, are built from that worktree, and the commit and artifact digest are recorded. Whatever validates them must cover those bytes.
+  - **post-conditions**: After publishing, state how you know the thing works for a real user, and confirm it.
+  - **reversal**: State how to get back. If you cannot get back, say so and name the forward-repair plan instead.
+  - **failure-handling**: State what the entrypoint prints on failure and what it refuses to do. Raw diagnostics, no blind retry, and a clear split between failing before and after the target was touched.
+
+- 次のtriggerが立つと義務が増えます。判別できないものはirreversible扱いです。
+
+  - **irreversible** (The step leaves the previous artifact unable to serve again: a schema or data migration, a topology change, or anything that rewrites durable state.) → pre-mutation-proof, independent-review
+  - **authority** (The step moves money, identity, authentication, authorization, or the deploy mechanism itself.) → independent-review
+  - **published-identity** (Publication mints a version, digest, or tag that consumers pin.) → no-overwrite
+  - **asynchronous** (Publication completes through an external review or staged delivery the deploy does not control, such as an app store.) → halt
+
+- 果たし方は各surfaceが自分の言葉で決めます。中央は義務を決め、機構は決めません。宣言を弱められませんが、強める分には自由です。
+- 利用者/operatorが自分の環境へself-host deployすることは別authorityで、このruleの対象外です。

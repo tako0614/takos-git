@@ -129,7 +129,12 @@ async function setupRepo(opts?: { visibility?: "public" | "private"; bobWriter?:
   if (opts?.bobWriter) {
     const grant = await dispatch(
       reg,
-      jsonRequest("PUT", "/api/v1/repos/alice/web/collaborators/sub-bob", { role: "writer" }, "taksrv_alice_a"),
+      jsonRequest(
+        "PUT",
+        "/api/v1/repos/alice/web/collaborators/sub-bob",
+        { role: "writer", bindingId: "binding_sub-bob" },
+        "taksrv_alice_a",
+      ),
       handle.env,
     );
     expect(grant.status).toBe(200);
@@ -264,6 +269,36 @@ describe("pulls: authorization", () => {
 });
 
 describe("pulls: reviews + inline comments", () => {
+  test("the pull-request author cannot approve their own change", async () => {
+    const fx = await setupRepo();
+    await pushFeatureAhead(fx);
+    await dispatch(
+      fx.reg,
+      jsonRequest(
+        "POST",
+        "/api/v1/repos/alice/web/pulls",
+        { title: "PR", head: "feature", base: "main" },
+        "taksrv_alice_w",
+      ),
+      fx.handle.env,
+    );
+
+    const review = await dispatch(
+      fx.reg,
+      jsonRequest(
+        "POST",
+        "/api/v1/repos/alice/web/pulls/1/reviews",
+        { state: "approved" },
+        "taksrv_alice_w",
+      ),
+      fx.handle.env,
+    );
+    expect(review.status).toBe(422);
+    expect(
+      ((await review.json()) as { error: { code: string } }).error.code,
+    ).toBe("self_review");
+  });
+
   test("submit + list a review; reader may review", async () => {
     const fx = await setupRepo();
     await pushFeatureAhead(fx);
@@ -552,6 +587,178 @@ describe("pulls: branch protection at merge", () => {
       fx.handle.env,
     );
     expect(ok.status).toBe(200);
+  });
+
+  test("dismiss_stale_reviews requires approval of the current head", async () => {
+    const fx = await setupRepo();
+    const c1 = await pushFeatureAhead(fx);
+    const repoId = (await fx.handle.db.queryOne<{ id: string }>(
+      `SELECT id FROM repositories WHERE storage_key = 'alice/web'`,
+    ))!.id;
+    const now = fx.handle.db.now();
+    await fx.handle.db.run(
+      `INSERT INTO branch_protection_rules
+         (id, repo_id, pattern, required_reviews, dismiss_stale_reviews,
+          enforce_admins, created_at, updated_at)
+       VALUES (?, ?, 'main', 1, 1, 1, ?, ?)`,
+      [fx.handle.db.id(), repoId, now, now],
+    );
+    await dispatch(
+      fx.reg,
+      jsonRequest(
+        "POST",
+        "/api/v1/repos/alice/web/pulls",
+        { title: "PR", head: "feature", base: "main" },
+        "taksrv_alice_w",
+      ),
+      fx.handle.env,
+    );
+    await dispatch(
+      fx.reg,
+      jsonRequest(
+        "POST",
+        "/api/v1/repos/alice/web/pulls/1/reviews",
+        { state: "approved" },
+        "taksrv_carol_w",
+      ),
+      fx.handle.env,
+    );
+
+    const objects = repositoryObjectStore(
+      fx.handle.env.BUCKET as ObjectStoreBinding,
+      fx.repo,
+    );
+    const c2 = await addCommit(
+      objects,
+      c1,
+      [{ path: "later.txt", content: "later\n" }],
+      "later\n",
+    );
+    await setBranch(
+      fx.handle.env.BUCKET as ObjectStoreBinding,
+      fx.repo,
+      "feature",
+      c2,
+    );
+
+    const blocked = await dispatch(
+      fx.reg,
+      jsonRequest(
+        "POST",
+        "/api/v1/repos/alice/web/pulls/1/merge",
+        { merge_method: "merge" },
+        "taksrv_alice_w",
+      ),
+      fx.handle.env,
+    );
+    expect(blocked.status).toBe(403);
+    expect(
+      ((await blocked.json()) as { error: { code: string } }).error.code,
+    ).toBe("review_required");
+  });
+
+  test("require_code_owner accepts only an owner of every changed path", async () => {
+    const fx = await setupRepo();
+    const objects = repositoryObjectStore(
+      fx.handle.env.BUCKET as ObjectStoreBinding,
+      fx.repo,
+    );
+    const base = await addCommit(
+      objects,
+      fx.c0,
+      [
+        {
+          path: ".github/CODEOWNERS",
+          content: "*.ts @sub-carol\n",
+        },
+      ],
+      "owners\n",
+    );
+    await setBranch(
+      fx.handle.env.BUCKET as ObjectStoreBinding,
+      fx.repo,
+      "main",
+      base,
+    );
+    const head = await addCommit(
+      objects,
+      base,
+      [{ path: "src/app.ts", content: "export {};\n" }],
+      "code\n",
+    );
+    await setBranch(
+      fx.handle.env.BUCKET as ObjectStoreBinding,
+      fx.repo,
+      "feature",
+      head,
+    );
+    const repoId = (await fx.handle.db.queryOne<{ id: string }>(
+      `SELECT id FROM repositories WHERE storage_key = 'alice/web'`,
+    ))!.id;
+    const now = fx.handle.db.now();
+    await fx.handle.db.run(
+      `INSERT INTO branch_protection_rules
+         (id, repo_id, pattern, require_code_owner, enforce_admins,
+          created_at, updated_at)
+       VALUES (?, ?, 'main', 1, 1, ?, ?)`,
+      [fx.handle.db.id(), repoId, now, now],
+    );
+    await dispatch(
+      fx.reg,
+      jsonRequest(
+        "POST",
+        "/api/v1/repos/alice/web/pulls",
+        { title: "PR", head: "feature", base: "main" },
+        "taksrv_alice_w",
+      ),
+      fx.handle.env,
+    );
+    await dispatch(
+      fx.reg,
+      jsonRequest(
+        "POST",
+        "/api/v1/repos/alice/web/pulls/1/reviews",
+        { state: "approved" },
+        "taksrv_bob_w",
+      ),
+      fx.handle.env,
+    );
+    const blocked = await dispatch(
+      fx.reg,
+      jsonRequest(
+        "POST",
+        "/api/v1/repos/alice/web/pulls/1/merge",
+        { merge_method: "merge" },
+        "taksrv_alice_w",
+      ),
+      fx.handle.env,
+    );
+    expect(blocked.status).toBe(403);
+    expect(
+      ((await blocked.json()) as { error: { code: string } }).error.code,
+    ).toBe("code_owner_review_required");
+
+    await dispatch(
+      fx.reg,
+      jsonRequest(
+        "POST",
+        "/api/v1/repos/alice/web/pulls/1/reviews",
+        { state: "approved" },
+        "taksrv_carol_w",
+      ),
+      fx.handle.env,
+    );
+    const merged = await dispatch(
+      fx.reg,
+      jsonRequest(
+        "POST",
+        "/api/v1/repos/alice/web/pulls/1/merge",
+        { merge_method: "merge" },
+        "taksrv_alice_w",
+      ),
+      fx.handle.env,
+    );
+    expect(merged.status).toBe(200);
   });
 });
 

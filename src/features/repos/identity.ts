@@ -108,6 +108,7 @@ export async function resolveIdentity(
   const session = await readBrowserSession(request, env);
   if (session) {
     const principal = await upsertPrincipal(db, {
+      issuer: env.OIDC_ISSUER_URL ?? "",
       subject: session.subject,
       kind: "user",
       displayName: session.name,
@@ -154,6 +155,7 @@ export async function resolveIdentity(
       });
     }
     const principal = await upsertPrincipal(db, {
+      issuer: env.OIDC_ISSUER_URL ?? "",
       subject: credential.subject,
       kind: "service_account",
       bindingId: credential.interfaceBindingId,

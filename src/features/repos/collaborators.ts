@@ -52,6 +52,19 @@ function parseTeamMemberRole(value: unknown): "maintainer" | "member" {
   return value === "maintainer" ? "maintainer" : "member";
 }
 
+function parseBindingId(value: unknown): string | null | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > 512 ||
+    /[\x00-\x1f\x7f]/u.test(value)
+  ) {
+    return null;
+  }
+  return value;
+}
+
 // --- repo collaborators ----------------------------------------------------
 
 const listCollaborators: Route["handler"] = async (ctx) => {
@@ -92,8 +105,18 @@ const putCollaborator: Route["handler"] = async (ctx) => {
   if (!body) return errorResponse(400, "invalid_body", "Invalid request body.");
   const role = parseRepoRole(body.role);
   if (!role) return errorResponse(400, "invalid_role", "Invalid role.");
+  const bindingId = parseBindingId(body.bindingId);
+  if (bindingId === null) {
+    return errorResponse(400, "invalid_binding", "Invalid InterfaceBinding id.");
+  }
   const subject = ctx.params.principal;
-  const principal = await ensurePrincipalBySubject(ctx.db!, subject);
+  const issuer = ctx.env.OIDC_ISSUER_URL ?? "";
+  const principal = await ensurePrincipalBySubject(
+    ctx.db!,
+    issuer,
+    subject,
+    bindingId,
+  );
   const now = ctx.db!.now();
   await ctx.db!.run(
     `INSERT INTO repo_collaborators (repo_id, principal_id, role, created_at)
@@ -113,16 +136,14 @@ const deleteCollaborator: Route["handler"] = async (ctx) => {
     return errorResponse(403, "forbidden", "Owner role required.");
   }
   const subject = ctx.params.principal;
-  const principal = await ctx.db!.queryOne<{ id: string }>(
-    `SELECT id FROM principals WHERE subject = ? LIMIT 1`,
-    [subject],
+  await ctx.db!.run(
+    `DELETE FROM repo_collaborators
+      WHERE repo_id = ?
+        AND principal_id IN (
+          SELECT id FROM principals WHERE issuer = ? AND subject = ?
+        )`,
+    [access.repo.id, new URL(ctx.env.OIDC_ISSUER_URL ?? "").origin, subject],
   );
-  if (principal) {
-    await ctx.db!.run(
-      `DELETE FROM repo_collaborators WHERE repo_id = ? AND principal_id = ?`,
-      [access.repo.id, principal.id],
-    );
-  }
   return json({ removed: true });
 };
 
@@ -229,7 +250,16 @@ const putTeamMember: Route["handler"] = async (ctx) => {
   const body = await readJson(ctx.request);
   if (!body) return errorResponse(400, "invalid_body", "Invalid request body.");
   const role = parseTeamMemberRole(body.role);
-  const principal = await ensurePrincipalBySubject(ctx.db!, ctx.params.principal);
+  const bindingId = parseBindingId(body.bindingId);
+  if (bindingId === null) {
+    return errorResponse(400, "invalid_binding", "Invalid InterfaceBinding id.");
+  }
+  const principal = await ensurePrincipalBySubject(
+    ctx.db!,
+    ctx.env.OIDC_ISSUER_URL ?? "",
+    ctx.params.principal,
+    bindingId,
+  );
   const now = ctx.db!.now();
   await ctx.db!.run(
     `INSERT INTO team_members (team_id, principal_id, role, created_at)
@@ -245,16 +275,18 @@ const deleteTeamMember: Route["handler"] = async (ctx) => {
   if (admin instanceof Response) return admin;
   const team = await resolveTeam(ctx.db!, admin.ownerId, ctx.params.team);
   if (!team) return errorResponse(404, "not_found", "Team not found.");
-  const principal = await ctx.db!.queryOne<{ id: string }>(
-    `SELECT id FROM principals WHERE subject = ? LIMIT 1`,
-    [ctx.params.principal],
+  await ctx.db!.run(
+    `DELETE FROM team_members
+      WHERE team_id = ?
+        AND principal_id IN (
+          SELECT id FROM principals WHERE issuer = ? AND subject = ?
+        )`,
+    [
+      team.id,
+      new URL(ctx.env.OIDC_ISSUER_URL ?? "").origin,
+      ctx.params.principal,
+    ],
   );
-  if (principal) {
-    await ctx.db!.run(
-      `DELETE FROM team_members WHERE team_id = ? AND principal_id = ?`,
-      [team.id, principal.id],
-    );
-  }
   return json({ removed: true });
 };
 

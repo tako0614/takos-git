@@ -1,0 +1,32 @@
+{
+  "kind": "takos.release-artifact-lock@v1",
+  "app": "takos-git",
+  "releases": {
+    "v0.5.1": {
+      "artifact": {
+        "filename": "worker.js",
+        "url": "https://github.com/tako0614/takos-git/releases/download/v0.5.1/worker.js",
+        "sha256": "sha256:8ae7c8c017871c54675f0e6e03b358c73ff5949dc7f1bd29f37f2cfa84edd24b"
+      },
+      "manifest": {
+        "url": "https://github.com/tako0614/takos-git/releases/download/v0.5.1/takosumi-artifact.json",
+        "sha256": "sha256:0743a43eccc8f0c8a6de27596dd38eb972d8603cabfab15503fa0478426aef23"
+      },
+      "commit": "711d9c2cb835f37521b5ef2196de16decbec37c1",
+      "seededFrom": "read-only GET of the published GitHub Release assets on 2026-07-28; reconciled against manifest kind, app, releaseTag, artifact filename, artifact SHA-256, source commit, and both downloaded digests"
+    },
+    "v0.5.0": {
+      "artifact": {
+        "filename": "worker.js",
+        "url": "https://github.com/tako0614/takos-git/releases/download/v0.5.0/worker.js",
+        "sha256": "sha256:eb333ccb4a20022c341906284c707b6be3cb61bd10e5f6cd4af45b59f51f008d"
+      },
+      "manifest": {
+        "url": "https://github.com/tako0614/takos-git/releases/download/v0.5.0/takosumi-artifact.json",
+        "sha256": "sha256:d31b39380fba59c029c857fd66faaa15d1584d9cc137566ca916777662399fcd"
+      },
+      "commit": "b0495e49db2904fdcd3247f5500040e5807f04ed",
+      "seededFrom": "read-only GET of the published GitHub Release assets on 2026-07-28; reconciled against manifest kind, app, releaseTag, artifact filename, artifact SHA-256, source commit, and both downloaded digests"
+    }
+  }
+}

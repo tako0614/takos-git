@@ -1,9 +1,16 @@
-# Takos Git — production deploy runbook
+# Takos Git — self-host / operator deployment reference
 
-This is the operator runbook for deploying takos-git (the GitHub-parity forge +
-self-hosted Actions) to Cloudflare. **Secrets and the `tofu apply` are run in the
-operator environment, never committed** (see the ecosystem `CLAUDE.md`). The
-OpenTofu module creates nothing until the enable flags below are set.
+This reference is for an operator deploying takos-git (the collaborative forge
++ self-hosted Actions) into infrastructure that operator controls. It is not
+the Takos ecosystem's official artifact-publication or hosted-production
+deploy path. GitHub Actions in this repository neither deploys nor publishes.
+An ecosystem surface is deployed by this repository's own entrypoint, which does
+not exist yet; writing it is the next step. The shared rules live in
+`takos-control/engineering.policy.json` → `deploy`.
+
+**Secrets and the `tofu apply` are run in the operator environment, never
+committed.** The OpenTofu module creates nothing until the enable flags below
+are set.
 
 takos-git is an installable Capsule: normally Takosumi runs the `tofu apply` + the
 wrangler steps for you during install. This runbook documents the same sequence for
@@ -16,7 +23,7 @@ a direct/self-host deploy.
 | Worker script + bindings, R2 buckets, D1 database, Queue, DO namespaces | `tofu apply` (`main.tf`) | provider 5.19.1 — DO/queue configured inside `cloudflare_workers_script` |
 | D1 schema | released Worker self-migration | forward-only `schema_migrations` ledger; no separate wrangler migration step |
 | Actions runner **container image** attach | `wrangler` `[[containers]]` step reading the `actions_runner_container` output | provider 5.19.1 has **no** container attribute — this is the one part tofu can't express |
-| Worker code bundle (`dist/worker.js`) + SPA (`web/dist`) | CI/release artifact (`worker_bundle_url` + `worker_bundle_sha256`) | `dist/` is not committed |
+| Self-contained Worker (`dist/worker.js`) + embedded-SPA evidence (`dist/embedded-spa-assets.json`) | operator-selected local build or deploy-published immutable artifact (`worker_bundle_url` + `worker_bundle_sha256`) | `dist/` is not committed; candidate preparation hash-probes the Worker index/module assets |
 | Human identity + short-lived Interface credentials | Takosumi Accounts (OIDC) | issuer/client registered out of band |
 
 ## 0. Prerequisites
@@ -28,11 +35,19 @@ a direct/self-host deploy.
 - The install-target **Workspace id** (`APP_WORKSPACE_ID`) — only its members can sign in.
 - The install-target **Capsule id** (`APP_CAPSULE_ID`).
 - A random **`app_session_secret`** ≥ 32 chars (session cookie HMAC).
+- A random **`webhook_secret_key`** ≥ 32 chars — seals per-webhook secrets at rest and
+  signs every outbound delivery. Required whenever `enable_metadata=true`, including an
+  automation-only install with no browser sign-in; `app_session_secret` is accepted as
+  the fallback only when browser auth is fully configured. takos-git delivers **only**
+  HMAC-signed webhooks: without a usable key, deliveries are recorded `failed`
+  (`signing_unconfigured`) rather than sent unsigned.
 - Random **`actions_runner_secret`** (HMAC for the `/internal/actions/*` runner routes)
   and **`actions_secrets_key`** (AES key for workflow-secret encryption at rest) — only
   needed when `enable_actions=true`.
-- Built artifacts: `bun run build:worker` (→ `dist/worker.js`) and `bun run build:web`
-  (→ `web/dist`), published as a release/CI artifact with its SHA-256.
+- A reviewed Worker candidate. A self-host operator may run `bun run build`
+  locally; an official release must use a deploy-published immutable
+  candidate. Repository CI does not publish either form. A missing, empty, or
+  inconsistent SPA fails the Worker build.
 - The runner image built + pushed to a registry: `docker build containers/runner` (only
   when Actions execution is wanted).
 
@@ -52,11 +67,20 @@ tofu apply \
   -var takosumi_accounts_issuer_url=<issuer> \
   -var takosumi_accounts_client_id=<client-id> \
   -var app_session_secret=<32+ char secret> \
+  -var webhook_secret_key=<32+ char secret> \
+  -var worker_bundle_sha256=<worker.js.sha256 from the release> \
   -var 'env={APP_WORKSPACE_ID="<workspace-id>",APP_CAPSULE_ID="<capsule-id>"}' \
   -var takosumi_accounts_client_secret=<secret>
 ```
 
 Omit `takosumi_accounts_client_secret` for a public PKCE client.
+
+`worker_bundle_sha256` is **not optional on the default `worker_release_tag` path**.
+The release manifest is fetched over a mutable tag with no signature, so it selects
+the bundle URL but is never trusted for the digest — otherwise anyone who can
+re-point that tag ships a Worker holding the R2 objects bucket plus
+`APP_SESSION_SECRET` / `WEBHOOK_SECRET_KEY` / `ACTIONS_*`. Take the digest from the
+release's `worker.js.sha256` and pin it here.
 
 Add self-hosted Actions:
 
@@ -65,12 +89,33 @@ Add self-hosted Actions:
   -var actions_runner_secret=<hmac> \
   -var actions_secrets_key=<aes-key> \
   -var actions_runner_image=<registry/image:tag> \
-  -var actions_runner_max_instances=10
+  -var actions_runner_max_instances=10 \
+  -var actions_container_binding_applied=true
 ```
+
+> **Actions execution is not deployable yet.** `actions_container_binding_applied`
+> attests that the runner Container is really attached — both the `[[containers]]`
+> wrangler step (step 3) **and** a Worker bundle that ships the
+> `@cloudflare/containers` runtime. takos-git does not depend on that package today,
+> so `ActionsJobRunner` cannot load a container and every dispatched job fails
+> immediately. The precondition keeps that failure at plan time instead of turning
+> every CI run red. Leave `enable_actions=false` until the dependency lands.
+>
+> Runner **egress and CPU/memory are not enforced by takos-git.** `RunnerPolicy`
+> (`src/features/actions/runner/policy.ts`) only covers what this Worker enforces:
+> concurrency, job/step timeouts, and the log/artifact byte caps. The default-deny
+> egress and the CPU/memory ceiling in `RUNNER_CONTAINER_REQUIREMENTS` must be applied
+> by the container platform in the same out-of-band step; until then a `run:` step
+> reaches the network unrestricted.
 
 `enable_metadata=true` provisions the D1 database that the whole collaboration
 surface (ACL, issues, PRs, releases, …) needs. Without it the Worker still serves
 Git Smart-HTTP (scope-only) + MCP, but `/api/v1` returns 503 and the SPA has no data.
+
+The module also registers a one-minute scheduled trigger. It drains bounded
+batches of leased webhook deliveries and repository-deletion records; the same
+drains may run opportunistically on requests, and the leases make concurrent
+invocations safe.
 
 Read the outputs: `launch_url`, `api_url`, `hosting_api_url`, `mcp_url`,
 `metadata_database_id`, and (when Actions on) `actions_runner_container`.
@@ -97,14 +142,19 @@ max_instances  = 10                        # <actions_runner_max_instances>
 queue          = "<workflow queue name>"   # binds the run-tick queue → ActionsRunCoordinator
 ```
 
-Then `wrangler deploy` (or the operator's managed publish) so the container image and
-queue consumer attach to the already-provisioned DO namespaces + queue.
+For a direct/self-host install, keep the rendered configuration in the
+operator-owned apply process. For a hosted deploy, the configuration is input to
+this repository's deploy entrypoint. There is no credentialed workflow and no
+second raw Wrangler publication path.
 
-## 4. Set secrets on the Worker
+## 4. Worker secrets
 
-Push the non-tofu secrets as Worker secrets (never in `main.tf` state):
-`APP_SESSION_SECRET`, `OIDC_CLIENT_SECRET` (confidential), `ACTIONS_RUNNER_SECRET`,
-`ACTIONS_SECRETS_KEY`, and `PUBLISHED_MCP_AUTH_TOKEN` if a standalone MCP bearer is wanted.
+`APP_SESSION_SECRET`, `OIDC_CLIENT_SECRET`, `WEBHOOK_SECRET_KEY`,
+`ACTIONS_RUNNER_SECRET`, `ACTIONS_SECRETS_KEY` and `PUBLISHED_MCP_AUTH_TOKEN` are
+`secret_text` bindings the module itself writes from its sensitive variables, so supply
+them as `-var` values from the operator environment (`.secrets/<env>/`), never as literals
+in a committed `.tfvars`. Do **not** push them separately with `wrangler secret put`: the
+next apply replaces the script's binding set and would drop an out-of-band secret.
 
 ## 5. Smoke checklist
 

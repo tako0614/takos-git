@@ -35,7 +35,8 @@ const CollaboratorsSettingsView = lazy(() => import("./views/settings/index.tsx"
 const BranchesSettingsView = lazy(() => import("./views/settings/index.tsx").then((m) => ({ default: m.BranchesSettingsView })));
 const WebhooksSettingsView = lazy(() => import("./views/settings/index.tsx").then((m) => ({ default: m.WebhooksSettingsView })));
 
-initTheme();
+const disposeTheme = initTheme();
+if (import.meta.hot) import.meta.hot.dispose(disposeTheme);
 
 const root = document.getElementById("root");
 if (root) {

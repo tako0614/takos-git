@@ -93,7 +93,7 @@ describe("takos-git MCP", () => {
       .toBe(true);
   });
 
-  test("with the metadata plane, git_repo_create/delete write and remove the D1 row", async () => {
+  test("with the metadata plane, git_repo_delete quarantines the D1 generation", async () => {
     const fake = createFakeD1(migrationSql);
     const target: Env = {
       BUCKET: new MemoryBucket(),
@@ -108,10 +108,17 @@ describe("takos-git MCP", () => {
     expect(created?.storage_key).toBe("acme/widgets");
 
     await call(target, MCP_TOKEN, "git_repo_delete", { repo: "acme/widgets" });
-    const gone = await db.queryOne(
-      `SELECT storage_key FROM repositories WHERE storage_key = 'acme/widgets'`,
+    const deleting = await db.queryOne<{
+      storage_key: string;
+      lifecycle_state: string;
+    }>(
+      `SELECT storage_key, lifecycle_state
+       FROM repositories WHERE storage_key = 'acme/widgets'`,
     );
-    expect(gone).toBeNull();
+    expect(deleting).toEqual({
+      storage_key: "acme/widgets",
+      lifecycle_state: "deleting",
+    });
   });
 
   test("Interface OAuth accepts only the exact mcp.invoke audience and owner evidence", async () => {

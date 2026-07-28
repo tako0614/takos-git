@@ -17,6 +17,8 @@ import {
   upsertPrincipal,
 } from "./acl.ts";
 
+const ISSUER = "https://accounts.example";
+
 let db: DbClient;
 
 beforeEach(() => {
@@ -70,6 +72,7 @@ function interfaceCtx(principal: Principal, scope: string): AuthContext {
 describe("upsertPrincipal", () => {
   test("JIT-creates then updates a principal keyed on subject", async () => {
     const first = await upsertPrincipal(db, {
+      issuer: ISSUER,
       subject: "sub-a",
       kind: "user",
       displayName: "A",
@@ -78,6 +81,7 @@ describe("upsertPrincipal", () => {
     expect(first.kind).toBe("user");
 
     const second = await upsertPrincipal(db, {
+      issuer: ISSUER,
       subject: "sub-a",
       kind: "user",
       displayName: "A renamed",
@@ -104,13 +108,21 @@ describe("effectiveRole", () => {
     const ownerId = await seedOwner("acme", "org", null);
     await seedRepo(ownerId, "acme", "internal", "internal");
     const repo = (await resolveRepoRow(db, "acme", "internal"))!;
-    const member = await upsertPrincipal(db, { subject: "sub-m", kind: "user" });
+    const member = await upsertPrincipal(db, {
+      issuer: ISSUER,
+      subject: "sub-m",
+      kind: "user",
+    });
     expect(await effectiveRole(db, member, repo)).toBe("reader");
     expect(await effectiveRole(db, anonymousContext().principal, repo)).toBeNull();
   });
 
   test("user-owner principal is owner of its repo", async () => {
-    const alice = await upsertPrincipal(db, { subject: "sub-alice", kind: "user" });
+    const alice = await upsertPrincipal(db, {
+      issuer: ISSUER,
+      subject: "sub-alice",
+      kind: "user",
+    });
     const ownerId = await seedOwner("alice", "user", alice.id);
     await seedRepo(ownerId, "alice", "web", "private");
     const repo = (await resolveRepoRow(db, "alice", "web"))!;
@@ -121,7 +133,11 @@ describe("effectiveRole", () => {
     const ownerId = await seedOwner("acme", "org", null);
     const repoId = await seedRepo(ownerId, "acme", "web", "private");
     const repo = (await resolveRepoRow(db, "acme", "web"))!;
-    const bob = await upsertPrincipal(db, { subject: "sub-bob", kind: "user" });
+    const bob = await upsertPrincipal(db, {
+      issuer: ISSUER,
+      subject: "sub-bob",
+      kind: "user",
+    });
 
     // direct collaborator: reader
     await db.run(
@@ -151,8 +167,16 @@ describe("effectiveRole", () => {
     const ownerId = await seedOwner("acme", "org", null);
     await seedRepo(ownerId, "acme", "web", "private");
     const repo = (await resolveRepoRow(db, "acme", "web"))!;
-    const admin = await upsertPrincipal(db, { subject: "sub-admin", kind: "user" });
-    const member = await upsertPrincipal(db, { subject: "sub-mem", kind: "user" });
+    const admin = await upsertPrincipal(db, {
+      issuer: ISSUER,
+      subject: "sub-admin",
+      kind: "user",
+    });
+    const member = await upsertPrincipal(db, {
+      issuer: ISSUER,
+      subject: "sub-mem",
+      kind: "user",
+    });
     await db.run(
       `INSERT INTO org_memberships (owner_id, principal_id, role, created_at) VALUES (?, ?, 'admin', ?)`,
       [ownerId, admin.id, db.now()],
@@ -181,7 +205,11 @@ describe("authorizeRepo (fail-closed)", () => {
   test("private repo, no access → 404 (non-disclosure)", async () => {
     const ownerId = await seedOwner("acme", "org", null);
     await seedRepo(ownerId, "acme", "secret", "private");
-    const stranger = await upsertPrincipal(db, { subject: "sub-x", kind: "user" });
+    const stranger = await upsertPrincipal(db, {
+      issuer: ISSUER,
+      subject: "sub-x",
+      kind: "user",
+    });
     const decision = await authorizeRepo(
       db,
       browserCtx(stranger),
@@ -215,7 +243,12 @@ describe("authorizeRepo (fail-closed)", () => {
   });
 
   test("interface channel is capped by its scope ceiling", async () => {
-    const alice = await upsertPrincipal(db, { subject: "sub-alice", kind: "service_account" });
+    const alice = await upsertPrincipal(db, {
+      issuer: ISSUER,
+      subject: "sub-alice",
+      kind: "service_account",
+      bindingId: "binding-alice",
+    });
     const ownerId = await seedOwner("alice", "user", alice.id);
     await seedRepo(ownerId, "alice", "web", "private");
 

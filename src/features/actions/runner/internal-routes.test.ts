@@ -137,4 +137,54 @@ describe("internal actions routes — trust boundary", () => {
     const res = await dispatch(ctx, req("POST", url, token, new Uint8Array([1])));
     expect(res?.status).toBe(403);
   });
+
+  test("a tombstoned repository fences checkout, log, and artifact callbacks", async () => {
+    const ctx = await setup();
+    const token = await mintRunnerToken(
+      SECRET,
+      { runId: ctx.runId, jobId: ctx.jobId },
+      Date.now(),
+    );
+    await ctx.handle.db.run(
+      `UPDATE repositories SET lifecycle_state = 'deleting' WHERE id = ?`,
+      [ctx.seeded.repoId],
+    );
+
+    const checkout = await dispatch(
+      ctx,
+      req(
+        "GET",
+        `/internal/actions/checkout?runId=${ctx.runId}`,
+        token,
+      ),
+    );
+    expect(checkout?.status).toBe(404);
+
+    const logs = await dispatch(
+      ctx,
+      req(
+        "POST",
+        "/internal/actions/logs",
+        token,
+        JSON.stringify({
+          runId: ctx.runId,
+          jobId: ctx.jobId,
+          chunk: "must not persist",
+        }),
+      ),
+    );
+    expect(logs?.status).toBe(404);
+
+    const artifact = await dispatch(
+      ctx,
+      req(
+        "POST",
+        `/internal/actions/artifacts?runId=${ctx.runId}&jobId=${ctx.jobId}&name=late.zip`,
+        token,
+        new Uint8Array([1]),
+      ),
+    );
+    expect(artifact?.status).toBe(404);
+    expect(ctx.actions.store.size).toBe(0);
+  });
 });

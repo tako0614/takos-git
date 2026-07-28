@@ -104,5 +104,7 @@ set `innerHTML`).
   `/mcp` `/healthz` to `http://localhost:8787` (`wrangler dev`). Override with
   `TAKOS_GIT_WORKER_URL`.
 - `bun run build:web` — emits hashed assets to `web/dist/` (served by the worker
-  `ASSETS` binding, worker-first, SPA fallback).
+  as embedded, worker-first assets with SPA fallback). Run root `bun run build`
+  for a deployable artifact; the Worker phase verifies the index and module
+  asset hashes.
 - `bun run check:web` — `tsc --noEmit` for the web project.

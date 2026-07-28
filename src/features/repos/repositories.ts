@@ -21,6 +21,12 @@ import {
   deleteRepo,
   readRepoRefs,
 } from "../../git/refs-store.ts";
+import {
+  cleanupQuarantinedRepository,
+  quarantineRepository,
+  removeRepositoryQuarantineMarker,
+  repositoryQuarantineKey,
+} from "../../git/repository-deletion.ts";
 import type { ObjectStoreBinding } from "../../git/types.ts";
 import type { OwnerRow } from "./owners.ts";
 
@@ -39,6 +45,8 @@ export interface RepoRow {
   readonly isArchived: boolean;
   readonly isTemplate: boolean;
   readonly pushedAt: number | null;
+  readonly generation: string;
+  readonly lifecycleState: "active" | "deleting";
   readonly createdAt: number;
   readonly updatedAt: number;
 }
@@ -60,6 +68,8 @@ interface RawRepoFullRow {
   is_archived: number;
   is_template: number;
   pushed_at: number | null;
+  generation: string;
+  lifecycle_state: string;
   created_at: number;
   updated_at: number;
 }
@@ -67,6 +77,7 @@ interface RawRepoFullRow {
 const REPO_SELECT = `
   SELECT r.id, r.owner_id, r.name, r.storage_key, r.description, r.visibility,
          r.default_branch, r.fork_of_id, r.is_archived, r.is_template, r.pushed_at,
+         r.generation, r.lifecycle_state,
          r.created_at, r.updated_at,
          o.login AS owner_login, o.type AS owner_type, o.principal_id AS owner_principal_id,
          po.login AS fork_owner_login, pr.name AS fork_name
@@ -102,6 +113,8 @@ function toRepoRow(row: RawRepoFullRow): RepoRow {
     isArchived: row.is_archived !== 0,
     isTemplate: row.is_template !== 0,
     pushedAt: row.pushed_at,
+    generation: row.generation,
+    lifecycleState: row.lifecycle_state === "deleting" ? "deleting" : "active",
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -140,7 +153,8 @@ export async function getRepoRow(
   name: string,
 ): Promise<RepoRow | null> {
   const row = await db.queryOne<RawRepoFullRow>(
-    `${REPO_SELECT} WHERE o.login = ? COLLATE NOCASE AND r.name = ? COLLATE NOCASE LIMIT 1`,
+    `${REPO_SELECT} WHERE o.login = ? COLLATE NOCASE AND r.name = ? COLLATE NOCASE
+      AND r.lifecycle_state = 'active' LIMIT 1`,
     [owner, name],
   );
   return row ? toRepoRow(row) : null;
@@ -149,9 +163,11 @@ export async function getRepoRow(
 async function getRepoRowById(
   db: DbClient,
   id: string,
+  includeDeleting = false,
 ): Promise<RepoRow | null> {
   const row = await db.queryOne<RawRepoFullRow>(
-    `${REPO_SELECT} WHERE r.id = ? LIMIT 1`,
+    `${REPO_SELECT} WHERE r.id = ?
+      ${includeDeleting ? "" : "AND r.lifecycle_state = 'active'"} LIMIT 1`,
     [id],
   );
   return row ? toRepoRow(row) : null;
@@ -192,17 +208,21 @@ export async function provisionRepo(
   );
   if (dup) return { ok: false, code: "repo_exists" };
 
+  const now = db.now();
+  const id = db.id();
+  const generation = id;
+
   // --- ATOMIC create-if-absent on R2 (the ref-state boundary) ---
   const createdR2 = await createRepo(bucket, storageKey);
   if (!createdR2) return { ok: false, code: "repo_exists" };
 
-  const now = db.now();
-  const id = db.id();
   try {
     await db.run(
       `INSERT INTO repositories
-         (id, owner_id, name, storage_key, description, visibility, default_branch, fork_of_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (id, owner_id, name, storage_key, description, visibility,
+          default_branch, fork_of_id, generation, lifecycle_state,
+          created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)`,
       [
         id,
         owner.id,
@@ -212,6 +232,7 @@ export async function provisionRepo(
         input.visibility ?? "private",
         input.defaultBranch ?? "main",
         input.forkOfId ?? null,
+        generation,
         now,
         now,
       ],
@@ -267,17 +288,280 @@ export async function updateRepo(
   return getRepoRowById(db, repoId);
 }
 
+const REPOSITORY_QUARANTINE_MS = 10 * 60_000;
+const MAX_DELETION_BATCH = 20;
+const MAX_DELETION_ERROR_LENGTH = 512;
+
+export interface RepositoryDeletionReceipt {
+  readonly generation: string;
+  readonly cleanupPending: true;
+}
+
+interface RepositoryDeletionRow {
+  readonly generation: string;
+  readonly repo_id: string;
+  readonly storage_key: string;
+  readonly quarantine_key: string;
+  readonly status: string;
+  readonly not_before: number;
+}
+
+const REPOSITORY_AUXILIARY_DELETE_PAGE = 100;
+
+async function deleteObjectPrefix(
+  bucket: ObjectStoreBinding,
+  prefix: string,
+): Promise<number> {
+  let deleted = 0;
+  for (;;) {
+    const page = await bucket.list({
+      prefix,
+      limit: REPOSITORY_AUXILIARY_DELETE_PAGE,
+    });
+    if (page.objects.length === 0) return deleted;
+    await bucket.delete(page.objects.map((object) => object.key));
+    deleted += page.objects.length;
+  }
+}
+
 /**
- * Delete a repo: remove R2 objects/refs first (so it drops out of the R2 repo
- * listing), then the D1 row (cascading collaborators, teams, issues, …).
+ * Remove legacy outbox payloads whose old key layout did not include repo id.
+ * Each successful R2 batch clears its D1 pointers before the next batch, so a
+ * retry cannot loop over already-deleted bytes.
+ */
+async function deleteLegacyWebhookPayloads(
+  db: DbClient,
+  bucket: ObjectStoreBinding,
+  repoId: string,
+): Promise<number> {
+  let deleted = 0;
+  for (;;) {
+    const rows = await db.query<{ id: string; payload_r2_key: string }>(
+      `SELECT wd.id, wd.payload_r2_key
+         FROM webhook_deliveries wd
+         JOIN webhooks w ON w.id = wd.webhook_id
+        WHERE w.repo_id = ? AND wd.payload_r2_key IS NOT NULL
+        LIMIT ?`,
+      [repoId, REPOSITORY_AUXILIARY_DELETE_PAGE],
+    );
+    if (rows.length === 0) return deleted;
+    await bucket.delete([
+      ...new Set(rows.map((row) => row.payload_r2_key)),
+    ]);
+    await db.batch(
+      rows.map((row) => ({
+        sql: `UPDATE webhook_deliveries
+              SET payload_r2_key = NULL, payload_sha256 = NULL, updated_at = ?
+              WHERE id = ?`,
+        params: [db.now(), row.id],
+      })),
+    );
+    deleted += rows.length;
+  }
+}
+
+/**
+ * Logically delete a repository without racing a recreate.
+ *
+ * D1 first reserves the namespace in `deleting`; the R2 refs CAS then fences
+ * in-flight writers and leaves a generation-specific quarantine marker.
+ * Physical bytes and relational metadata are removed by the bounded cleanup
+ * queue after the drain window.
  */
 export async function deleteRepository(
   bucket: ObjectStoreBinding,
   db: DbClient,
   repo: RepoRow,
-): Promise<void> {
-  await deleteRepo(bucket, repo.storageKey).catch(() => undefined);
-  await db.run(`DELETE FROM repositories WHERE id = ?`, [repo.id]);
+): Promise<RepositoryDeletionReceipt> {
+  const now = db.now();
+  const quarantineKey = repositoryQuarantineKey(repo.generation);
+  await db.batch([
+    {
+      sql: `UPDATE repositories
+            SET lifecycle_state = 'deleting', updated_at = ?
+            WHERE id = ? AND generation = ? AND lifecycle_state = 'active'`,
+      params: [now, repo.id, repo.generation],
+    },
+    {
+      sql: `INSERT OR IGNORE INTO repository_deletions
+              (generation, repo_id, storage_key, quarantine_key, status,
+               not_before, created_at, updated_at)
+            VALUES (?, ?, ?, ?, 'queued', ?, ?, ?)`,
+      params: [
+        repo.generation,
+        repo.id,
+        repo.storageKey,
+        quarantineKey,
+        now + REPOSITORY_QUARANTINE_MS,
+        now,
+        now,
+      ],
+    },
+  ]);
+  try {
+    await quarantineRepository(
+      bucket,
+      repo.storageKey,
+      repo.generation,
+      now,
+    );
+    await db.run(
+      `UPDATE repository_deletions
+       SET status = 'quarantined', last_error = NULL, updated_at = ?
+       WHERE generation = ?`,
+      [db.now(), repo.generation],
+    );
+  } catch (error) {
+    await db.run(
+      `UPDATE repository_deletions
+       SET status = 'failed', last_error = ?, updated_at = ?
+       WHERE generation = ?`,
+      [
+        error instanceof Error
+          ? error.message.slice(0, MAX_DELETION_ERROR_LENGTH)
+          : "repository quarantine failed",
+        db.now(),
+        repo.generation,
+      ],
+    );
+    throw error;
+  }
+  return { generation: repo.generation, cleanupPending: true };
+}
+
+/**
+ * Retry tombstones immediately and physically clean only generations whose
+ * quarantine window elapsed. Completed ledger rows remain as audit evidence.
+ */
+export async function processRepositoryDeletionQueue(
+  db: DbClient,
+  bucket: ObjectStoreBinding,
+  options: {
+    readonly now?: number;
+    readonly limit?: number;
+    readonly actionsBucket?: ObjectStoreBinding;
+  } = {},
+): Promise<{ cleaned: number; failed: number }> {
+  const now = options.now ?? db.now();
+  const limit = Math.max(
+    1,
+    Math.min(options.limit ?? MAX_DELETION_BATCH, MAX_DELETION_BATCH),
+  );
+  const rows = await db.query<RepositoryDeletionRow>(
+    `SELECT generation, repo_id, storage_key, quarantine_key, status, not_before
+     FROM repository_deletions
+     WHERE status IN ('queued', 'failed')
+        OR (status IN ('quarantined', 'cleaning') AND not_before <= ?)
+     ORDER BY created_at ASC
+     LIMIT ?`,
+    [now, limit],
+  );
+  let cleaned = 0;
+  let failed = 0;
+  for (const row of rows) {
+    try {
+      const repo = await getRepoRowById(db, row.repo_id, true);
+      if (!repo) {
+        await db.run(
+          `UPDATE repository_deletions
+           SET status = 'completed', last_error = NULL,
+               completed_at = COALESCE(completed_at, ?), updated_at = ?
+           WHERE generation = ?`,
+          [now, now, row.generation],
+        );
+        continue;
+      }
+      if (
+        repo.generation !== row.generation ||
+        repo.storageKey !== row.storage_key ||
+        repo.lifecycleState !== "deleting"
+      ) {
+        throw new Error("repository deletion generation fence mismatch");
+      }
+      await quarantineRepository(
+        bucket,
+        row.storage_key,
+        row.generation,
+        now,
+      );
+      await db.run(
+        `UPDATE repository_deletions
+         SET status = 'quarantined', last_error = NULL, updated_at = ?
+         WHERE generation = ?`,
+        [db.now(), row.generation],
+      );
+      if (now < row.not_before) continue;
+
+      await db.run(
+        `UPDATE repository_deletions SET status = 'cleaning', updated_at = ?
+         WHERE generation = ?`,
+        [db.now(), row.generation],
+      );
+      await cleanupQuarantinedRepository(
+        bucket,
+        row.storage_key,
+        row.generation,
+      );
+      await Promise.all([
+        deleteObjectPrefix(
+          bucket,
+          `release-assets/${row.storage_key}/`,
+        ),
+        deleteObjectPrefix(
+          bucket,
+          `webhooks/v1/repos/${row.repo_id}/`,
+        ),
+        deleteLegacyWebhookPayloads(db, bucket, row.repo_id),
+        ...(options.actionsBucket
+          ? [
+              deleteObjectPrefix(
+                options.actionsBucket,
+                `logs/${row.repo_id}/`,
+              ),
+              deleteObjectPrefix(
+                options.actionsBucket,
+                `artifacts/${row.repo_id}/`,
+              ),
+            ]
+          : []),
+      ]);
+      await db.batch([
+        {
+          sql: `DELETE FROM repositories
+                WHERE id = ? AND generation = ? AND lifecycle_state = 'deleting'`,
+          params: [row.repo_id, row.generation],
+        },
+        {
+          sql: `UPDATE repository_deletions
+                SET status = 'completed', last_error = NULL,
+                    completed_at = ?, updated_at = ?
+                WHERE generation = ?`,
+          params: [now, now, row.generation],
+        },
+      ]);
+      const remaining = await getRepoRowById(db, row.repo_id, true);
+      if (remaining) {
+        throw new Error("repository row survived generation-fenced cleanup");
+      }
+      await removeRepositoryQuarantineMarker(bucket, row.generation);
+      cleaned += 1;
+    } catch (error) {
+      failed += 1;
+      await db.run(
+        `UPDATE repository_deletions
+         SET status = 'failed', last_error = ?, updated_at = ?
+         WHERE generation = ?`,
+        [
+          error instanceof Error
+            ? error.message.slice(0, MAX_DELETION_ERROR_LENGTH)
+            : "repository cleanup failed",
+          db.now(),
+          row.generation,
+        ],
+      );
+    }
+  }
+  return { cleaned, failed };
 }
 
 /** R2-derived branch/tag counts for the repo detail view. */
@@ -322,7 +606,8 @@ export async function listReadableRepos(
 
   while (visible.length < options.limit && scanned < MAX_LIST_SCAN) {
     const rows = await db.query<RawRepoFullRow>(
-      `${REPO_SELECT} ORDER BY r.updated_at DESC, r.id DESC LIMIT ? OFFSET ?`,
+      `${REPO_SELECT} WHERE r.lifecycle_state = 'active'
+       ORDER BY r.updated_at DESC, r.id DESC LIMIT ? OFFSET ?`,
       [batch, offset],
     );
     if (rows.length === 0) break;

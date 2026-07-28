@@ -1,0 +1,7 @@
+# The worker suite (`bun test`) covers src/ only. web/ is a Solid SPA: Bun's
+# default export conditions resolve solid-js to its SERVER build, where
+# createEffect is a no-op and every reactivity assertion silently passes. SPA
+# tests therefore run from web/ with the browser condition — `bun run test:web`,
+# which `bun run test` chains — instead of being mocked into meaninglessness here.
+[test]
+pathIgnorePatterns = ["**/web/**"]

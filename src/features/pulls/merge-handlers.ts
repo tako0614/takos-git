@@ -51,6 +51,14 @@ async function handleMerge(ctx: RouteContext, prctx: PrHandlerCtx): Promise<Resp
     gitState.headSha,
     access.role,
     gitState.behindBy,
+    {
+      bucket: ctx.env.BUCKET,
+      repoKey: repo,
+      baseSha: gitState.baseSha,
+      mergeBaseSha: gitState.mergeBaseSha,
+      authorId: pr.authorId,
+      actorId: access.auth.principal.id,
+    },
   );
   if (!protection.ok) {
     return errorResponse(403, protection.code, protection.message, protection.details);
@@ -136,6 +144,14 @@ async function handleResolve(ctx: RouteContext, prctx: PrHandlerCtx): Promise<Re
     gitState.headSha,
     access.role,
     gitState.behindBy,
+    {
+      bucket: ctx.env.BUCKET,
+      repoKey: repo,
+      baseSha: gitState.baseSha,
+      mergeBaseSha: gitState.mergeBaseSha,
+      authorId: pr.authorId,
+      actorId: access.auth.principal.id,
+    },
   );
   if (!protection.ok) {
     return errorResponse(403, protection.code, protection.message, protection.details);

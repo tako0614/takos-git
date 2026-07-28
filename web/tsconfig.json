@@ -14,5 +14,8 @@
     "isolatedModules": true,
     "verbatimModuleSyntax": false
   },
-  "include": ["src", "vite.config.ts"]
+  "include": ["src", "vite.config.ts"],
+  // Tests run under Bun (`bun run test:web`), which supplies its own `bun:test`
+  // types; matches the worker tsconfig, which also excludes *.test.ts.
+  "exclude": ["**/*.test.ts"]
 }

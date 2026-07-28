@@ -72,7 +72,12 @@ export async function setupRepo(
   for (const [subject, role] of Object.entries(grants)) {
     await dispatch(
       reg,
-      jsonRequest("PUT", `/api/v1/repos/alice/web/collaborators/${subject}`, { role }, "taksrv_alice_a"),
+      jsonRequest(
+        "PUT",
+        `/api/v1/repos/alice/web/collaborators/${subject}`,
+        { role, bindingId: `binding_${subject}` },
+        "taksrv_alice_a",
+      ),
       env,
     );
   }

@@ -2,18 +2,14 @@
  * Idempotent, self-applied D1 schema migration.
  *
  * The install ships a single self-contained Worker with no separate
- * `wrangler d1 migrations apply` step, so the Worker applies its own baseline
- * schema (migration 0001) the first time it sees a configured D1 binding, guarded
- * by the `schema_migrations` ledger. The DDL is fully `IF NOT EXISTS`, so a
- * partial prior apply (e.g. a crash before the ledger row was written) re-applies
- * safely. Applied once per isolate (cached promise); a failure clears the cache so
- * the next request retries.
+ * `wrangler d1 migrations apply` step, so the Worker applies ordered migrations
+ * on first use, guarded by the `schema_migrations` ledger. Each migration and
+ * ledger write run in one D1 batch, so an ALTER cannot be left half-applied and
+ * unrecorded. A failure clears the cache so the next request retries.
  */
 
 import { createDbClient, type D1Database } from "./client.ts";
-import { migrationSql } from "./migration-sql.ts";
-
-const SCHEMA_VERSION = "0001";
+import { migrations } from "./migration-sql.ts";
 
 let pending: Promise<void> | null = null;
 
@@ -39,32 +35,54 @@ function statements(sql: string): string[] {
 async function apply(binding: D1Database): Promise<void> {
   const db = createDbClient(binding);
 
-  // Fast path: already applied. The SELECT throws if schema_migrations doesn't
-  // exist yet (first ever run) — treat that as "not applied" and fall through.
-  try {
-    const row = await db.queryOne<{ version: string }>(
-      `SELECT version FROM schema_migrations WHERE version = ? LIMIT 1`,
-      [SCHEMA_VERSION],
-    );
-    if (row) return;
-  } catch {
-    /* schema_migrations absent → apply below */
-  }
+  for (const migration of migrations) {
+    // On a fresh database the first lookup throws because the ledger itself is
+    // part of 0001. Existing databases simply skip versions already recorded.
+    let applied = false;
+    try {
+      const row = await db.queryOne<{ version: string }>(
+        `SELECT version FROM schema_migrations WHERE version = ? LIMIT 1`,
+        [migration.version],
+      );
+      applied = row !== null;
+    } catch {
+      applied = false;
+    }
+    if (applied) continue;
 
-  for (const statement of statements(migrationSql)) {
-    await db.run(statement);
+    // D1 batch is transactional. DDL and its ledger entry commit together, so a
+    // crash cannot leave an ALTER half-applied and unrecorded.
+    try {
+      await db.batch([
+        ...statements(migration.sql).map((sql) => ({ sql })),
+        {
+          sql: `INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)`,
+          params: [migration.version, db.now()],
+        },
+      ]);
+    } catch (error) {
+      // Separate isolates can both observe a missing version. D1 serializes the
+      // batches; the loser may see duplicate-column/index errors after the
+      // winner committed. A lost response has the same shape. Accept only a
+      // ledger row now visible from D1—otherwise preserve the real failure.
+      let wonElsewhere = false;
+      try {
+        const row = await db.queryOne<{ version: string }>(
+          `SELECT version FROM schema_migrations WHERE version = ? LIMIT 1`,
+          [migration.version],
+        );
+        wonElsewhere = row !== null;
+      } catch {
+        wonElsewhere = false;
+      }
+      if (!wonElsewhere) throw error;
+    }
   }
-  await db.run(
-    `INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)`,
-    [SCHEMA_VERSION, db.now()],
-  );
 }
 
 /**
- * Ensure the D1 baseline schema is applied. Cached per isolate: the first call
- * applies (idempotently), later calls await the resolved promise (~free). Safe
- * under concurrent first-requests — the DDL is IF NOT EXISTS and the ledger insert
- * is INSERT OR IGNORE.
+ * Ensure every D1 migration is applied. Cached per isolate: the first call
+ * applies missing versions, later calls await the resolved promise (~free).
  */
 export function ensureSchema(binding: D1Database): Promise<void> {
   if (!pending) {

@@ -7,7 +7,16 @@
  * or a queue) at worker startup via {@link setDomainEventSink}. Until a sink is
  * registered, emission is a no-op, so the issues feature is fully testable and
  * shippable in isolation.
+ *
+ * Delivery lifecycle: {@link emitDomainEvent} takes a {@link BackgroundScope} as
+ * its first argument. It has no way to start unowned work, so the sink's promise
+ * is always either handed to `waitUntil` or awaited before the Response — the
+ * bug this signature replaced was a bare `void Promise.resolve(sink(event))`
+ * from a worker that never accepted an `ExecutionContext`, which meant every
+ * issue webhook was cancelled the moment the handler answered.
  */
+
+import type { BackgroundScope } from "../../lifecycle.ts";
 
 export type IssueEventType =
   | "issue.opened"
@@ -44,6 +53,11 @@ export interface DomainEvent {
 
 export type DomainEventSink = (event: DomainEvent) => void | Promise<void>;
 
+/** Log label a fired event is attributed to when its sink fails. */
+function eventLabel(event: DomainEvent): string {
+  return `issue-event ${event.type} ${event.owner}/${event.repo}#${event.issueNumber}`;
+}
+
 let currentSink: DomainEventSink | null = null;
 
 /**
@@ -55,14 +69,19 @@ export function setDomainEventSink(sink: DomainEventSink | null): void {
   currentSink = sink;
 }
 
-/** Fire an event at the registered sink. Never throws into the request path. */
-export function emitDomainEvent(event: DomainEvent): void {
-  if (!currentSink) return;
-  try {
-    void Promise.resolve(currentSink(event)).catch(() => {});
-  } catch {
-    // A misbehaving sink must never break the mutation that produced the event.
-  }
+/**
+ * Fire an event at the registered sink under `scope`, which owns the sink's
+ * promise (see {@link BackgroundScope}). Never throws into the request path: a
+ * misbehaving sink must not break the mutation that already committed, and the
+ * scope is the single place that catches + logs the failure.
+ */
+export function emitDomainEvent(
+  scope: BackgroundScope,
+  event: DomainEvent,
+): void {
+  const sink = currentSink;
+  if (!sink) return;
+  scope.run(eventLabel(event), () => sink(event));
 }
 
 export interface BuildEventInput {

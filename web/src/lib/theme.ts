@@ -34,6 +34,7 @@ function resolve(pref: ThemePref): ResolvedTheme {
 
 const [pref, setPrefSignal] = createSignal<ThemePref>(readPref());
 const [resolved, setResolved] = createSignal<ResolvedTheme>(resolve(readPref()));
+let disposeSystemListener: (() => void) | null = null;
 
 function apply(): void {
   const next = resolve(pref());
@@ -43,14 +44,33 @@ function apply(): void {
   }
 }
 
-/** Call once at boot (before/at first render) to stamp the initial theme. */
-export function initTheme(): void {
+/**
+ * Stamp the initial theme and follow the OS preference.
+ *
+ * Re-initialization first removes the previous listener (important for dev/HMR)
+ * and the returned disposer releases the current one at page teardown.
+ */
+export function initTheme(): () => void {
   apply();
+  disposeSystemListener?.();
+  disposeSystemListener = null;
   if (typeof matchMedia === "function") {
-    matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+    const media = matchMedia("(prefers-color-scheme: dark)");
+    const onChange = (): void => {
       if (pref() === "system") apply();
-    });
+    };
+    media.addEventListener("change", onChange);
+    let disposed = false;
+    const dispose = (): void => {
+      if (disposed) return;
+      disposed = true;
+      media.removeEventListener("change", onChange);
+      if (disposeSystemListener === dispose) disposeSystemListener = null;
+    };
+    disposeSystemListener = dispose;
+    return dispose;
   }
+  return () => {};
 }
 
 export function setThemePref(next: ThemePref): void {

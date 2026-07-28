@@ -22,6 +22,7 @@ export class MemoryBucket implements ObjectStoreBinding {
     return {
       key,
       etag: this.etags.get(key) as string,
+      size: value.byteLength,
       arrayBuffer: async () => value.slice().buffer as ArrayBuffer,
     };
   }

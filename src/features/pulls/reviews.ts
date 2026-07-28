@@ -47,6 +47,17 @@ async function handleSubmit(ctx: RouteContext, prctx: PrHandlerCtx): Promise<Res
   const now = db.now();
   const id = db.id();
   const reviewerId = access.auth.principal.id === "anon" ? null : access.auth.principal.id;
+  if (
+    reviewerId !== null &&
+    reviewerId === pr.authorId &&
+    (state === "approved" || state === "changes_requested")
+  ) {
+    return errorResponse(
+      422,
+      "self_review",
+      "A pull-request author cannot approve or request changes on their own pull request.",
+    );
+  }
   // Anchor the verdict to the current head tip (R2-authoritative).
   const gitState = await computeGitState(ctx.env.BUCKET, repo, pr, false);
 

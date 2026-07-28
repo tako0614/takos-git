@@ -89,20 +89,17 @@ not enter the repository or Outputs.
 ## Develop
 
 ```sh
-bun test              # unit + real Git CLI clone/push/reclone E2E
-bun run check         # typecheck
-bun run build:worker  # emit local dist/worker.js for self-host applies
-tofu fmt -check
-tofu validate
+bun run check # portable format/static/type/tests/OpenTofu/build gate
 ```
 
-Post-deploy smoke uses separate `TAKOS_GIT_MCP_TOKEN`,
-`TAKOS_GIT_READ_TOKEN`, and `TAKOS_GIT_WRITE_TOKEN` values because exact scopes
-are not interchangeable. Supplying `TAKOS_GIT_HOSTING_READ_TOKEN` also checks
-`/api/v1`. The old `TAKOS_GIT_ACCESS_TOKEN` is migration fallback only and is
-not used by new InterfaceBindings.
+## Self-host / operator install (OpenTofu)
 
-## Deploy (OpenTofu)
+This example changes infrastructure owned by the user or operator. It is not
+the Takos ecosystem's official artifact-publication or hosted-production
+deploy path. GitHub Actions in this repository neither deploys nor publishes.
+An ecosystem surface is deployed by this repository's own entrypoint, which does
+not exist yet; writing it is the next step. The shared rules live in
+`takos-control/engineering.policy.json` → `deploy`.
 
 The module is inert until its Cloudflare feature flags are enabled:
 
@@ -113,18 +110,34 @@ tofu apply \
   -var cloudflare_account_id=<id> \
   -var public_url=https://git.example \
   -var takosumi_accounts_issuer_url=https://accounts.example \
+  -var worker_bundle_sha256=<worker.js.sha256 from the release> \
   -var 'env={APP_WORKSPACE_ID="<workspace-id>",APP_CAPSULE_ID="<capsule-id>"}'
 ```
 
 `public_url` and `takosumi_accounts_issuer_url` are bare HTTPS origins with no
 userinfo, path, query, or fragment (a trailing slash is canonicalized away).
 
-Hosted installs consume `worker_bundle_url` + `worker_bundle_sha256` from a Git
-release or CI artifact. Do not commit `dist/worker.js`.
+Managed installs consume an operator-selected immutable `worker_bundle_url` +
+`worker_bundle_sha256`. A CI artifact is not a publication source. Do not
+commit `dist/worker.js`.
 
-Repository objects are isolated below a repository-owned object prefix, so the
-normal repository delete API removes all data owned by that repository. The
-Cloudflare provider cannot delete a non-empty R2 bucket. For Takosumi-managed
+`worker_bundle_sha256` is **required on the default `worker_release_tag` path too**.
+The release manifest (`takosumi-artifact.json`) is fetched over a mutable tag with
+no signature, so it may select the bundle URL but can never be its own integrity
+root; the operator pins the digest out of band from the release's
+`worker.js.sha256`.
+
+The repository delete API immediately tombstones the namespace, hides refs and
+Actions pins, and returns `202 Accepted`. Scheduled maintenance removes the
+repository-owned object prefix only after a ten-minute quarantine and only when
+the recorded deletion generation matches the R2 quarantine marker. Recreating
+the same owner/name gets a new generation, so stale cleanup cannot remove the
+new repository. Cleanup is idempotent and remains retryable in its ledger after
+a failure. The same cleanup removes release assets, webhook outbox payloads, and
+Actions logs/artifacts; runner callbacks are fenced as soon as the repository is
+tombstoned.
+
+The Cloudflare provider cannot delete a non-empty R2 bucket. For Takosumi-managed
 runs, the operator therefore stores a versioned `pre_destroy` lifecycle action
 and explicit policy in the service-side InstallConfig. Non-secret target values
 such as the bucket name are explicit service configuration. Takosumi contains

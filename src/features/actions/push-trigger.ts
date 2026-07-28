@@ -61,7 +61,8 @@ export async function onPushDiscoverWorkflows(
 
     const db = createDbClient(env.DB);
     const repo = await db.queryOne<{ id: string }>(
-      `SELECT id FROM repositories WHERE storage_key = ? LIMIT 1`,
+      `SELECT id FROM repositories
+       WHERE storage_key = ? AND lifecycle_state = 'active' LIMIT 1`,
       [repoStorageKey],
     );
     if (!repo) return; // repo not tracked in D1 — nothing to project onto.

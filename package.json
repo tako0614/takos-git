@@ -10,12 +10,16 @@
     "build:web": "cd web && bun run build",
     "build": "bun run build:web && bun run build:worker",
     "dev:web": "cd web && vite",
-    "smoke:postdeploy": "bun run scripts/post-deploy-smoke.ts",
     "git:pre-destroy": "bun run scripts/purge-r2-before-destroy.ts",
-    "test": "bun test",
+    "test": "bun test && bun run test:web",
     "audit": "bun audit --audit-level=high && cd web && bun audit --audit-level=high",
-    "check": "bunx tsc --noEmit",
-    "check:web": "cd web && tsc --noEmit"
+    "fmt:check": "git diff --check \"$(git hash-object -t tree /dev/null)\" -- . && tofu fmt -check -recursive",
+    "lint": "bun run check:types && bun run check:web",
+    "check:types": "bunx tsc --noEmit",
+    "check:opentofu": "tofu init -backend=false -lockfile=readonly && tofu validate && tofu test && tofu plan -refresh=false -input=false -lock=false",
+    "check": "bun run fmt:check && bun run lint && bun run check:opentofu && bun run test && bun run build",
+    "check:web": "cd web && tsc --noEmit",
+    "test:web": "cd web && bun test --conditions browser src"
   },
   "dependencies": {
     "yaml": "^2.5.0",

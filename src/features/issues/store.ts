@@ -68,13 +68,17 @@ export async function allocateNumber(
 /** Look up an existing principal id by OIDC/Interface subject, or null. */
 export async function principalIdBySubject(
   db: DbClient,
+  issuer: string,
   subject: string,
 ): Promise<string | null> {
-  const row = await db.queryOne<{ id: string }>(
-    `SELECT id FROM principals WHERE subject = ? LIMIT 1`,
-    [subject],
+  const rows = await db.query<{ id: string }>(
+    `SELECT id FROM principals
+      WHERE issuer = ? AND subject = ?
+      ORDER BY binding_id ASC
+      LIMIT 2`,
+    [issuer, subject],
   );
-  return row?.id ?? null;
+  return rows.length === 1 ? rows[0]!.id : null;
 }
 
 async function principalRefsByIds(
@@ -461,6 +465,7 @@ export interface ListIssuesFilter {
   readonly state: "open" | "closed" | "all";
   readonly labelName?: string | null;
   readonly milestoneNumber?: number | null;
+  readonly assigneeIssuer?: string | null;
   readonly assigneeSubject?: string | null;
   readonly limit: number;
   readonly offset: number;
@@ -495,12 +500,13 @@ export async function listIssues(
     );
     params.push(repoId, filter.milestoneNumber);
   }
-  if (filter.assigneeSubject) {
+  if (filter.assigneeIssuer && filter.assigneeSubject) {
     where.push(
       `EXISTS (SELECT 1 FROM issue_assignees ia JOIN principals p ON p.id = ia.principal_id
-                WHERE ia.issue_id = i.id AND p.subject = ?)`,
+                WHERE ia.issue_id = i.id AND p.issuer = ? AND p.subject = ?
+              )`,
     );
-    params.push(filter.assigneeSubject);
+    params.push(filter.assigneeIssuer, filter.assigneeSubject);
   }
   const rows = await db.query<IssueRow>(
     `SELECT ${ISSUE_COLUMNS.split(", ")

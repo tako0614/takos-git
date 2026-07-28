@@ -93,7 +93,7 @@ Each feature agent works in an **isolated git worktree** off the integration bra
 
 **Phase 4 — SPA (parallel by view, 4-6 agents).** Port `takos/web/src/views/repos/` (RepoDetail, FileTree/FileViewer, CommitList, PRList/PRDetail/PRDiffView/PRComments, ReleaseList, ForkModal, ConflictResolver, ActionsTab) severing the `web/src/store/{toast,i18n,confirm-dialog}` and `web/src/i18n/*/repository` coupling into takos-git-local equivalents. Consume `src/contract/v1.ts`. Gates: SPA build, `tsc`, plus a Lighthouse/`bun run check` pass. Verify: drive real flows in Chrome DevTools MCP against a running worker; confirm asset serving + CSP (see §4).
 
-**Phase 5 — Actions + self-hosted runner (serial spine, then parallel, highest risk).** Port the pure/portable engine (`actions-engine/` 1416 LOC — parser/validator/scheduler/matrix/glob, already dependency-free), services (`application/services/actions/*` + `workflow-runs/*` 2171 LOC), and routes (`workflows.ts` + `actions/*` 1141 LOC). Then build the **self-hosted runner inside takos-git** (per the decision record, overriding the roadmap's "external runner Interface" — `docs/collaborative-hosting.md:95` must be rewritten): a Durable Object coordinator + Cloudflare Container, mirroring Takosumi's proven `container_runner.ts` / `durable/OpenTofuRunnerObject.ts` / `runner/lib/http_server.ts` and its `RunnerProfile` network/resource/secret policy (`takosumi/contract/internal-deploy-control-api.ts:106-181`), with the generic sandbox container from `takos-apps/takos-computer/apps/sandbox/`. Replace the current `RUNTIME_HOST` 503 stub contract (`takos/src/worker/runtime/queues/workflow-steps.ts:35-54`, `containers/runtime/src/runtime-service.ts`) with an in-worker DO→container step dispatch. Gates: engine unit tests (already exist), runner integration test, `tofu validate` on the DO/container bindings. Verify: end-to-end single-job `run:` workflow executes in the container and writes a check-run.
+**Phase 5 — Actions + self-hosted runner (serial spine, then parallel, highest risk).** Port the pure/portable engine (`actions-engine/` 1416 LOC — parser/validator/scheduler/matrix/glob, already dependency-free), services (`application/services/actions/*` + `workflow-runs/*` 2171 LOC), and routes (`workflows.ts` + `actions/*` 1141 LOC). Then build the **self-hosted runner inside takos-git** (per the decision record, overriding the roadmap's "external runner Interface" — `docs/collaborative-hosting.md:95` must be rewritten): a Durable Object coordinator + Cloudflare Container, mirroring Takosumi's proven `container_runner.ts` / `durable/OpenTofuRunnerObject.ts` / `runner/lib/http_server.ts` and its `RunnerProfile` network/resource/secret policy (`takosumi/contract/internal-deploy-control-api.ts:106-181`), with the generic sandbox container from sibling `takos-computer/apps/sandbox/`. Replace the current `RUNTIME_HOST` 503 stub contract (`takos/src/worker/runtime/queues/workflow-steps.ts:35-54`, `containers/runtime/src/runtime-service.ts`) with an in-worker DO→container step dispatch. Gates: engine unit tests (already exist), runner integration test, `tofu validate` on the DO/container bindings. Verify: end-to-end single-job `run:` workflow executes in the container and writes a check-run.
 
 ### 4. Top integration risks & mitigations
 
@@ -142,13 +142,19 @@ The pervasive `accountId -> accounts(id)` FK in the takos schema (`schema-repos.
 
 ### 1. Identity and namespace
 
-Replaces the deleted `accounts` FK. A **Principal** is a Takosumi Accounts subject (the OIDC `sub`, ≤512 chars, validated in `src/browser-auth.ts:368-372`) OR an Interface OAuth subject (`taksrv_` bearer `sub`, `src/interface-oauth-auth.ts:188`). An **Owner** is the namespace segment in `<owner>/<name>` — either a user owner backed by one principal, or an org owning many principals via membership.
+Replaces the deleted `accounts` FK. A **Principal** is keyed by the canonical
+Accounts issuer plus OIDC/Interface OAuth subject; automation also includes the
+exact InterfaceBinding id. A subject alone is never an identity. An **Owner** is
+the namespace segment in `<owner>/<name>` — either a user owner backed by one
+principal, or an org owning many principals via membership.
 
 ```sql
--- A workspace-scoped actor. subject = OIDC sub or Interface OAuth sub.
+-- A workspace-scoped actor. Empty binding_id is the human-identity sentinel.
 CREATE TABLE principals (
   id             TEXT PRIMARY KEY,           -- ULID, internal stable id
-  subject        TEXT NOT NULL,              -- OIDC sub (authoritative identity)
+  issuer         TEXT NOT NULL,
+  subject        TEXT NOT NULL,
+  binding_id     TEXT NOT NULL DEFAULT '',
   kind           TEXT NOT NULL DEFAULT 'user', -- 'user' | 'service_account'
   display_name   TEXT,                       -- cached from userinfo, non-authoritative
   email          TEXT,                       -- cached, nullable
@@ -156,7 +162,8 @@ CREATE TABLE principals (
   created_at     INTEGER NOT NULL,
   updated_at     INTEGER NOT NULL
 );
-CREATE UNIQUE INDEX uq_principals_subject ON principals(subject);
+CREATE UNIQUE INDEX uq_principals_identity
+  ON principals(issuer, subject, binding_id);
 
 -- Namespace segment. Every repo lives under exactly one owner.
 CREATE TABLE owners (
@@ -801,13 +808,13 @@ principals(
   kind          text not null,       -- "human" | "automation"
   issuer        text not null,       -- OIDC_ISSUER_URL, pins identity to this Accounts
   subject       text not null,       -- OIDC `sub`
-  binding_id    text null,           -- automation only: interface_binding_id
+  binding_id    text not null,       -- automation: interface_binding_id; human: ""
   display_name, email,               -- non-authoritative cache, refreshed from userinfo
   unique(issuer, subject, binding_id)
 )
 ```
 
-- **Human (browser)**: from `readBrowserSession` we already have `session.subject` (`src/browser-auth.ts:369`). Resolve/JIT-create `principals(kind="human", issuer, subject=sub, binding_id=null)`. `display_name`/`email` refreshed from the session cache, never trusted for authz.
+- **Human (browser)**: from `readBrowserSession` we already have `session.subject` (`src/browser-auth.ts:369`). Resolve/JIT-create `principals(kind="user", issuer, subject=sub, binding_id="")`. `display_name`/`email` refreshed from the session cache, never trusted for authz.
 - **Automation (Interface OAuth)**: replace the boolean return with an evidence-returning verifier so the same proven token yields a principal — no new credential type, no second IdP:
 
 ```ts
@@ -823,7 +830,7 @@ export async function verifyInterfaceOAuthCredential(
 ): Promise<InterfaceCredential>;   // returns the evidence at :186-197 instead of discarding it
 ```
 
-Resolve/JIT-create `principals(kind="automation", issuer, subject, binding_id=interfaceBindingId)`. The `(subject, binding_id)` pair is the automation identity: two InterfaceBindings for the same ServiceAccount are distinct principals, so a per-repo grant can target exactly one binding — this is what lets us satisfy `docs/collaborative-hosting.md:68-70` ("app-local ACL narrows the authorized Principal per repository") **without minting a Takosumi Interface per repo**.
+Resolve/JIT-create `principals(kind="service_account", issuer, subject, binding_id=interfaceBindingId)`. The `(issuer, subject, binding_id)` tuple is the automation identity: two InterfaceBindings for the same ServiceAccount are distinct principals, so a per-repo grant can target exactly one binding — this is what lets us satisfy `docs/collaborative-hosting.md:68-70` ("app-local ACL narrows the authorized Principal per repository") **without minting a Takosumi Interface per repo**.
 - **Anonymous**: no credential ⇒ a sentinel `Principal { kind:"anonymous", id:"anon" }`, eligible only for read on `public` repos (§3).
 - **Capsule standalone secret** (MCP `PUBLISHED_MCP_AUTH_TOKEN`, `src/mcp.ts` `authorize`): deployment-local root trust; resolves to a synthetic `instance-admin` principal. Kept only for direct/self-host, never called an InterfaceBinding credential.
 
@@ -1030,7 +1037,11 @@ Visibility is a first-class `public|private|internal` column (roadmap M2); `inte
 | PUT/DELETE | `/api/v1/orgs/:org/teams/:team/members/:principal` | hosting.admin / org-admin | Team membership | NEW |
 | PUT/DELETE | `/api/v1/repos/:owner/:repo/teams/:team` | hosting.admin / owner | Grant/revoke team role on repo | NEW |
 
-`:principal` is a Takosumi Accounts subject id. ACL rows are app-local D1 (`docs/collaborative-hosting.md:68`); takos-git does not mint one Takosumi Interface per repo.
+`:principal` is a Takosumi Accounts subject under the configured issuer. For
+automation, mutation bodies also carry the exact `bindingId`; an ambiguous
+subject-only lookup fails closed. ACL rows are app-local D1
+(`docs/collaborative-hosting.md:68`); takos-git does not mint one Takosumi
+Interface per repo.
 
 #### 4.3 Branch protection (net-new; replaces `isProtected` boolean stub)
 
@@ -1138,14 +1149,18 @@ Issues share the comment/label/milestone tables with PRs (a PR is an issue with 
 
 | Method | Path | Auth | Purpose |
 | --- | --- | --- | --- |
-| GET/POST | `…/hooks` | admin / owner | List / create (`url`, `secret`, `events[]`, `active`) |
-| GET/PATCH/DELETE | `…/hooks/:id` | admin / owner | Get/edit/delete |
-| POST | `…/hooks/:id/pings` | admin / owner | Send ping event |
-| GET | `…/hooks/:id/deliveries` | admin / owner | Delivery log (status, duration, response) |
-| GET | `…/hooks/:id/deliveries/:deliveryId` | admin / owner | Delivery detail + payload |
-| POST | `…/hooks/:id/deliveries/:deliveryId/redeliver` | admin / owner | Retry delivery |
+| GET/POST | `…/webhooks` | admin / owner | List / create (`url`, `secret`, `events[]`, `active`) |
+| GET/PATCH/DELETE | `…/webhooks/:id` | admin / owner | Get/edit/delete |
+| POST | `…/webhooks/:id/pings` | admin / owner | Send ping event |
+| GET | `…/webhooks/:id/deliveries` | admin / owner | Delivery log (status, duration, response) |
+| GET | `…/webhooks/:id/deliveries/:deliveryId` | admin / owner | Delivery detail + payload |
+| POST | `…/webhooks/:id/deliveries/:deliveryId/redeliveries` | admin / owner | Retry delivery |
 
-Delivery is async with retry + audit evidence (roadmap M3); signed with HMAC over the payload. Replaces Takos's `triggerPrEvent` (`pull-requests/routes.ts:98`) internal hook with a first-class subscription+delivery-ledger model.
+Delivery persists its signed wire payload to R2 before network I/O, then uses a
+leased D1 outbox for the immediate attempt and bounded scheduled retries. The
+delivery id stays stable across automatic retries and the audit row records each
+attempt. Replaces Takos's `triggerPrEvent` (`pull-requests/routes.ts:98`)
+internal hook with a first-class subscription+delivery-ledger model.
 
 #### 4.11 Workflows, runs, jobs, logs, artifacts (Actions)
 
@@ -1153,12 +1168,10 @@ Runner is **self-hosted inside takos-git** (Container + DO, decision record) —
 
 | Method | Path | Auth | Purpose | Prov. |
 | --- | --- | --- | --- | --- |
-| GET | `…/workflows` | read / reader | List parsed workflows | PORT `workflows.ts:187` |
-| GET | `…/workflows/:path{.+}` | read / reader | Workflow detail | PORT `workflows.ts:238` |
-| POST | `…/workflows/:path{.+}/dispatch` | write / writer | Manual dispatch (`{ref,inputs}`) | PORT dispatch of `actions/runs.ts:78` |
+| GET | `…/actions/workflows` | read / reader | List parsed workflows | PORT `workflows.ts:187` |
+| POST | `…/actions/runs` | write / writer | Manual dispatch (`{workflow,ref,inputs}`) | PORT dispatch of `actions/runs.ts:78` |
 | GET | `…/actions/runs?workflow=&status=&branch=&event=` | read / reader | List runs (cursor) | PORT `actions/runs.ts:44` |
 | GET | `…/actions/runs/:runId` | read / reader | Run detail | PORT `actions/runs.ts:122` |
-| GET | `…/actions/runs/:runId/ws` | read / reader | Live log/status stream (WS/SSE) | PORT `actions/runs.ts:134` |
 | POST | `…/actions/runs/:runId/cancel` | write / writer | Cancel | PORT `actions/runs.ts:147` |
 | POST | `…/actions/runs/:runId/rerun` | write / writer | Re-run | PORT `actions/runs.ts:162` |
 | GET | `…/actions/runs/:runId/jobs` | read / reader | Jobs of run | PORT `actions/runs.ts:187` |
@@ -1166,10 +1179,9 @@ Runner is **self-hosted inside takos-git** (Container + DO, decision record) —
 | GET | `…/actions/jobs/:jobId/logs` | read / reader | Job logs (streamed) | PORT `actions/logs.ts` |
 | GET | `…/actions/runs/:runId/artifacts` | read / reader | List artifacts | PORT `actions/artifacts.ts:17` |
 | GET | `…/actions/artifacts/:id` | read / reader | Download artifact (R2 stream) | PORT `actions/artifacts.ts:39` |
-| DELETE | `…/actions/artifacts/:id` | write / maintainer | Delete artifact | PORT `actions/artifacts.ts:80` |
 | GET/PUT/DELETE | `…/actions/secrets[/:name]` | admin / owner | Encrypted secret CRUD (injected into runner) | PORT `actions/secrets.ts` |
 
-The per-step exec contract (`{run,uses,with,env,shell,working-directory,continue-on-error,timeout-minutes}`, `takos/.../runtime/queues/workflow-steps.ts:35`) is preserved but its dispatch target changes from the 503 `RUNTIME_HOST` stub to takos-git's own runner DO/container. `.takos/workflows/*.yml` discovery path (`workflows.ts:166`) carries over.
+The per-step exec contract (`{run,uses,with,env,shell,working-directory,continue-on-error,timeout-minutes}`, `takos/.../runtime/queues/workflow-steps.ts:35`) is preserved but its dispatch target changes from the 503 `RUNTIME_HOST` stub to takos-git's own runner DO/container. Workflow discovery uses `.github/workflows/*.yml|*.yaml`.
 
 #### 4.12 Check runs and commit statuses (net-new)
 
@@ -1192,8 +1204,6 @@ The internal self-hosted runner publishes check-runs through this same API using
 - **Handler mounting**: replace the monolithic `switch` in `handleForgeApi` (`src/forge-api.ts:511`) with a small method+segment router table; keep the single `authorize`/error-envelope/pagination helpers shared across all groups so web and automation continue to traverse identical code with only the front identity middleware differing.
 
 ---
-
-I have everything I need. Writing the spec section now.
 
 ## Web SPA architecture
 
@@ -1336,7 +1346,10 @@ with `WORKER = http://localhost:8787` (the `wrangler dev` worker). No cross‑re
 "build":      "bun run build:web && bun run build:worker"
 ```
 
-`scripts/build-worker.ts` is unchanged; `build` now produces both `web/dist/` (SPA) and `dist/worker.js` (worker). `bunx tsc --noEmit` gains a `web/tsconfig.json` project.
+`build` produces `web/dist/` followed by a self-contained `dist/worker.js`.
+`scripts/build-worker.ts` fails closed on a missing or inconsistent SPA, emits a
+deterministic asset-evidence manifest, imports the bundle, and hash-probes its
+embedded entry assets. `bunx tsc --noEmit` gains a `web/tsconfig.json` project.
 
 **wrangler (local dev + self‑host wrangler step).** Add an assets block so the worker serves the SPA:
 
@@ -1367,7 +1380,7 @@ Because the worker is worker‑first and re‑emits CSP around every ASSETS resp
 
 ### Design decision and invariants
 
-The runner mirrors the proven Takosumi container pattern — a **coordinator Durable Object** (Takosumi's `OpenTofuRunOwnerObject`) plus a **Cloudflare-Container Durable Object** (Takosumi's `OpenTofuRunnerObject`, `takosumi/worker/src/durable/OpenTofuRunnerObject.ts:185`) reached over a `Namespace.idFromName(runId).fetch()` seam with capacity-retry and redaction (`takosumi/worker/src/container_runner.ts:382-472`). It reuses the takos-computer sandbox image approach (`takos-apps/takos-computer/apps/sandbox/Dockerfile`: `oven/bun` base + `git curl jq build-essential python3`, non-root `sandbox` user) and the pure, portable `takos-actions-engine` (parser/scheduler/matrix/dependency — already vendored in the Takos legacy tree the roadmap migrates from).
+The runner mirrors the proven Takosumi container pattern — a **coordinator Durable Object** (Takosumi's `OpenTofuRunOwnerObject`) plus a **Cloudflare-Container Durable Object** (Takosumi's `OpenTofuRunnerObject`, `takosumi/worker/src/durable/OpenTofuRunnerObject.ts:185`) reached over a `Namespace.idFromName(runId).fetch()` seam with capacity-retry and redaction (`takosumi/worker/src/container_runner.ts:382-472`). It reuses the sibling takos-computer sandbox image approach (`takos-computer/apps/sandbox/Dockerfile`: `oven/bun` base + `git curl jq build-essential python3`, non-root `sandbox` user) and the pure, portable `takos-actions-engine` (parser/scheduler/matrix/dependency — already vendored in the Takos legacy tree the roadmap migrates from).
 
 Non-negotiable invariants carried into this design:
 
@@ -1482,7 +1495,7 @@ The commit-status API is the derived "combined status" for a SHA (a takos-git ca
 
 ### 4. Container image
 
-A dedicated `takos-git/containers/runner/Dockerfile`, following the sandbox image (`takos-apps/takos-computer/apps/sandbox/Dockerfile`) but with a CI toolset:
+A dedicated `takos-git/containers/runner/Dockerfile`, following the sibling sandbox image (`takos-computer/apps/sandbox/Dockerfile`) but with a CI toolset:
 
 ```dockerfile
 FROM oven/bun:1
@@ -1585,8 +1598,6 @@ Replace the M3 runner bullet (`docs/collaborative-hosting.md:95`) and align the 
 
 ---
 
-I now have everything needed. Here is the spec section.
-
 ## Git primitives & Actions-engine port map
 
 This section gives an exact, file-by-file migration map from the Takos product worker (`/root/dev/takos/takos`) into standalone `takos-git`. It honors the standing invariants: Git objects + refs stay authoritative in R2 (D1 never duplicates them), the per-repo refs-doc ETag CAS (`src/git/refs-store.ts:113`) remains the atomic receive-pack boundary, and the two auth planes stay unmixed. The no-legacy-shims rule applies: where `takos-git/src/git/` already has an implementation, we keep **one** and delete the other — no dual code paths.
@@ -1658,8 +1669,6 @@ Three concentric layers with three different fates: **(1) the planner is pure an
 **Migration-order fit.** Part A completes roadmap step 1 (`docs/collaborative-hosting.md:116`) — the object/tree/pack layer is already in `src/git`; this map adds the missing `merge` / `merge-base` / `tree-diff` / `diff` / `blame` / `resolve-ref` / `remote-fetch` / `operations` primitives, all R2-only. Part B is roadmap step 5 / milestone M3: the pure planner ports first (no risk), then the orchestration+routes reworked onto takos-git tables and ACL, and the execution fabric is handed to the self-hosted runner section rather than ported.
 
 ---
-
-I have everything I need. Writing the spec section now.
 
 ## Feature port map (collaboration core)
 

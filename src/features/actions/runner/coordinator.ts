@@ -129,7 +129,7 @@ export class RunCoordinator {
     const row = await this.#db.queryOne<{ owner_login: string; name: string }>(
       `SELECT o.login AS owner_login, r.name AS name
          FROM repositories r JOIN owners o ON o.id = r.owner_id
-        WHERE r.id = ? LIMIT 1`,
+        WHERE r.id = ? AND r.lifecycle_state = 'active' LIMIT 1`,
       [repoId],
     );
     return row ? `${row.owner_login}/${row.name}` : null;

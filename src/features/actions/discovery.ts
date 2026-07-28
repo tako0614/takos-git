@@ -26,9 +26,23 @@ import {
   type Workflow,
   type WorkflowDiagnostic,
 } from "./engine/index.ts";
+import {
+  buildExpandedJobs,
+  WorkflowExpansionLimitError,
+} from "./engine/scheduler/job-expansion.ts";
+import { MatrixExpansionLimitError } from "./engine/scheduler/matrix.ts";
 
 /** The repo-relative directory workflows live in (GitHub parity). */
 export const WORKFLOWS_DIR = ".github/workflows";
+
+/**
+ * Hard cap on how many workflow files one commit may trigger. SECURITY (DoS):
+ * every discovered file becomes its own run (jobs + steps + check-runs + commit
+ * statuses in D1), so an attacker-controlled tree with thousands of
+ * `.github/workflows/*.yml` entries multiplies the per-run budget by the file
+ * count on a single push. Far above any realistic repo.
+ */
+const MAX_WORKFLOW_FILES = 256;
 
 export interface WorkflowCandidate {
   readonly path: string;
@@ -82,6 +96,25 @@ export function loadAndValidateWorkflow(content: string): WorkflowLoadResult {
       details: validationErrors.map((e) => e.message),
     };
   }
+  // The schema caps jobs/steps per unit; only the expansion budget stops those
+  // caps from multiplying into a run that pins the Worker and floods D1. Charge
+  // it here — the one gate both push discovery and manual dispatch pass through
+  // — so an oversized workflow is refused before a single row is written.
+  try {
+    buildExpandedJobs(parsed.workflow);
+  } catch (error) {
+    if (
+      error instanceof WorkflowExpansionLimitError ||
+      error instanceof MatrixExpansionLimitError
+    ) {
+      return {
+        ok: false,
+        message: "Workflow validation error",
+        details: [error.message],
+      };
+    }
+    throw error;
+  }
   return { ok: true, workflow: parsed.workflow };
 }
 
@@ -120,10 +153,13 @@ export async function discoverWorkflows(
   const entries = await listDirectory(objects, commit.tree, WORKFLOWS_DIR);
   if (!entries) return [];
   const candidates: WorkflowCandidate[] = [];
+  let seen = 0;
   for (const entry of entries) {
     if (entry.mode === FILE_MODES.DIRECTORY) continue;
     const lower = entry.name.toLowerCase();
     if (!lower.endsWith(".yml") && !lower.endsWith(".yaml")) continue;
+    if (seen >= MAX_WORKFLOW_FILES) break;
+    seen += 1;
     const path = `${WORKFLOWS_DIR}/${entry.name}`;
     const blob = await getBlobAtPath(objects, commit.tree, path);
     if (!blob) continue;

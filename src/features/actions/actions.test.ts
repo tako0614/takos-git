@@ -21,7 +21,7 @@ import {
 } from "../repos/testkit.ts";
 import { registerActionsRoutes } from "./routes.ts";
 import { onPushDiscoverWorkflows } from "./push-trigger.ts";
-import { discoverWorkflows } from "./discovery.ts";
+import { discoverWorkflows, loadAndValidateWorkflow } from "./discovery.ts";
 import { persistAndDispatchRun } from "./orchestrator.ts";
 import { allocateRunNumber, completeJob, startJob } from "./service.ts";
 
@@ -133,8 +133,8 @@ async function seedRepoWith(
     name: opts.name,
     visibility: opts.visibility ?? "public",
   });
-  const writerId = await seedPrincipal(handle.db, "sub-writer");
-  const adminId = await seedPrincipal(handle.db, "sub-admin");
+  const writerId = await seedPrincipal(handle.db, "sub-writer", "service_account");
+  const adminId = await seedPrincipal(handle.db, "sub-admin", "service_account");
   await grant(handle.db, seeded.repoId, writerId, "writer");
   await grant(handle.db, seeded.repoId, adminId, "maintainer");
   return { ...seeded, writerId, adminId };
@@ -248,6 +248,69 @@ describe("push discovery", () => {
     expect(jobs.length).toBe(2);
     const nodes = jobs.map((j) => (j.matrix ? JSON.parse(j.matrix).node : null)).sort();
     expect(nodes).toEqual([18, 20]);
+  });
+
+  test("a workflow whose expansion blows the budget creates no run (DoS)", async () => {
+    const handle = makeEnv();
+    const seeded = await seedRepoWith(handle, { name: "boom" });
+    // 20 jobs × 32 matrix combinations = 640 expanded jobs. Every unit is inside
+    // its own cap (≤1000 jobs, ≤256 combinations, ≤1000 steps) — only the
+    // workflow-wide budget stops the product.
+    const oversized = Array.from(
+      { length: 20 },
+      (_, i) =>
+        `  j${i}:\n    runs-on: ubuntu-latest\n    strategy:\n      matrix:\n` +
+        `        a: [1, 2, 3, 4]\n        b: [1, 2, 3, 4, 5, 6, 7, 8]\n` +
+        `    steps:\n      - run: echo ${i}\n`,
+    ).join("");
+    const wf = `name: Boom\non: [push, workflow_dispatch]\njobs:\n${oversized}`;
+    expect(loadAndValidateWorkflow(wf).ok).toBe(false);
+
+    const after = await commitFiles(
+      handle.bucket,
+      seeded.storageKey,
+      [{ path: ".github/workflows/boom.yml", content: wf }],
+      [seeded.commitSha],
+    );
+    await onPushDiscoverWorkflows(handle.env, seeded.storageKey, [
+      { name: "refs/heads/main", oldSha: seeded.commitSha, newSha: after },
+    ]);
+    const runs = await handle.db.query(`SELECT id FROM workflow_runs WHERE repo_id = ?`, [seeded.repoId]);
+    expect(runs.length).toBe(0);
+    const jobRows = await handle.db.query(`SELECT id FROM workflow_jobs`, []);
+    expect(jobRows.length).toBe(0);
+
+    // The manual entrance rejects it too, as a plain invalid workflow.
+    const res = await dispatch(
+      router(),
+      jsonRequest("POST", `${R}/boom/actions/runs`, { workflow: ".github/workflows/boom.yml" }, "taksrv_writer_w"),
+      handle.env,
+    );
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe("invalid_workflow");
+  });
+
+  test("discovery stops at the workflow-file cap (one push ≠ unbounded runs)", async () => {
+    const handle = makeEnv();
+    const seeded = await seedRepoWith(handle, { name: "many" });
+    const files = Array.from({ length: 300 }, (_, i) => ({
+      path: `.github/workflows/w${i}.yml`,
+      content: PUSH_WORKFLOW,
+    }));
+    const after = await commitFiles(handle.bucket, seeded.storageKey, files, [seeded.commitSha]);
+    const objects = repositoryObjectStore(handle.bucket, seeded.storageKey);
+    expect((await discoverWorkflows(objects, after)).length).toBe(256);
+  });
+
+  test("the workflow-wide step budget stops jobs × steps", () => {
+    // 12 jobs × 1000 steps = 12000 persisted step rows, each its own awaited D1
+    // INSERT, with no single unit over its cap.
+    const steps = Array.from({ length: 1000 }, (_, i) => `      - run: echo ${i}\n`).join("");
+    const jobs = Array.from(
+      { length: 12 },
+      (_, i) => `  j${i}:\n    runs-on: ubuntu-latest\n    steps:\n${steps}`,
+    ).join("");
+    expect(loadAndValidateWorkflow(`name: Steps\non: push\njobs:\n${jobs}`).ok).toBe(false);
   });
 
   test("branch filter: a workflow scoped to another branch does not fire", async () => {

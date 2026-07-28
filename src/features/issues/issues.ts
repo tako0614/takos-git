@@ -56,16 +56,25 @@ function canEditContent(access: RepoAccess, authorId: string | null): boolean {
 /** Resolve assignee subjects to existing principal ids; unknown → error names. */
 async function resolveAssignees(
   db: DbClient,
+  issuer: string,
   subjects: readonly string[],
 ): Promise<{ ids: string[]; missing: string[] }> {
   const ids: string[] = [];
   const missing: string[] = [];
   for (const subject of subjects) {
-    const id = await principalIdBySubject(db, subject);
+    const id = await principalIdBySubject(db, issuer, subject);
     if (id) ids.push(id);
     else missing.push(subject);
   }
   return { ids, missing };
+}
+
+function currentIssuer(ctx: { env: { OIDC_ISSUER_URL?: string } }): string {
+  try {
+    return new URL(ctx.env.OIDC_ISSUER_URL ?? "").origin;
+  } catch {
+    return "";
+  }
 }
 
 /** `GET …/issues` — filtered, paginated list (excludes pull requests). */
@@ -79,6 +88,7 @@ const listIssuesHandler: Route["handler"] = async (ctx) => {
     state: parseStateFilter(url.searchParams.get("state")),
     labelName: str(url.searchParams.get("label")),
     milestoneNumber: parseNumberParam(url.searchParams.get("milestone") ?? undefined),
+    assigneeIssuer: currentIssuer(ctx),
     assigneeSubject: str(url.searchParams.get("assignee")),
     limit,
     offset,
@@ -137,7 +147,11 @@ const openIssueHandler: Route["handler"] = async (ctx) => {
     if (subjects === null) {
       return errorResponse(400, "invalid_assignees", "assignees must be an array.");
     }
-    const resolved = await resolveAssignees(access.db, subjects);
+    const resolved = await resolveAssignees(
+      access.db,
+      currentIssuer(ctx),
+      subjects,
+    );
     if (resolved.missing.length > 0) {
       return errorResponse(400, "unknown_assignee", "Unknown assignee.", {
         assignees: resolved.missing,
@@ -156,6 +170,7 @@ const openIssueHandler: Route["handler"] = async (ctx) => {
   });
 
   emitDomainEvent(
+    ctx.scope,
     buildEvent({
       type: "issue.opened",
       repoId: access.repo.id,
@@ -240,6 +255,7 @@ const patchIssueHandler: Route["handler"] = async (ctx) => {
     await updateIssueFields(access.db, row.id, fields);
     if (fields.milestoneId !== undefined) {
       emitDomainEvent(
+        ctx.scope,
         buildEvent({
           type: "issue.milestoned",
           repoId: access.repo.id,
@@ -267,6 +283,7 @@ const patchIssueHandler: Route["handler"] = async (ctx) => {
     }
     await setIssueLabels(access.db, row.id, resolved.ids);
     emitDomainEvent(
+      ctx.scope,
       buildEvent({
         type: "issue.labeled",
         repoId: access.repo.id,
@@ -287,12 +304,17 @@ const patchIssueHandler: Route["handler"] = async (ctx) => {
     if (subjects === null) {
       return errorResponse(400, "invalid_assignees", "assignees must be an array.");
     }
-    const resolved = await resolveAssignees(access.db, subjects);
+    const resolved = await resolveAssignees(
+      access.db,
+      currentIssuer(ctx),
+      subjects,
+    );
     if (resolved.missing.length > 0) {
       return errorResponse(400, "unknown_assignee", "Unknown assignee.", { assignees: resolved.missing });
     }
     await setAssignees(access.db, row.id, resolved.ids);
     emitDomainEvent(
+      ctx.scope,
       buildEvent({
         type: "issue.assigned",
         repoId: access.repo.id,
@@ -320,6 +342,7 @@ const patchIssueHandler: Route["handler"] = async (ctx) => {
         : null;
     await setIssueState(access.db, row.id, body.state, reason);
     emitDomainEvent(
+      ctx.scope,
       buildEvent({
         type: body.state === "closed" ? "issue.closed" : "issue.reopened",
         repoId: access.repo.id,
@@ -336,6 +359,7 @@ const patchIssueHandler: Route["handler"] = async (ctx) => {
 
   const issue = await getIssueDto(access.db, access.repo.id, number);
   emitDomainEvent(
+    ctx.scope,
     buildEvent({
       type: "issue.edited",
       repoId: access.repo.id,
@@ -370,6 +394,7 @@ function stateTransitionHandler(target: "open" | "closed"): Route["handler"] {
     }
     await setIssueState(access.db, row.id, target, reason);
     emitDomainEvent(
+      ctx.scope,
       buildEvent({
         type: target === "closed" ? "issue.closed" : "issue.reopened",
         repoId: access.repo.id,

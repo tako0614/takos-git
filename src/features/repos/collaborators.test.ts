@@ -57,7 +57,12 @@ describe("repo collaborators", () => {
 
     const grant = await dispatch(
       reg,
-      jsonRequest("PUT", "/api/v1/repos/alice/web/collaborators/sub-bob", { role: "writer" }, "taksrv_alice_a"),
+      jsonRequest(
+        "PUT",
+        "/api/v1/repos/alice/web/collaborators/sub-bob",
+        { role: "writer", bindingId: "binding_sub-bob" },
+        "taksrv_alice_a",
+      ),
       handle.env,
       tokens,
     );
@@ -136,7 +141,12 @@ describe("org teams + team repo access", () => {
 
     await dispatch(
       reg,
-      jsonRequest("PUT", "/api/v1/orgs/acme/teams/core/members/sub-bob", { role: "member" }, "taksrv_alice_a"),
+      jsonRequest(
+        "PUT",
+        "/api/v1/orgs/acme/teams/core/members/sub-bob",
+        { role: "member", bindingId: "binding_sub-bob" },
+        "taksrv_alice_a",
+      ),
       handle.env,
       tokens,
     );

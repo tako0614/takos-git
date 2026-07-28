@@ -2,7 +2,6 @@ import {
   createResource,
   createSignal,
   For,
-  onCleanup,
   Show,
   Suspense,
   type JSX,
@@ -10,6 +9,7 @@ import {
 import { reposApi } from "../../api/repos.ts";
 import { Icons, Spinner } from "../../ui/index.ts";
 import { cn } from "../../lib/cn.ts";
+import { createReactiveListener } from "../../lib/lifecycle.ts";
 
 type RefKind = "branch" | "tag";
 
@@ -40,8 +40,6 @@ export function RefSelector(props: {
   };
   const close = () => {
     setOpen(false);
-    document.removeEventListener("click", onDocClick);
-    document.removeEventListener("keydown", onKey);
   };
   const toggle = () => {
     if (open()) {
@@ -50,13 +48,19 @@ export function RefSelector(props: {
     }
     setOpen(true);
     setFilter("");
-    document.addEventListener("click", onDocClick);
-    document.addEventListener("keydown", onKey);
     queueMicrotask(() => inputEl?.focus());
   };
-  onCleanup(() => {
-    document.removeEventListener("click", onDocClick);
-    document.removeEventListener("keydown", onKey);
+  createReactiveListener({
+    active: open,
+    target: document,
+    type: "click",
+    handler: onDocClick as EventListener,
+  });
+  createReactiveListener({
+    active: open,
+    target: document,
+    type: "keydown",
+    handler: onKey as EventListener,
   });
 
   // Fetch only once the popover has been opened at least once.

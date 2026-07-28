@@ -2,10 +2,10 @@ import {
   createSignal,
   For,
   Show,
-  onCleanup,
   type JSX,
 } from "solid-js";
 import { cn } from "../lib/cn.ts";
+import { createReactiveListener } from "../lib/lifecycle.ts";
 
 export interface MenuItem {
   readonly label: JSX.Element;
@@ -38,13 +38,17 @@ export function Menu(props: {
   const onKey = (e: KeyboardEvent) => {
     if (e.key === "Escape") setOpen(false);
   };
-  const bind = () => {
-    document.addEventListener("click", onDocClick);
-    document.addEventListener("keydown", onKey);
-  };
-  onCleanup(() => {
-    document.removeEventListener("click", onDocClick);
-    document.removeEventListener("keydown", onKey);
+  createReactiveListener({
+    active: open,
+    target: document,
+    type: "click",
+    handler: onDocClick as EventListener,
+  });
+  createReactiveListener({
+    active: open,
+    target: document,
+    type: "keydown",
+    handler: onKey as EventListener,
   });
 
   return (
@@ -56,9 +60,7 @@ export function Menu(props: {
         aria-label={props.triggerLabel}
         class="tg-focus inline-flex items-center rounded-md"
         onClick={() => {
-          const next = !open();
-          setOpen(next);
-          if (next) bind();
+          setOpen((current) => !current);
         }}
       >
         {props.trigger}

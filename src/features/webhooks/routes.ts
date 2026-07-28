@@ -148,21 +148,28 @@ const createWebhook: Route["handler"] = async (ctx) => {
       ? body.contentType
       : "application/json";
 
-  let secretEnc: string | null = null;
-  if (typeof body.secret === "string" && body.secret.length > 0) {
-    const key = webhookEncryptionKey(ctx.env);
-    if (!key) {
-      return errorResponse(
-        503,
-        "secret_encryption_unconfigured",
-        "A webhook secret cannot be stored because encryption is not configured.",
-      );
-    }
-    if (body.secret.length > 1024) {
-      return errorResponse(400, "invalid_secret", "secret is too long.");
-    }
-    secretEnc = await encryptSecret(body.secret, key);
+  // A secret is mandatory: an unsigned delivery cannot be authenticated by the
+  // receiver, and `sendOne` refuses to deliver a hook it cannot sign, so a
+  // secretless hook would be a webhook that silently never fires.
+  if (typeof body.secret !== "string" || body.secret.length === 0) {
+    return errorResponse(
+      400,
+      "secret_required",
+      "secret is required: takos-git only delivers HMAC-signed webhooks.",
+    );
   }
+  const key = webhookEncryptionKey(ctx.env);
+  if (!key) {
+    return errorResponse(
+      503,
+      "secret_encryption_unconfigured",
+      "A webhook secret cannot be stored because encryption is not configured. Set the WEBHOOK_SECRET_KEY worker secret (OpenTofu: webhook_secret_key).",
+    );
+  }
+  if (body.secret.length > 1024) {
+    return errorResponse(400, "invalid_secret", "secret is too long.");
+  }
+  const secretEnc = await encryptSecret(body.secret, key);
 
   const id = ctx.db!.id();
   const now = ctx.db!.now();
@@ -236,16 +243,21 @@ const patchWebhook: Route["handler"] = async (ctx) => {
     params.push(body.contentType);
   }
   if (body.secret !== undefined) {
+    // Clearing the secret is refused for the same reason creation requires one.
     if (body.secret === null || body.secret === "") {
-      sets.push("secret_enc = ?");
-      params.push(null);
-    } else if (typeof body.secret === "string" && body.secret.length <= 1024) {
+      return errorResponse(
+        400,
+        "secret_required",
+        "A webhook secret cannot be removed: takos-git only delivers HMAC-signed webhooks.",
+      );
+    }
+    if (typeof body.secret === "string" && body.secret.length <= 1024) {
       const key = webhookEncryptionKey(ctx.env);
       if (!key) {
         return errorResponse(
           503,
           "secret_encryption_unconfigured",
-          "A webhook secret cannot be stored because encryption is not configured.",
+          "A webhook secret cannot be stored because encryption is not configured. Set the WEBHOOK_SECRET_KEY worker secret (OpenTofu: webhook_secret_key).",
         );
       }
       sets.push("secret_enc = ?");

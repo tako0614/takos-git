@@ -164,7 +164,7 @@ describe("dispatchWebhook fan-out", () => {
   test("skips unsubscribed events and inactive hooks", async () => {
     const handle = envWithKey();
     const reg = router();
-    await seedRepoAndHook(handle, reg, { url: "https://a.example", events: ["issues"] });
+    await seedRepoAndHook(handle, reg, { url: "https://a.example", events: ["issues"], secret: "s3cr3t" });
     const repoRow = await handle.db.queryOne<{ id: string }>(
       `SELECT id FROM repositories WHERE storage_key = 'alice/web'`,
     );
@@ -176,14 +176,18 @@ describe("dispatchWebhook fan-out", () => {
   test("captures a failed send without throwing", async () => {
     const handle = envWithKey();
     const reg = router();
-    await seedRepoAndHook(handle, reg, { url: "https://a.example", events: ["push"] });
+    await seedRepoAndHook(handle, reg, { url: "https://a.example", events: ["push"], secret: "s3cr3t" });
     const repoRow = await handle.db.queryOne<{ id: string }>(
       `SELECT id FROM repositories WHERE storage_key = 'alice/web'`,
     );
     const fetchImpl = (async () => {
       throw new Error("connection refused");
     }) as unknown as typeof fetch;
-    const outcomes = await dispatchWebhook(handle.db, repoRow!.id, "push", {}, { fetchImpl });
+    const outcomes = await dispatchWebhook(handle.db, repoRow!.id, "push", {}, {
+      encryptionKey: KEY,
+      bucket: handle.bucket,
+      fetchImpl,
+    });
     expect(outcomes[0].status).toBe("failed");
     const row = await handle.db.queryOne<{ status: string; error: string }>(
       `SELECT status, error FROM webhook_deliveries WHERE id = ?`,
@@ -191,6 +195,59 @@ describe("dispatchWebhook fan-out", () => {
     );
     expect(row!.status).toBe("failed");
     expect(row!.error).toContain("connection refused");
+  });
+});
+
+describe("unsignable deliveries fail closed", () => {
+  test("a delivery whose secret cannot be decrypted is never sent", async () => {
+    const handle = envWithKey();
+    const reg = router();
+    await seedRepoAndHook(handle, reg, { url: "https://a.example", events: ["push"], secret: "s3cr3t" });
+    const repoRow = await handle.db.queryOne<{ id: string }>(
+      `SELECT id FROM repositories WHERE storage_key = 'alice/web'`,
+    );
+    let sent = 0;
+    const fetchImpl = (async () => {
+      sent += 1;
+      return new Response("ok", { status: 200 });
+    }) as unknown as typeof fetch;
+
+    // No encryptionKey: signing is impossible, so nothing may leave the worker.
+    const outcomes = await dispatchWebhook(handle.db, repoRow!.id, "push", {}, {
+      bucket: handle.bucket,
+      fetchImpl,
+    });
+    expect(sent).toBe(0);
+    expect(outcomes[0].status).toBe("failed");
+    const row = await handle.db.queryOne<{ status: string; error: string }>(
+      `SELECT status, error FROM webhook_deliveries WHERE id = ?`,
+      [outcomes[0].deliveryId],
+    );
+    expect(row!.status).toBe("failed");
+    expect(row!.error).toContain("signing_unconfigured");
+  });
+
+  test("a secretless hook row is never delivered unsigned", async () => {
+    const handle = envWithKey();
+    const reg = router();
+    await seedRepoAndHook(handle, reg, { url: "https://a.example", events: ["push"], secret: "s3cr3t" });
+    const repoRow = await handle.db.queryOne<{ id: string }>(
+      `SELECT id FROM repositories WHERE storage_key = 'alice/web'`,
+    );
+    // A row predating the secret requirement (or written outside the API).
+    await handle.db.run(`UPDATE webhooks SET secret_enc = NULL WHERE repo_id = ?`, [repoRow!.id]);
+    let sent = 0;
+    const fetchImpl = (async () => {
+      sent += 1;
+      return new Response("ok", { status: 200 });
+    }) as unknown as typeof fetch;
+    const outcomes = await dispatchWebhook(handle.db, repoRow!.id, "push", {}, {
+      encryptionKey: KEY,
+      bucket: handle.bucket,
+      fetchImpl,
+    });
+    expect(sent).toBe(0);
+    expect(outcomes[0].status).toBe("failed");
   });
 });
 
@@ -252,6 +309,25 @@ describe("webhook CRUD routes", () => {
     expect(badEvent.status).toBe(400);
   });
 
+  test("creating without a secret, or clearing one, is refused", async () => {
+    const handle = envWithKey();
+    const reg = router();
+    const hookId = await seedRepoAndHook(handle, reg);
+    const secretless = await dispatch(
+      reg,
+      jsonRequest("POST", "/api/v1/repos/alice/web/webhooks", { url: "https://x.example", events: ["push"] }, "taksrv_alice_a"),
+      handle.env,
+    );
+    expect(secretless.status).toBe(400);
+    expect(await secretless.json()).toMatchObject({ error: { code: "secret_required" } });
+    const cleared = await dispatch(
+      reg,
+      jsonRequest("PATCH", `/api/v1/repos/alice/web/webhooks/${hookId}`, { secret: null }, "taksrv_alice_a"),
+      handle.env,
+    );
+    expect(cleared.status).toBe(400);
+  });
+
   test("storing a secret without an encryption key fails closed (503)", async () => {
     const handle = makeEnv(); // no WEBHOOK_SECRET_KEY / APP_SESSION_SECRET
     const reg = router();
@@ -298,7 +374,12 @@ describe("webhook route authorization", () => {
     );
     await dispatch(
       reg,
-      jsonRequest("PUT", "/api/v1/repos/alice/pub/collaborators/sub-dave", { role: "writer" }, "taksrv_alice_a"),
+      jsonRequest(
+        "PUT",
+        "/api/v1/repos/alice/pub/collaborators/sub-dave",
+        { role: "writer", bindingId: "binding_sub-dave" },
+        "taksrv_alice_a",
+      ),
       handle.env,
     );
     // dave presents an admin-scoped credential (so the scope ceiling passes) but

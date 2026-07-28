@@ -97,9 +97,10 @@ async function request<T>(
 ): Promise<T> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
-  const signal = options.signal
-    ? anySignal([options.signal, controller.signal])
-    : controller.signal;
+  const combined = options.signal
+    ? combineSignals([options.signal, controller.signal])
+    : null;
+  const signal = combined?.signal ?? controller.signal;
 
   const headers: Record<string, string> = { accept: "application/json" };
   let body: BodyInit | undefined;
@@ -124,19 +125,39 @@ async function request<T>(
     return (text ? JSON.parse(text) : undefined) as T;
   } finally {
     clearTimeout(timer);
+    combined?.dispose();
   }
 }
 
-function anySignal(signals: AbortSignal[]): AbortSignal {
+function combineSignals(signals: readonly AbortSignal[]): {
+  readonly signal: AbortSignal;
+  readonly dispose: () => void;
+} {
   const controller = new AbortController();
+  const listeners: Array<{
+    readonly signal: AbortSignal;
+    readonly onAbort: () => void;
+  }> = [];
   for (const signal of signals) {
     if (signal.aborted) {
-      controller.abort();
+      controller.abort(signal.reason);
       break;
     }
-    signal.addEventListener("abort", () => controller.abort(), { once: true });
+    const onAbort = (): void => controller.abort(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    listeners.push({ signal, onAbort });
   }
-  return controller.signal;
+  let disposed = false;
+  return {
+    signal: controller.signal,
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      for (const listener of listeners) {
+        listener.signal.removeEventListener("abort", listener.onAbort);
+      }
+    },
+  };
 }
 
 // --- verb helpers -----------------------------------------------------------

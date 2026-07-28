@@ -332,6 +332,43 @@ describe("sync with upstream (fast-forward only)", () => {
     const res = (await dispatch(registry, env, req)) as Response;
     expect(res.status).toBe(401);
   });
+
+  it("404s a sync whose upstream is no longer readable by the caller", async () => {
+    const { registry, env, db, baseSha } = await seededFork();
+    const upstreamTip = await advanceBranch(env, "acme/web", "main", baseSha, "README.md", "v2");
+    // The upstream goes private AFTER the fork was taken: write on the fork must
+    // not keep pumping the now-unreadable upstream's history into it.
+    await db.run(
+      `UPDATE repositories SET visibility = 'private'
+        WHERE id = (SELECT r.id FROM repositories r JOIN owners o ON o.id = r.owner_id
+                     WHERE o.login = 'acme' AND r.name = 'web')`,
+      [],
+    );
+
+    const req = jsonRequest("POST", "/api/v1/repos/devuser/web/sync", { branch: "main" }, "taksrv_dev_write");
+    const res = (await dispatch(registry, env, req)) as Response;
+    expect(res.status).toBe(404);
+
+    const forkRefs = await readRepoRefs(env.BUCKET, "devuser/web");
+    expect(forkRefs.refs.find((r) => r.name === "refs/heads/main")?.sha).toBe(baseSha);
+    const forkStore = repositoryObjectStore(env.BUCKET, "devuser/web");
+    expect(await getCommitData(forkStore, upstreamTip)).toBeNull();
+  });
+
+  it("copies only objects reachable from the synced branch", async () => {
+    const { registry, env, baseSha } = await seededFork();
+    // A branch the sync never names: its objects must stay in the upstream.
+    const secretSha = await advanceBranch(env, "acme/web", "secret", baseSha, "SECRET.md", "classified");
+    const upstreamTip = await advanceBranch(env, "acme/web", "main", baseSha, "README.md", "v2");
+
+    const req = jsonRequest("POST", "/api/v1/repos/devuser/web/sync", { branch: "main" }, "taksrv_dev_write");
+    const res = (await dispatch(registry, env, req)) as Response;
+    expect(res.status).toBe(200);
+
+    const forkStore = repositoryObjectStore(env.BUCKET, "devuser/web");
+    expect(await getCommitData(forkStore, upstreamTip)).not.toBeNull();
+    expect(await getCommitData(forkStore, secretSha)).toBeNull();
+  });
 });
 
 describe("fork domain events", () => {

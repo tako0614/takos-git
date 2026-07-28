@@ -33,7 +33,11 @@ export {
   type CoordinatorStorage,
   type NeedsDecision,
 } from "./coordinator.ts";
-export { DEFAULT_RUNNER_POLICY, type RunnerPolicy } from "./policy.ts";
+export {
+  DEFAULT_RUNNER_POLICY,
+  RUNNER_CONTAINER_REQUIREMENTS,
+  type RunnerPolicy,
+} from "./policy.ts";
 export {
   ACTIONS_JOB_KIND,
   type ActionsJobDispatch,

@@ -16,6 +16,8 @@
  * dictionary) and the 4-byte adler32 trailer to report total zlib bytes.
  */
 
+import { MAX_GIT_RAW_OBJECT_BYTES } from "./limits.ts";
+
 const MAX_BITS = 15;
 
 // RFC 1951 length codes (symbols 257..285): base value + extra bits.
@@ -142,15 +144,25 @@ class OutBuffer {
   private data: Uint8Array;
   length = 0;
 
-  constructor(initialCapacity: number) {
-    this.data = new Uint8Array(Math.max(64, initialCapacity));
+  constructor(
+    initialCapacity: number,
+    private readonly maxOutputBytes: number,
+  ) {
+    this.data = new Uint8Array(
+      Math.min(maxOutputBytes, Math.max(64, initialCapacity)),
+    );
   }
 
   private ensure(extra: number): void {
     const needed = this.length + extra;
+    if (needed > this.maxOutputBytes) {
+      throw new Error(
+        `inflate: output exceeds the ${this.maxOutputBytes}-byte limit`,
+      );
+    }
     if (needed <= this.data.length) return;
-    let cap = this.data.length * 2;
-    while (cap < needed) cap *= 2;
+    let cap = Math.max(1, this.data.length);
+    while (cap < needed) cap = Math.min(this.maxOutputBytes, cap * 2);
     const next = new Uint8Array(cap);
     next.set(this.data.subarray(0, this.length));
     this.data = next;
@@ -279,13 +291,27 @@ export interface InflateResult {
  * Inflate a raw DEFLATE stream that begins at `offset` within `buf`.
  * `bytesConsumed` is measured from `offset`.
  */
-export function inflateRawAt(buf: Uint8Array, offset: number): InflateResult {
+export function inflateRawAt(
+  buf: Uint8Array,
+  offset: number,
+  maxOutputBytes = MAX_GIT_RAW_OBJECT_BYTES,
+): InflateResult {
   if (offset < 0 || offset > buf.length) {
     throw new Error("inflate: offset out of range");
   }
+  if (
+    maxOutputBytes < 0 ||
+    (!Number.isFinite(maxOutputBytes) &&
+      maxOutputBytes !== Number.POSITIVE_INFINITY)
+  ) {
+    throw new Error("inflate: invalid output limit");
+  }
   const reader = new BitReader(buf, offset);
-  // Guess a starting capacity; grows as needed.
-  const out = new OutBuffer(Math.max(64, (buf.length - offset) * 3));
+  // Keep the first allocation small even when the request itself is large.
+  const out = new OutBuffer(
+    Math.min(64 * 1024, Math.max(64, (buf.length - offset) * 3)),
+    maxOutputBytes,
+  );
 
   let final = 0;
   do {
@@ -321,7 +347,11 @@ export function inflateRawAt(buf: Uint8Array, offset: number): InflateResult {
  * report the total number of zlib bytes consumed (2-byte header + DEFLATE body
  * + optional 4-byte preset-dictionary id + 4-byte adler32 trailer).
  */
-export function inflateZlibAt(buf: Uint8Array, offset: number): InflateResult {
+export function inflateZlibAt(
+  buf: Uint8Array,
+  offset: number,
+  maxOutputBytes = MAX_GIT_RAW_OBJECT_BYTES,
+): InflateResult {
   if (offset < 0 || offset + 2 > buf.length) {
     throw new Error("inflate: zlib header out of range");
   }
@@ -342,7 +372,7 @@ export function inflateZlibAt(buf: Uint8Array, offset: number): InflateResult {
     deflateStart += 4;
   }
 
-  const raw = inflateRawAt(buf, deflateStart);
+  const raw = inflateRawAt(buf, deflateStart, maxOutputBytes);
   const headerLen = deflateStart - offset;
   const consumed = headerLen + raw.bytesConsumed + 4; // + adler32 trailer
   if (offset + consumed > buf.length) {

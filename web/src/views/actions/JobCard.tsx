@@ -6,6 +6,7 @@ import {
   Show,
   type JSX,
 } from "solid-js";
+import { createPolling } from "../../lib/lifecycle.ts";
 import { Icons } from "../../ui/index.ts";
 import { actionsApi } from "../../api/actions.ts";
 import { ApiError } from "../../api/client.ts";
@@ -39,7 +40,6 @@ export function JobCard(props: {
   const [detailSteps, setDetailSteps] = createSignal<readonly WorkflowStepDto[] | null>(null);
   const [loading, setLoading] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
-  let timer: ReturnType<typeof setInterval> | undefined;
   let disposed = false;
 
   const live = () => !isTerminal(props.job.status);
@@ -62,27 +62,18 @@ export function JobCard(props: {
     }
   };
 
-  const stopPolling = () => {
-    if (timer) {
-      clearInterval(timer);
-      timer = undefined;
-    }
-  };
-
-  // Load + poll steps only while expanded.
+  // Load steps on expand; poll only while expanded AND live.
   createEffect(() => {
-    if (open()) {
-      if (detailSteps() === null) void fetchDetail(true);
-      stopPolling();
-      if (live()) timer = setInterval(() => void fetchDetail(false), POLL_MS);
-    } else {
-      stopPolling();
-    }
+    if (open() && detailSteps() === null) void fetchDetail(true);
+  });
+  createPolling({
+    active: () => open() && live(),
+    intervalMs: POLL_MS,
+    tick: () => fetchDetail(false),
   });
 
   onCleanup(() => {
     disposed = true;
-    stopPolling();
   });
 
   return (

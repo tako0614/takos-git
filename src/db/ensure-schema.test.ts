@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { createFakeD1 } from "./fake.ts";
-import { createDbClient } from "./client.ts";
+import {
+  createDbClient,
+  type D1Database,
+  type D1PreparedStatement,
+  type D1Result,
+} from "./client.ts";
 import { ensureSchema, resetSchemaCacheForTests } from "./ensure-schema.ts";
 
 describe("ensureSchema", () => {
@@ -29,6 +34,18 @@ describe("ensureSchema", () => {
       `SELECT version FROM schema_migrations WHERE version = '0001'`,
     );
     expect(ledger?.version).toBe("0001");
+    const identityLedger = await db.queryOne<{ version: string }>(
+      `SELECT version FROM schema_migrations WHERE version = '0002'`,
+    );
+    expect(identityLedger?.version).toBe("0002");
+    const webhookOutboxLedger = await db.queryOne<{ version: string }>(
+      `SELECT version FROM schema_migrations WHERE version = '0003'`,
+    );
+    expect(webhookOutboxLedger?.version).toBe("0003");
+    const deletionLedger = await db.queryOne<{ version: string }>(
+      `SELECT version FROM schema_migrations WHERE version = '0004'`,
+    );
+    expect(deletionLedger?.version).toBe("0004");
   });
 
   test("is idempotent — re-applying does not throw or duplicate", async () => {
@@ -43,7 +60,75 @@ describe("ensureSchema", () => {
     const rows = await db.query<{ version: string }>(
       `SELECT version FROM schema_migrations`,
     );
-    expect(rows.length).toBe(1);
+    expect(rows.map((row) => row.version)).toEqual([
+      "0001",
+      "0002",
+      "0003",
+      "0004",
+    ]);
+  });
+
+  test("upgrades an existing 0001 database without dropping principals", async () => {
+    resetSchemaCacheForTests();
+    const { migrations } = await import("./migration-sql.ts");
+    const fake = createFakeD1(migrations[0]?.sql);
+    const db = createDbClient(fake);
+    const now = db.now();
+    await db.run(
+      `INSERT INTO principals (id, subject, kind, created_at, updated_at)
+       VALUES ('legacy', 'sub-legacy', 'user', ?, ?)`,
+      [now, now],
+    );
+    await db.run(
+      `INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES ('0001', ?)`,
+      [now],
+    );
+
+    await ensureSchema(fake);
+
+    const principal = await db.queryOne<{
+      id: string;
+      issuer: string;
+      binding_id: string;
+    }>(
+      `SELECT id, issuer, binding_id FROM principals WHERE id = 'legacy'`,
+    );
+    expect(principal).toEqual({
+      id: "legacy",
+      issuer: "",
+      binding_id: "",
+    });
+  });
+
+  test("accepts a migration batch whose commit won a concurrent race", async () => {
+    resetSchemaCacheForTests();
+    const fake = createFakeD1();
+    let lostFirstResponse = true;
+    const raced = {
+      prepare: (query: string) => fake.prepare(query),
+      exec: (query: string) => fake.exec(query),
+      async batch<T = Record<string, unknown>>(
+        statements: D1PreparedStatement[],
+      ): Promise<D1Result<T>[]> {
+        const result = await fake.batch<T>(statements);
+        if (lostFirstResponse) {
+          lostFirstResponse = false;
+          throw new Error("simulated concurrent winner / lost batch response");
+        }
+        return result;
+      },
+    } satisfies D1Database;
+
+    await ensureSchema(raced);
+    const versions = await createDbClient(fake).query<{ version: string }>(
+      `SELECT version FROM schema_migrations ORDER BY version`,
+    );
+    expect(versions.map((row) => row.version)).toEqual([
+      "0001",
+      "0002",
+      "0003",
+      "0004",
+    ]);
   });
 
   test("caches per isolate — second call does not re-apply", async () => {

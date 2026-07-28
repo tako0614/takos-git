@@ -43,6 +43,56 @@ const tokens = interfaceUserInfoFetch({
 });
 
 describe("repository CRUD via router + ACL", () => {
+  test("the same subject from another issuer or InterfaceBinding cannot inherit a private namespace", async () => {
+    const handle = makeEnv();
+    const reg = router();
+    const splitTokens = interfaceUserInfoFetch({
+      taksrv_binding_a: {
+        scope: "source.git.hosting.write",
+        subject: "shared-subject",
+        bindingId: "binding-a",
+      },
+      taksrv_binding_b: {
+        scope: "source.git.hosting.read",
+        subject: "shared-subject",
+        bindingId: "binding-b",
+      },
+      taksrv_other_issuer: {
+        scope: "source.git.hosting.read",
+        subject: "shared-subject",
+        bindingId: "binding-a",
+      },
+    });
+    const created = await dispatch(
+      reg,
+      jsonRequest(
+        "POST",
+        "/api/v1/repos",
+        { owner: "shared", name: "private", visibility: "private" },
+        "taksrv_binding_a",
+      ),
+      handle.env,
+      splitTokens,
+    );
+    expect(created.status).toBe(201);
+
+    const wrongBinding = await dispatch(
+      reg,
+      get("/api/v1/repos/shared/private", "taksrv_binding_b"),
+      handle.env,
+      splitTokens,
+    );
+    expect(wrongBinding.status).toBe(404);
+
+    const wrongIssuer = await dispatch(
+      reg,
+      get("/api/v1/repos/shared/private", "taksrv_other_issuer"),
+      { ...handle.env, OIDC_ISSUER_URL: "https://other-accounts.example" },
+      splitTokens,
+    );
+    expect(wrongIssuer.status).toBe(404);
+  });
+
   test("create auto-provisions the personal owner and the R2 refs-doc", async () => {
     const handle = makeEnv();
     const reg = router();
@@ -131,7 +181,7 @@ describe("repository CRUD via router + ACL", () => {
     });
   });
 
-  test("delete removes the D1 row and R2 objects (owner only)", async () => {
+  test("delete immediately hides the quarantined generation (owner only)", async () => {
     const handle = makeEnv();
     const reg = router();
     await dispatch(
@@ -146,7 +196,7 @@ describe("repository CRUD via router + ACL", () => {
       handle.env,
       tokens,
     );
-    expect(removed.status).toBe(200);
+    expect(removed.status).toBe(202);
     expect(await repoExists(handle.bucket, "alice/web")).toBe(false);
     const gone = await dispatch(reg, get("/api/v1/repos/alice/web", "taksrv_alice_r"), handle.env, tokens);
     expect(gone.status).toBe(404);

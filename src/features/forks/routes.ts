@@ -46,6 +46,7 @@ import {
   getRepoById,
   getRepoByOwnerName,
   listForkChildren,
+  resolveUpstream,
   syncFork,
   toRepositoryDtoFull,
   type RepoFullRow,
@@ -349,6 +350,15 @@ const syncHandler: Route["handler"] = async (ctx) => {
     access.repo.name,
   );
   if (!fork) return errorResponse(404, "not_found", "Not Found");
+
+  // A sync READS the upstream, so the upstream is authorized too. Write on the
+  // fork alone would otherwise pump history out of a repo the caller cannot read
+  // (typically one that went private after being forked) into a prefix the
+  // caller owns. 404, like every other denied read, so existence stays undisclosed.
+  const upstream = await resolveUpstream(ctx.db!, fork);
+  if (upstream && !(await readable(ctx.db!, access.auth.principal, upstream))) {
+    return errorResponse(404, "not_found", "Not Found");
+  }
 
   const outcome = await syncFork(ctx.env.BUCKET, ctx.db!, fork, branch);
   if (!outcome.ok) {

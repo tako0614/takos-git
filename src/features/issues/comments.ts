@@ -75,6 +75,7 @@ const createCommentHandler: Route["handler"] = async (ctx) => {
   }
   const comment = await createComment(access.db, issue.id, access.auth.principal.id, text);
   emitDomainEvent(
+    ctx.scope,
     buildEvent({
       type: "issue.commented",
       repoId: access.repo.id,
@@ -109,6 +110,7 @@ const patchCommentHandler: Route["handler"] = async (ctx) => {
   const comment = await updateComment(access.db, found.comment.id, text);
   if (!comment) return errorResponse(404, "not_found", "Not Found");
   emitDomainEvent(
+    ctx.scope,
     buildEvent({
       type: "issue.comment_edited",
       repoId: access.repo.id,
@@ -137,6 +139,7 @@ const deleteCommentHandler: Route["handler"] = async (ctx) => {
   }
   await deleteComment(access.db, found.comment.id, found.issue.id);
   emitDomainEvent(
+    ctx.scope,
     buildEvent({
       type: "issue.comment_deleted",
       repoId: access.repo.id,

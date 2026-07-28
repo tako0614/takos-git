@@ -14,6 +14,10 @@
 
 import { getObject, putObject } from "../../git/object-store.ts";
 import { isValidSha } from "../../git/git-objects.ts";
+import {
+  MAX_TAG_OBJECT_BYTES,
+  MAX_TAG_PEEL_DEPTH,
+} from "../../git/limits.ts";
 import type { ObjectStoreBinding } from "../../git/types.ts";
 
 export interface TagSignature {
@@ -39,9 +43,6 @@ export interface ParsedTagObject {
   readonly tagger: TagSignature | null;
   readonly message: string;
 }
-
-const MAX_TAG_BYTES = 64 * 1024;
-const MAX_PEEL_DEPTH = 10;
 
 function encodeTagContent(input: AnnotatedTagInput): Uint8Array {
   const t = input.tagger;
@@ -103,9 +104,9 @@ export async function peelToCommit(
   sha: string,
 ): Promise<string | null> {
   let current = sha;
-  for (let depth = 0; depth < MAX_PEEL_DEPTH; depth += 1) {
+  for (let depth = 0; depth < MAX_TAG_PEEL_DEPTH; depth += 1) {
     if (!isValidSha(current)) return null;
-    const object = await getObject(store, current, MAX_TAG_BYTES);
+    const object = await getObject(store, current, MAX_TAG_OBJECT_BYTES);
     if (!object) return null;
     if (object.type === "commit") return current;
     if (object.type !== "tag") return null;

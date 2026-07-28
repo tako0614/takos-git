@@ -15,12 +15,22 @@
 
 import type { ObjectStoreBinding } from "./git/types.ts";
 import {
+  requestScope,
+  type BackgroundScope,
+  type WaitUntilContext,
+} from "./lifecycle.ts";
+import {
   handleInfoRefs,
   handleReceivePack,
   handleUploadPack,
+  type AppliedRefUpdate,
   type GitService,
 } from "./smart-http.ts";
 import { isValidRepoName, repoExists } from "./git/refs-store.ts";
+import {
+  MAX_RECEIVE_PACK_REQUEST_BYTES,
+  MAX_UPLOAD_PACK_REQUEST_BYTES,
+} from "./git/limits.ts";
 import { handleMcp } from "./mcp.ts";
 import { handleForgeApi } from "./forge-api.ts";
 import {
@@ -45,11 +55,17 @@ import "./routes/ping.ts";
 // Feature registration: each feature exports a `registerXRoutes(registry)`; the
 // worker adds one import + one call. Phase-3b features follow this exact pattern.
 import { registerRepoRoutes } from "./features/repos/index.ts";
+import { processRepositoryDeletionQueue } from "./features/repos/repositories.ts";
 import { registerIssuesRoutes } from "./features/issues/index.ts";
 import { registerPullRoutes } from "./features/pulls/routes.ts";
 import { registerReleaseRoutes } from "./features/releases/routes.ts";
 import { registerForkRoutes } from "./features/forks/index.ts";
 import { registerWebhookRoutes } from "./features/webhooks/routes.ts";
+import {
+  processDueWebhookDeliveries,
+  type DispatchDeps as WebhookDispatchDeps,
+} from "./features/webhooks/service.ts";
+import { webhookEncryptionKey } from "./features/webhooks/crypto.ts";
 import { registerChecksRoutes } from "./features/checks/routes.ts";
 import {
   onPushDiscoverWorkflows,
@@ -101,6 +117,7 @@ export interface Env {
   APP_SESSION_SECRET?: string;
   APP_WORKSPACE_ID?: string;
   APP_CAPSULE_ID?: string;
+  WEBHOOK_SECRET_KEY?: string;
 
   // --- Self-hosted Actions runner bindings (main.tf `enable_actions`) ---
   // All optional/undefined when Actions is off; the control plane degrades to
@@ -172,7 +189,6 @@ async function staticFallback(
 }
 
 const GIT_PREFIX = "/git/";
-const MAX_RECEIVE_PACK_BYTES = 64 * 1024 * 1024;
 // The launcher tile icon referenced by the Takosumi-side UI Interface document.
 // The dashboard resolves this path against the Worker's public URL, so the
 // Worker must serve the asset itself — this single-file Worker ships no static-
@@ -451,7 +467,14 @@ interface SmartHttpCredential {
 /** A resolved smart-HTTP repo authorization: a deny Response, or the per-ref gate. */
 type SmartHttpGate =
   | Response
-  | { readonly authorizeRef: (refName: string) => Promise<boolean> };
+  | {
+      readonly authorizeRef: (
+        update: AppliedRefUpdate,
+      ) => Promise<{
+        readonly allow: boolean;
+        readonly allowNonFastForward?: boolean;
+      }>;
+    };
 
 /**
  * Per-repo authorization for the Git smart-HTTP surface, layered AFTER the exact
@@ -467,6 +490,7 @@ async function authorizeSmartHttpRepo(
   credential: SmartHttpCredential,
   repoPath: string,
   service: GitService,
+  issuer: string,
 ): Promise<SmartHttpGate> {
   const db = createDbClient(dbBinding);
   // The R2 storage key is `owner/name`; split on the first slash. A bare
@@ -477,6 +501,7 @@ async function authorizeSmartHttpRepo(
   const action: RepoAction =
     service === "git-receive-pack" ? "contents.write" : "contents.read";
   const principal = await upsertPrincipal(db, {
+    issuer,
     subject: credential.subject,
     kind: "service_account",
     bindingId: credential.interfaceBindingId,
@@ -500,12 +525,28 @@ async function authorizeSmartHttpRepo(
   return {
     // Per-ref branch protection at receive-pack time: re-run the ACL with the
     // concrete ref so a protected branch rejects a non-permitted direct push.
-    authorizeRef: async (refName: string) =>
-      (
-        await authorizeRepo(db, ctx, owner, name, "contents.write", {
-          ref: refName,
-        })
-      ).allow,
+    authorizeRef: async (update: AppliedRefUpdate) => {
+      const decision = await authorizeRepo(
+        db,
+        ctx,
+        owner,
+        name,
+        "contents.write",
+        {
+          ref: update.name,
+          oldSha: update.oldSha,
+          newSha: update.newSha,
+        },
+      );
+      return decision.allow
+        ? {
+            allow: true,
+            ...(decision.allowNonFastForward
+              ? { allowNonFastForward: true }
+              : {}),
+          }
+        : { allow: false };
+    },
   };
 }
 
@@ -514,9 +555,15 @@ export type InterfaceUserInfoFetch = (
   init?: RequestInit,
 ) => Promise<Response>;
 
-async function fetchHandler(
+/**
+ * Dispatch one request. Everything it starts but does not await goes through
+ * `scope`; it never sees the raw `ExecutionContext`, so it cannot start work
+ * that outlives nothing.
+ */
+async function dispatchRequest(
   request: Request,
   env: Env,
+  scope: BackgroundScope,
   interfaceUserInfoFetch?: InterfaceUserInfoFetch,
 ): Promise<Response> {
   const url = new URL(request.url);
@@ -533,7 +580,10 @@ async function fetchHandler(
   // Apply the D1 baseline schema on first use (self-contained install: no separate
   // wrangler d1 migrations step). Cached per isolate; skipped entirely when the
   // metadata plane is unconfigured (healthz/icon above already returned).
-  if (env.DB) await ensureSchema(env.DB);
+  if (env.DB) {
+    await ensureSchema(env.DB);
+    scope.run("maintenance-drain", () => drainMaintenance(env));
+  }
   // Self-hosted Actions runner callback surface. A SEPARATE HMAC trust boundary
   // (ACTIONS_RUNNER_SECRET), dispatched here BEFORE the router so it is never
   // reachable via /api/v1, /git/, or /mcp. Returns null when the path is not an
@@ -562,6 +612,7 @@ async function fetchHandler(
     request,
     env,
     url,
+    scope,
     ...(interfaceUserInfoFetch ? { interfaceUserInfoFetch } : {}),
   });
   if (routed) return routed;
@@ -637,13 +688,21 @@ async function fetchHandler(
   // metadata plane is present (D1-optional graceful degradation). Without DB this
   // is skipped entirely, leaving exactly the scope-only behavior the DB-less E2E
   // relies on. The per-ref gate enforces branch protection inside receive-pack.
-  let authorizeRef: ((refName: string) => Promise<boolean>) | undefined;
+  let authorizeRef:
+    | ((
+        update: AppliedRefUpdate,
+      ) => Promise<{
+        readonly allow: boolean;
+        readonly allowNonFastForward?: boolean;
+      }>)
+    | undefined;
   if (env.DB) {
     const gate = await authorizeSmartHttpRepo(
       env.DB,
       credential,
       route.repo,
       service,
+      env.OIDC_ISSUER_URL ?? "",
     );
     if (gate instanceof Response) return gate;
     authorizeRef = gate.authorizeRef;
@@ -655,18 +714,35 @@ async function fetchHandler(
   if (route.suffix === "/info/refs") {
     return handleInfoRefs(env.BUCKET, route.repo, service);
   }
+  const maxRequestBytes =
+    service === "git-receive-pack"
+      ? MAX_RECEIVE_PACK_REQUEST_BYTES
+      : MAX_UPLOAD_PACK_REQUEST_BYTES;
   const contentLength = Number(request.headers.get("content-length") ?? "0");
-  if (
-    service === "git-receive-pack" &&
-    contentLength > MAX_RECEIVE_PACK_BYTES
-  ) {
-    return json({ error: "receive_pack_too_large" }, 413);
+  if (contentLength > maxRequestBytes) {
+    return json(
+      {
+        error:
+          service === "git-receive-pack"
+            ? "receive_pack_too_large"
+            : "upload_pack_too_large",
+      },
+      413,
+    );
   }
   const body = new Uint8Array(await request.arrayBuffer());
+  if (body.length > maxRequestBytes) {
+    return json(
+      {
+        error:
+          service === "git-receive-pack"
+            ? "receive_pack_too_large"
+            : "upload_pack_too_large",
+      },
+      413,
+    );
+  }
   if (service === "git-receive-pack") {
-    if (body.length > MAX_RECEIVE_PACK_BYTES) {
-      return json({ error: "receive_pack_too_large" }, 413);
-    }
     // Best-effort Actions discovery after a successful push. Only wired when the
     // metadata plane is configured, so the clone/push path (and its E2E) is
     // untouched when Actions/D1 are off; the hook itself is D1-guarded + caught.
@@ -682,17 +758,89 @@ async function fetchHandler(
   return handleUploadPack(env.BUCKET, route.repo, body);
 }
 
+/**
+ * Request entrypoint. Takes the runtime's `ExecutionContext` as its third
+ * argument (Cloudflare always passes it) and turns it into the single
+ * {@link BackgroundScope} the whole request tree uses. An embedder that calls
+ * with two arguments still gets every delivery — the inline scope is drained
+ * here, before the Response — so the third argument controls latency, not
+ * correctness. Dropping background work is not reachable from this signature.
+ */
+async function fetchHandler(
+  request: Request,
+  env: Env,
+  ctx?: WaitUntilContext,
+  interfaceUserInfoFetch?: InterfaceUserInfoFetch,
+): Promise<Response> {
+  const scope = requestScope(ctx);
+  const response = await dispatchRequest(
+    request,
+    env,
+    scope,
+    interfaceUserInfoFetch,
+  );
+  await scope.settled();
+  return response;
+}
+
+function webhookDispatchDeps(env: Env): WebhookDispatchDeps {
+  return {
+    encryptionKey: webhookEncryptionKey(env),
+    bucket: env.BUCKET,
+  };
+}
+
+async function drainMaintenance(env: Env): Promise<void> {
+  if (!env.DB) return;
+  const db = createDbClient(env.DB);
+  await Promise.all([
+    processDueWebhookDeliveries(db, webhookDispatchDeps(env)),
+    processRepositoryDeletionQueue(db, env.BUCKET, {
+      ...(env.R2_ACTIONS ? { actionsBucket: env.R2_ACTIONS } : {}),
+    }),
+  ]);
+}
+
+export interface ScheduledController {
+  readonly scheduledTime: number;
+  readonly cron: string;
+}
+
+async function scheduledHandler(
+  _controller: ScheduledController,
+  env: Env,
+  ctx?: WaitUntilContext,
+): Promise<void> {
+  if (!env.DB) return;
+  await ensureSchema(env.DB);
+  const scope = requestScope(ctx);
+  scope.run("maintenance-drain", () => drainMaintenance(env));
+  await scope.settled();
+}
+
 export function createGitWorker(
   interfaceUserInfoFetch?: InterfaceUserInfoFetch,
 ): {
-  fetch(request: Request, env: Env): Promise<Response>;
+  fetch(
+    request: Request,
+    env: Env,
+    ctx?: WaitUntilContext,
+  ): Promise<Response>;
   queue(batch: MessageBatch<RunTick>, env: Env): Promise<void>;
+  scheduled(
+    controller: ScheduledController,
+    env: Env,
+    ctx?: WaitUntilContext,
+  ): Promise<void>;
 } {
   return {
-    fetch: (request, env) => fetchHandler(request, env, interfaceUserInfoFetch),
+    fetch: (request, env, ctx) =>
+      fetchHandler(request, env, ctx, interfaceUserInfoFetch),
     // Actions run-tick consumer (WORKFLOW_QUEUE → coordinator DO). A no-op when
     // the coordinator namespace is unbound; never touches the fetch path.
     queue: (batch, env) => handleWorkflowQueue(batch, env),
+    scheduled: (controller, env, ctx) =>
+      scheduledHandler(controller, env, ctx),
   };
 }
 

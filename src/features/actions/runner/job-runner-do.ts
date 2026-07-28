@@ -63,6 +63,12 @@ async function loadContainerRuntime(): Promise<typeof LocalContainerRuntime> {
 const ContainerBase = await loadContainerRuntime();
 const containerRuntimeAvailable = ContainerBase !== LocalContainerRuntime;
 
+const CONTAINER_RUNTIME_MISSING_MESSAGE =
+  "Actions runner container is not attached: this Worker bundle has no " +
+  "@cloudflare/containers runtime and/or the ActionsJobRunner class has no " +
+  "[[containers]] image binding. Every job fails until the out-of-band wrangler " +
+  "container step is applied (see main.tf actions_container_binding_applied).";
+
 export class ActionsJobRunner extends ContainerBase {
   defaultPort = CONTAINER_PORT;
   requiredPorts = [CONTAINER_PORT];
@@ -105,7 +111,9 @@ export class ActionsJobRunner extends ContainerBase {
     let result: ActionsJobResult;
     try {
       if (!containerRuntimeAvailable) {
-        throw new Error("Cloudflare Containers runtime is unavailable");
+        // Name the deploy step that is missing: without it every job of every run
+        // fails identically, and a bare "runtime unavailable" reads as a flake.
+        throw new Error(CONTAINER_RUNTIME_MISSING_MESSAGE);
       }
       result = await this.#executeInContainer(dispatch);
     } catch (error) {

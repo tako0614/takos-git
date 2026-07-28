@@ -27,10 +27,25 @@ import {
   encodeTreeContent,
   hashObject,
 } from "./object.ts";
+import {
+  GitResourceLimitError,
+  MAX_GIT_COMPRESSED_OBJECT_BYTES,
+  MAX_GIT_OBJECT_BYTES,
+  MAX_GIT_RAW_OBJECT_BYTES,
+  MAX_TAG_OBJECT_BYTES,
+} from "./limits.ts";
 
 const OBJECT_PREFIX = "objects";
 
-export class GitObjectTooLargeError extends Error {
+function assertCompressedSize(bytes: Uint8Array): void {
+  if (bytes.byteLength > MAX_GIT_COMPRESSED_OBJECT_BYTES) {
+    throw new GitResourceLimitError(
+      `Compressed Git object exceeds the ${MAX_GIT_COMPRESSED_OBJECT_BYTES}-byte limit`,
+    );
+  }
+}
+
+export class GitObjectTooLargeError extends GitResourceLimitError {
   constructor(readonly maxBytes: number) {
     super(`Git object exceeds the ${maxBytes}-byte read limit`);
     this.name = "GitObjectTooLargeError";
@@ -68,7 +83,7 @@ async function deflate(data: Uint8Array): Promise<Uint8Array> {
 
 async function inflate(
   data: Uint8Array,
-  maxOutputBytes = Number.POSITIVE_INFINITY,
+  maxOutputBytes = MAX_GIT_RAW_OBJECT_BYTES,
 ): Promise<Uint8Array> {
   const ds = new DecompressionStream("deflate");
   const writer = ds.writable.getWriter();
@@ -101,6 +116,11 @@ export async function putBlob(
   bucket: ObjectStoreBinding,
   content: Uint8Array,
 ): Promise<string> {
+  if (content.byteLength > MAX_GIT_OBJECT_BYTES) {
+    throw new GitResourceLimitError(
+      `Git object exceeds the ${MAX_GIT_OBJECT_BYTES}-byte limit`,
+    );
+  }
   const sha = await hashObject("blob", content);
   const key = getObjectKey(sha);
 
@@ -109,6 +129,7 @@ export async function putBlob(
 
   const raw = encodeBlob(content);
   const compressed = await deflate(raw);
+  assertCompressedSize(compressed);
   await bucket.put(key, compressed);
 
   return sha;
@@ -119,6 +140,11 @@ export async function putTree(
   entries: TreeEntry[],
 ): Promise<string> {
   const treeContent = encodeTreeContent(entries);
+  if (treeContent.byteLength > MAX_GIT_OBJECT_BYTES) {
+    throw new GitResourceLimitError(
+      `Git object exceeds the ${MAX_GIT_OBJECT_BYTES}-byte limit`,
+    );
+  }
   const sha = await hashObject("tree", treeContent);
   const key = getObjectKey(sha);
 
@@ -127,6 +153,7 @@ export async function putTree(
 
   const raw = encodeTree(entries);
   const compressed = await deflate(raw);
+  assertCompressedSize(compressed);
   await bucket.put(key, compressed);
 
   return sha;
@@ -143,6 +170,11 @@ export async function putCommit(
   },
 ): Promise<string> {
   const commitContent = encodeCommitContent(commit);
+  if (commitContent.byteLength > MAX_GIT_OBJECT_BYTES) {
+    throw new GitResourceLimitError(
+      `Git object exceeds the ${MAX_GIT_OBJECT_BYTES}-byte limit`,
+    );
+  }
   const sha = await hashObject("commit", commitContent);
   const key = getObjectKey(sha);
 
@@ -151,6 +183,7 @@ export async function putCommit(
 
   const raw = encodeCommit(commit);
   const compressed = await deflate(raw);
+  assertCompressedSize(compressed);
   await bucket.put(key, compressed);
 
   return sha;
@@ -163,6 +196,11 @@ export async function putRawObject(
   bucket: ObjectStoreBinding,
   raw: Uint8Array,
 ): Promise<string> {
+  if (raw.byteLength > MAX_GIT_RAW_OBJECT_BYTES) {
+    throw new GitResourceLimitError(
+      `Raw Git object exceeds the ${MAX_GIT_RAW_OBJECT_BYTES}-byte limit`,
+    );
+  }
   const sha = await sha1(raw);
   const key = getObjectKey(sha);
 
@@ -170,6 +208,7 @@ export async function putRawObject(
   if (existing) return sha;
 
   const compressed = await deflate(raw);
+  assertCompressedSize(compressed);
   await bucket.put(key, compressed);
 
   return sha;
@@ -181,6 +220,13 @@ export async function putObject(
   type: GitObjectType,
   content: Uint8Array,
 ): Promise<string> {
+  const maxBytes =
+    type === "tag" ? MAX_TAG_OBJECT_BYTES : MAX_GIT_OBJECT_BYTES;
+  if (content.byteLength > maxBytes) {
+    throw new GitResourceLimitError(
+      `Git object exceeds the ${maxBytes}-byte limit`,
+    );
+  }
   const header = new TextEncoder().encode(`${type} ${content.length}\0`);
   return putRawObject(bucket, concatBytes(header, content));
 }
@@ -190,29 +236,42 @@ export async function putObject(
 export async function getRawObject(
   bucket: ObjectStoreBinding,
   sha: string,
-  maxBytes = Number.POSITIVE_INFINITY,
+  maxBytes = MAX_GIT_RAW_OBJECT_BYTES,
 ): Promise<Uint8Array | null> {
   if (!isValidSha(sha)) return null;
   const key = getObjectKey(sha);
   const obj = await bucket.get(key);
   if (!obj) return null;
+  if (
+    obj.size !== undefined &&
+    (!Number.isSafeInteger(obj.size) ||
+      obj.size < 0 ||
+      obj.size > MAX_GIT_COMPRESSED_OBJECT_BYTES)
+  ) {
+    throw new GitResourceLimitError(
+      `Compressed Git object exceeds the ${MAX_GIT_COMPRESSED_OBJECT_BYTES}-byte limit`,
+    );
+  }
   const compressed = new Uint8Array(await obj.arrayBuffer());
-  return inflate(compressed, maxBytes);
+  assertCompressedSize(compressed);
+  return inflate(compressed, Math.min(maxBytes, MAX_GIT_RAW_OBJECT_BYTES));
 }
 
 export async function getObject(
   bucket: ObjectStoreBinding,
   sha: string,
-  maxContentBytes = Number.POSITIVE_INFINITY,
+  maxContentBytes = MAX_GIT_OBJECT_BYTES,
 ): Promise<{ type: GitObjectType; content: Uint8Array } | null> {
-  const maxRawBytes = Number.isFinite(maxContentBytes)
-    ? maxContentBytes + 128
-    : Number.POSITIVE_INFINITY;
+  const effectiveMaxContentBytes = Math.min(
+    maxContentBytes,
+    MAX_GIT_OBJECT_BYTES,
+  );
+  const maxRawBytes = effectiveMaxContentBytes + 128;
   const raw = await getRawObject(bucket, sha, maxRawBytes);
   if (!raw) return null;
   const object = decodeObject(raw);
-  if (object.content.byteLength > maxContentBytes) {
-    throw new GitObjectTooLargeError(maxContentBytes);
+  if (object.content.byteLength > effectiveMaxContentBytes) {
+    throw new GitObjectTooLargeError(effectiveMaxContentBytes);
   }
   return object;
 }
@@ -220,7 +279,7 @@ export async function getObject(
 export async function getBlob(
   bucket: ObjectStoreBinding,
   sha: string,
-  maxBytes = Number.POSITIVE_INFINITY,
+  maxBytes = MAX_GIT_OBJECT_BYTES,
 ): Promise<Uint8Array | null> {
   const obj = await getObject(bucket, sha, maxBytes);
   if (!obj || obj.type !== "blob") return null;
@@ -230,7 +289,7 @@ export async function getBlob(
 export async function getTreeEntries(
   bucket: ObjectStoreBinding,
   sha: string,
-  maxBytes = Number.POSITIVE_INFINITY,
+  maxBytes = MAX_GIT_OBJECT_BYTES,
 ): Promise<TreeEntry[] | null> {
   const obj = await getObject(bucket, sha, maxBytes);
   if (!obj || obj.type !== "tree") return null;
@@ -240,7 +299,7 @@ export async function getTreeEntries(
 export async function getCommitData(
   bucket: ObjectStoreBinding,
   sha: string,
-  maxBytes = Number.POSITIVE_INFINITY,
+  maxBytes = MAX_GIT_OBJECT_BYTES,
 ): Promise<GitCommit | null> {
   const obj = await getObject(bucket, sha, maxBytes);
   if (!obj || obj.type !== "commit") return null;

@@ -4,7 +4,15 @@
 # in-container step server (`executor-main.ts`) as a non-root user in a workspace
 # jail. Minimal by design: git + bun + the common CI tooling a `run:` shell step
 # expects. Mirrors the takos-computer sandbox image hardening (non-root, workspace
-# jail); RunnerProfile network/resource policy is enforced by the DO + executor.
+# jail).
+#
+# EGRESS/CPU/MEMORY ARE NOT ENFORCED BY THIS IMAGE OR BY THE DO. The executor
+# enforces step timeouts and secret redaction; log/artifact caps are enforced on
+# the `/internal/actions/*` callback surface. The `default-deny` egress and the
+# CPU/memory ceiling in `RUNNER_CONTAINER_REQUIREMENTS`
+# (`src/features/actions/runner/policy.ts`) must be applied by the container
+# platform through the out-of-band wrangler `[[containers]]` step. Until then a
+# `run:` step reaches the network unrestricted.
 #
 # Build context is the takos-git repo ROOT so the container sources keep their
 # repo-relative imports (`containers/runner/src` → `../../../src/features/...`):

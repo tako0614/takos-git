@@ -238,6 +238,15 @@ test("real Git CLI can push, fast-forward, and reclone while force-push is rejec
     const remoteTip = (
       await runGit(["rev-parse", "HEAD"], { cwd: source })
     ).stdout.trim();
+    expect(
+      (await runGit(["tag", "-a", "v1.0.0", "-m", "release"], { cwd: source }))
+        .exitCode,
+    ).toBe(0);
+    const tagPush = await runGit(["push", "-q", "origin", "v1.0.0"], {
+      cwd: source,
+    });
+    expect(tagPush.exitCode, tagPush.stderr).toBe(0);
+
     const reclone = await runGit([
       "-c",
       "protocol.version=1",
@@ -250,6 +259,9 @@ test("real Git CLI can push, fast-forward, and reclone while force-push is rejec
     expect(readFileSync(join(clone, "README.md"), "utf8")).toBe("second\n");
     expect(
       (await runGit(["rev-parse", "HEAD"], { cwd: clone })).stdout.trim(),
+    ).toBe(remoteTip);
+    expect(
+      (await runGit(["rev-parse", "v1.0.0^{}"], { cwd: clone })).stdout.trim(),
     ).toBe(remoteTip);
 
     await runGit(["reset", "--hard", "HEAD~1"], { cwd: source });

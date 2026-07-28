@@ -1,9 +1,7 @@
 import {
-  createEffect,
   createResource,
   createSignal,
   Index,
-  onCleanup,
   Show,
   type JSX,
 } from "solid-js";
@@ -22,6 +20,7 @@ import {
   useConfirmDialog,
   useToast,
 } from "../../ui/index.ts";
+import { createPolling } from "../../lib/lifecycle.ts";
 import { actionsApi } from "../../api/actions.ts";
 import { ApiError } from "../../api/client.ts";
 import { RunStatusBadge } from "./StatusBadge.tsx";
@@ -59,22 +58,13 @@ export function RunDetail(props: {
   const notFound = () => runRes.error instanceof ApiError && runRes.error.isNotFound;
 
   // Poll while the run is live.
-  let timer: ReturnType<typeof setInterval> | undefined;
-  createEffect(() => {
-    const r = run();
-    if (timer) {
-      clearInterval(timer);
-      timer = undefined;
-    }
-    if (r && runIsLive(r)) {
-      timer = setInterval(() => {
-        void refetchRun();
-        void refetchJobs();
-      }, POLL_MS);
-    }
-  });
-  onCleanup(() => {
-    if (timer) clearInterval(timer);
+  createPolling({
+    active: () => {
+      const r = run();
+      return r !== undefined && runIsLive(r);
+    },
+    intervalMs: POLL_MS,
+    tick: () => Promise.all([refetchRun(), refetchJobs()]),
   });
 
   const refetchAll = () => {
@@ -112,9 +102,8 @@ export function RunDetail(props: {
     if (!ok) return;
     setBusy("cancel");
     try {
-      const res = await actionsApi.cancel(props.owner, props.repo, props.runId);
+      await actionsApi.cancel(props.owner, props.repo, props.runId);
       toast.success("Run cancelled");
-      if (res.run) mutateRun(res.run);
       refetchAll();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : "Failed to cancel run");

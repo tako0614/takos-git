@@ -20,18 +20,30 @@ import { repositoryObjectStore } from "../../../git/repo-object-store.ts";
 import type { ObjectStoreBinding } from "../../../git/types.ts";
 import { actionsEnv } from "../env.ts";
 import { bearerFromRequest, verifyRunnerToken, type RunnerTokenClaims } from "./hmac.ts";
+import { DEFAULT_RUNNER_POLICY } from "./policy.ts";
 import { writeTar, type TarEntry } from "./tar.ts";
 
 const INTERNAL_PREFIX = "/internal/actions/";
 const MAX_COMMIT_BYTES = 1 << 20;
 const MAX_CHECKOUT_FILE_BYTES = 32 * 1024 * 1024;
-const MAX_ARTIFACT_BYTES = 256 * 1024 * 1024;
+// Read from the policy rather than a second literal: a drifting copy silently
+// widens a limit the policy still advertises.
+const MAX_ARTIFACT_BYTES = DEFAULT_RUNNER_POLICY.resources.maxArtifactBytes;
+const MAX_STEP_LOG_BYTES = DEFAULT_RUNNER_POLICY.resources.maxStepLogBytes;
+const LOG_TRUNCATION_NOTICE = `\n[takos-git] step log truncated at ${MAX_STEP_LOG_BYTES} bytes (RunnerPolicy.resources.maxStepLogBytes).\n`;
 
 function json(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
     status,
     headers: { "content-type": "application/json; charset=utf-8" },
   });
+}
+
+function concat(head: Uint8Array, tail: Uint8Array): Uint8Array {
+  const out = new Uint8Array(head.byteLength + tail.byteLength);
+  out.set(head, 0);
+  out.set(tail, head.byteLength);
+  return out;
 }
 
 interface RunLocator {
@@ -48,10 +60,10 @@ async function locateRun(
 ): Promise<RunLocator | null> {
   const row = await db.queryOne<{ repo_id: string; sha: string | null; owner_login: string; name: string }>(
     `SELECT r.repo_id AS repo_id, r.sha AS sha, o.login AS owner_login, repo.name AS name
-       FROM workflow_runs r
+      FROM workflow_runs r
        JOIN repositories repo ON repo.id = r.repo_id
        JOIN owners o ON o.id = repo.owner_id
-      WHERE r.id = ? LIMIT 1`,
+      WHERE r.id = ? AND repo.lifecycle_state = 'active' LIMIT 1`,
     [runId],
   );
   if (!row || !row.sha) return null;
@@ -65,6 +77,21 @@ function dbFor(env: unknown): DbClient | null {
   const bag = (env ?? {}) as { ACTIONS_DB?: D1Binding; DB?: D1Binding };
   const d1 = bag.ACTIONS_DB ?? bag.DB;
   return d1 ? createDbClient(d1) : null;
+}
+
+async function activeRunRepoId(
+  db: DbClient,
+  runId: string,
+): Promise<string | null> {
+  const row = await db.queryOne<{ repo_id: string }>(
+    `SELECT r.repo_id
+       FROM workflow_runs r
+       JOIN repositories repo ON repo.id = r.repo_id
+      WHERE r.id = ? AND repo.lifecycle_state = 'active'
+      LIMIT 1`,
+    [runId],
+  );
+  return row?.repo_id ?? null;
 }
 
 /**
@@ -156,21 +183,25 @@ async function appendLogs(
     return json(403, { error: "run_scope_mismatch" });
   }
   // logs only need repoId; resolve it from the run row directly (no R2 needed).
-  const repoId = (
-    await db.queryOne<{ repo_id: string }>(`SELECT repo_id FROM workflow_runs WHERE id = ? LIMIT 1`, [
-      claims.runId,
-    ])
-  )?.repo_id;
+  const repoId = await activeRunRepoId(db, claims.runId);
   if (!repoId) return json(404, { error: "run_not_found" });
   const key = `logs/${repoId}/${claims.runId}/${claims.jobId}.log`;
   const existing = await bucket.get(key);
   const prefix = existing ? new Uint8Array(await existing.arrayBuffer()) : new Uint8Array(0);
-  const addition = new TextEncoder().encode(body.chunk ?? "");
-  const merged = new Uint8Array(prefix.byteLength + addition.byteLength);
-  merged.set(prefix, 0);
-  merged.set(addition, prefix.byteLength);
-  await bucket.put(key, merged);
-  return json(200, { logsR2Key: key });
+  // The cap is enforced here because this is the only write path for step logs;
+  // a job that keeps streaming past it must not keep growing the R2 object.
+  if (prefix.byteLength >= MAX_STEP_LOG_BYTES) {
+    return json(200, { logsR2Key: key, truncated: true });
+  }
+  const encoder = new TextEncoder();
+  const chunk = encoder.encode(body.chunk ?? "");
+  const room = MAX_STEP_LOG_BYTES - prefix.byteLength;
+  const truncated = chunk.byteLength > room;
+  const addition = truncated
+    ? concat(chunk.subarray(0, room), encoder.encode(LOG_TRUNCATION_NOTICE))
+    : chunk;
+  await bucket.put(key, concat(prefix, addition));
+  return json(200, { logsR2Key: key, truncated });
 }
 
 /** Store one artifact + register its `workflow_run_artifacts` row. */
@@ -190,15 +221,16 @@ async function uploadArtifact(
   if (!name || !/^[\w.\- ]{1,128}$/u.test(name)) {
     return json(400, { error: "invalid_artifact_name" });
   }
-  const run = await db.queryOne<{ repo_id: string }>(
-    `SELECT repo_id FROM workflow_runs WHERE id = ? LIMIT 1`,
-    [claims.runId],
-  );
-  if (!run) return json(404, { error: "run_not_found" });
+  const repoId = await activeRunRepoId(db, claims.runId);
+  if (!repoId) return json(404, { error: "run_not_found" });
   const bytes = new Uint8Array(await request.arrayBuffer());
   if (bytes.byteLength > MAX_ARTIFACT_BYTES) return json(413, { error: "artifact_too_large" });
+  // Deletion may have started while a large request body was streaming.
+  if ((await activeRunRepoId(db, claims.runId)) !== repoId) {
+    return json(404, { error: "run_not_found" });
+  }
   const contentType = request.headers.get("content-type") || "application/octet-stream";
-  const key = `artifacts/${run.repo_id}/${claims.runId}/${name}`;
+  const key = `artifacts/${repoId}/${claims.runId}/${name}`;
   await bucket.put(key, bytes);
   const now = db.now();
   await db.run(

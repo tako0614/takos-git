@@ -16,6 +16,15 @@
 import type { GitObjectType } from "./git-objects.ts";
 import { hashObject } from "./object.ts";
 import { inflateZlibAt } from "./inflate-raw.ts";
+import {
+  GitResourceLimitError,
+  MAX_DELTA_DEPTH,
+  MAX_GIT_OBJECT_BYTES,
+  MAX_PACK_BYTES,
+  MAX_PACK_INFLATED_BYTES,
+  MAX_PACK_OBJECTS,
+  MAX_TAG_OBJECT_BYTES,
+} from "./limits.ts";
 import { bytesToHex, sha1 } from "./sha1.ts";
 
 // Packfile object type numbers (git pack format v2).
@@ -98,7 +107,15 @@ function readObjectHeader(
     if (offset >= pack.length) throw new Error("pack: truncated object header");
     byte = pack[offset++];
     size += (byte & 0x7f) * 2 ** shift;
+    if (size > MAX_GIT_OBJECT_BYTES) {
+      throw new GitResourceLimitError(
+        `pack: object exceeds the ${MAX_GIT_OBJECT_BYTES}-byte limit`,
+      );
+    }
     shift += 7;
+    if (shift > 46) {
+      throw new Error("pack: object size varint exceeds safe bounds");
+    }
   }
   return { typeNum, size, next: offset };
 }
@@ -122,6 +139,9 @@ function readOffsetVarint(
     value += 1;
     byte = pack[offset++];
     value = value * 128 + (byte & 0x7f);
+    if (!Number.isSafeInteger(value) || value > MAX_PACK_BYTES) {
+      throw new Error("pack: ofs-delta offset exceeds pack bounds");
+    }
   }
   return { value, next: offset };
 }
@@ -139,6 +159,9 @@ function readDeltaSize(
     byte = delta[offset++];
     value += (byte & 0x7f) * 2 ** shift;
     shift += 7;
+    if (!Number.isSafeInteger(value) || shift > 49) {
+      throw new Error("delta: size varint exceeds safe integer range");
+    }
   } while (byte & 0x80);
   return { value, next: offset };
 }
@@ -148,13 +171,22 @@ function readDeltaSize(
  * target. Copy ops (high bit set) reference ranges of `base`; insert ops (high
  * bit clear) carry 1..127 literal bytes.
  */
-export function applyDelta(base: Uint8Array, delta: Uint8Array): Uint8Array {
+export function applyDelta(
+  base: Uint8Array,
+  delta: Uint8Array,
+  maxTargetBytes = MAX_GIT_OBJECT_BYTES,
+): Uint8Array {
   const srcRead = readDeltaSize(delta, 0);
   if (srcRead.value !== base.length) {
     throw new Error("delta: source size mismatch");
   }
   const tgtRead = readDeltaSize(delta, srcRead.next);
   const targetSize = tgtRead.value;
+  if (targetSize > maxTargetBytes) {
+    throw new GitResourceLimitError(
+      `delta: target exceeds the ${maxTargetBytes}-byte limit`,
+    );
+  }
   const out = new Uint8Array(targetSize);
 
   let p = tgtRead.next;
@@ -244,17 +276,38 @@ export async function readPack(
   pack: Uint8Array,
   opts?: ReadPackOptions,
 ): Promise<UnpackedObject[]> {
+  if (pack.byteLength > MAX_PACK_BYTES) {
+    throw new GitResourceLimitError(
+      `pack: input exceeds the ${MAX_PACK_BYTES}-byte limit`,
+    );
+  }
   const count = validateHeader(pack);
+  if (count > MAX_PACK_OBJECTS) {
+    throw new GitResourceLimitError(
+      `pack: object count exceeds the ${MAX_PACK_OBJECTS}-entry limit`,
+    );
+  }
 
   // --- First pass: parse every entry (inflate payloads, capture delta bases). ---
   const entries: PackEntry[] = [];
   const byOffset = new Map<number, number>(); // pack offset -> entry index
   let cursor = 12;
+  let inflatedBytes = 0;
 
   for (let i = 0; i < count; i++) {
     const start = cursor;
     const { typeNum, size, next } = readObjectHeader(pack, cursor);
     cursor = next;
+    if (size > MAX_GIT_OBJECT_BYTES) {
+      throw new GitResourceLimitError(
+        `pack: object exceeds the ${MAX_GIT_OBJECT_BYTES}-byte limit`,
+      );
+    }
+    if (inflatedBytes > MAX_PACK_INFLATED_BYTES - size) {
+      throw new GitResourceLimitError(
+        `pack: inflated payloads exceed the ${MAX_PACK_INFLATED_BYTES}-byte limit`,
+      );
+    }
 
     let baseOffset = -1;
     let baseSha = "";
@@ -275,13 +328,19 @@ export async function readPack(
     } else if (BASE_TYPE_BY_NUMBER[typeNum] === undefined) {
       throw new Error(`pack: unknown object type ${typeNum}`);
     }
+    if (typeNum === OBJ_TAG && size > MAX_TAG_OBJECT_BYTES) {
+      throw new GitResourceLimitError(
+        `pack: tag object exceeds the ${MAX_TAG_OBJECT_BYTES}-byte limit`,
+      );
+    }
 
-    const { output, bytesConsumed } = inflateZlibAt(pack, cursor);
+    const { output, bytesConsumed } = inflateZlibAt(pack, cursor, size);
     if (output.length !== size) {
       throw new Error(
         `pack: inflated size ${output.length} != header size ${size}`,
       );
     }
+    inflatedBytes += output.length;
     cursor += bytesConsumed;
 
     byOffset.set(start, entries.length);
@@ -304,8 +363,34 @@ export async function readPack(
   // --- Second pass: resolve deltas (memoized, in file order). ---
   const resolved = new Array<ResolvedObject | undefined>(entries.length);
   const resolving = new Uint8Array(entries.length); // cycle guard
+  const resolvedDepth = new Uint8Array(entries.length);
   const shaToIndex = new Map<string, number>(); // sha -> resolved entry index
   const externalCache = new Map<string, ResolvedObject>();
+  // Entry payloads stay retained for delta resolution. Count them up front;
+  // only newly allocated delta results / external bases consume more budget.
+  let retainedBytes = inflatedBytes;
+
+  function accountRetained(
+    type: GitObjectType,
+    content: Uint8Array,
+  ): void {
+    if (content.byteLength > MAX_GIT_OBJECT_BYTES) {
+      throw new GitResourceLimitError(
+        `pack: materialized object exceeds the ${MAX_GIT_OBJECT_BYTES}-byte limit`,
+      );
+    }
+    if (type === "tag" && content.byteLength > MAX_TAG_OBJECT_BYTES) {
+      throw new GitResourceLimitError(
+        `pack: tag object exceeds the ${MAX_TAG_OBJECT_BYTES}-byte limit`,
+      );
+    }
+    if (retainedBytes > MAX_PACK_INFLATED_BYTES - content.byteLength) {
+      throw new GitResourceLimitError(
+        `pack: retained objects exceed the ${MAX_PACK_INFLATED_BYTES}-byte limit`,
+      );
+    }
+    retainedBytes += content.byteLength;
+  }
 
   // Pre-index base (non-delta) shas so in-pack REF_DELTA bases resolve directly.
   for (let i = 0; i < entries.length; i++) {
@@ -329,6 +414,7 @@ export async function readPack(
       throw new Error(`pack: ref-delta base ${sha} could not be resolved`);
     }
     const type = await typeOfExternalBase(content, sha);
+    accountRetained(type, content);
     const obj: ResolvedObject = { type, content };
     externalCache.set(sha, obj);
     return obj;
@@ -344,6 +430,7 @@ export async function readPack(
 
     const e = entries[index];
     let result: ResolvedObject;
+    let depth = 0;
 
     const baseType = BASE_TYPE_BY_NUMBER[e.typeNum];
     if (baseType !== undefined) {
@@ -354,9 +441,21 @@ export async function readPack(
         throw new Error("pack: ofs-delta base offset not found");
       }
       const base = await resolveEntry(baseIndex);
+      depth = resolvedDepth[baseIndex] + 1;
+      if (depth > MAX_DELTA_DEPTH) {
+        throw new GitResourceLimitError(
+          `pack: delta chain exceeds the ${MAX_DELTA_DEPTH}-object depth limit`,
+        );
+      }
       result = {
         type: base.type,
-        content: applyDelta(base.content, e.payload),
+        content: applyDelta(
+          base.content,
+          e.payload,
+          base.type === "tag"
+            ? MAX_TAG_OBJECT_BYTES
+            : MAX_GIT_OBJECT_BYTES,
+        ),
       };
     } else {
       // REF_DELTA
@@ -365,14 +464,33 @@ export async function readPack(
         baseIndex !== undefined && baseIndex !== index
           ? await resolveEntry(baseIndex)
           : await resolveExternal(e.baseSha);
+      depth =
+        baseIndex !== undefined && baseIndex !== index
+          ? resolvedDepth[baseIndex] + 1
+          : 1;
+      if (depth > MAX_DELTA_DEPTH) {
+        throw new GitResourceLimitError(
+          `pack: delta chain exceeds the ${MAX_DELTA_DEPTH}-object depth limit`,
+        );
+      }
       result = {
         type: base.type,
-        content: applyDelta(base.content, e.payload),
+        content: applyDelta(
+          base.content,
+          e.payload,
+          base.type === "tag"
+            ? MAX_TAG_OBJECT_BYTES
+            : MAX_GIT_OBJECT_BYTES,
+        ),
       };
     }
 
+    if (baseType === undefined) {
+      accountRetained(result.type, result.content);
+    }
     resolving[index] = 0;
     resolved[index] = result;
+    resolvedDepth[index] = depth;
     // Make this object available as a base for later in-pack ref-deltas.
     const sha = await hashObject(result.type, result.content);
     if (!shaToIndex.has(sha)) shaToIndex.set(sha, index);

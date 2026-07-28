@@ -12,6 +12,9 @@
  * isolate, so installing on each request is cheap and never leaks request state.
  * Emission is best-effort (a throwing sink never disturbs the originating
  * mutation, which has already committed), matching each feature's contract.
+ * "Best-effort" means the FAILURE is swallowed and logged, never that the work
+ * is abandoned: each sink returns its delivery promise, and the emitting feature
+ * hands that promise to the request's `BackgroundScope` (src/lifecycle.ts).
  *
  * Event → webhook name mapping installed here:
  *  - issues  → `issues` / `issue_comment`
@@ -97,8 +100,11 @@ export function installEventBridge(env: BridgeEnv): void {
   const db: DbClient = createDbClient(env.DB);
   const deps = dispatchDeps(env);
 
-  setDomainEventSink((event) => {
-    void dispatchWebhook(
+  // Returns the delivery promise: `emitDomainEvent` hands it to the request's
+  // BackgroundScope, which is what keeps it alive past the Response (or awaits
+  // it before the Response when there is no ExecutionContext).
+  setDomainEventSink(async (event) => {
+    await dispatchWebhook(
       db,
       event.repoId,
       issueWebhookEvent(event.type),

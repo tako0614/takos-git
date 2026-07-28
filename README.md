@@ -36,7 +36,14 @@ clone / commit / fetch / push は意図的に独自の MCP ツールにしてい
 インストール済みの computer/sandbox Capsule と通常の Git CLI を、呼び出し時だけ発行される
 Interface credential と一緒に使います。
 
-## 始め方 (OpenTofu で deploy)
+## Self-host / operator install (OpenTofu)
+
+この例は利用者または operator が自分の環境を変更するための手順で、Takos
+ecosystem の公式 artifact 公開や hosted production release ではありません。この
+repo の GitHub Actions は deploy / publish を行いません。ecosystem surface の
+deploy はこの repository の entrypoint が入口です (まだ存在しないので、作るのが
+次の作業です)。共通 rule は `takos-control` の `engineering.policy.json` →
+`deploy` が正本です。
 
 module は Cloudflare の feature flag を有効にするまでリソースを作りません。
 
@@ -47,13 +54,20 @@ tofu apply \
   -var cloudflare_account_id=<id> \
   -var public_url=https://git.example \
   -var takosumi_accounts_issuer_url=https://accounts.example \
+  -var worker_bundle_sha256=<release の worker.js.sha256> \
   -var 'env={APP_WORKSPACE_ID="<workspace-id>",APP_CAPSULE_ID="<capsule-id>"}'
 ```
 
 `public_url` と `takosumi_accounts_issuer_url` は path / query / fragment / userinfo を持たない HTTPS origin を指定します（末尾 `/` は正規化されます）。
 
-hosted 環境からのインストールでは、Git release や CI artifact の
-`worker_bundle_url` + `worker_bundle_sha256` を読み込みます。`dist/worker.js` は commit しません。
+managed install では、operator が選んだ immutable
+`worker_bundle_url` + `worker_bundle_sha256` を読み込みます。CI artifact を公開物の
+代わりにはせず、`dist/worker.js` も commit しません。
+
+`worker_bundle_sha256` は `worker_release_tag` を使う既定経路でも **必須** です。release
+manifest (`takosumi-artifact.json`) は mutable な tag 越しに署名なしで取得するので、bundle の
+URL は選べても integrity の根拠にはなりません。digest は release ページの
+`worker.js.sha256` から operator が out-of-band に固定します。
 
 [`install-options.json`](install-options.json) は、現在実行可能な Cloudflare OpenTofu module を選ぶための任意の
 `CapsuleSourceOptions` 表示ドキュメントです。Takosumi 専用 manifest ではなく、通常の Git URL + module path での
@@ -83,8 +97,8 @@ Takosumi-managed な Git/hosting/MCP 呼び出しは、通常の `api_url` / `ho
 明示 mapping した service-side Interface と InterfaceBinding を使います。Interface/blueprint は上記
 permission を明示します。Accounts は UserInfo が token を active と返す前に current Core の
 Interface / Binding state を再検証し、Worker は audience、scope、Workspace、Capsule、subject と
-完全な Interface / Binding evidence shape を fail-closed 検証します。Interface id / resolved revision
-は static module input や Worker env にせず、apply 後に materialize する Interface を初回 apply 前に
+完全な Interface / Binding evidence shape を検証し、不備があれば安全側に停止します。Interface id / resolved revision
+は static module input や Worker env にせず、apply 後に生成される Interface を初回 apply 前に
 要求する循環を作りません。managed InstallConfig は通常の `env` input 経由で `APP_WORKSPACE_ID` と
 `APP_CAPSULE_ID` を渡します。宣言・credential は Output に入れません。
 
@@ -107,8 +121,15 @@ repo や Output に書きません。
 
 ### 削除と後片付け
 
-リポジトリの object はリポジトリ所有の object prefix の下に分離されているため、通常の
-リポジトリ削除 API でそのリポジトリのデータをすべて削除できます。Cloudflare provider は
+リポジトリ削除 API は即座に namespace を tombstone 化し、ref と Actions pin を隠して
+`202 Accepted` を返します。削除世代を記録した quarantine marker と一致する場合だけ、
+10 分の quarantine 後に scheduled maintenance が repository-owned object prefix を消します。
+同名リポジトリを再作成しても generation が異なるため、古い cleanup が新しいデータを
+削除しません。cleanup は idempotent で、失敗時は台帳から再試行されます。
+Git object だけでなく、release asset、webhook outbox payload、Actions log / artifact も
+同じ cleanup で削除し、tombstone 後の runner callback は書き込み前に拒否します。
+
+Cloudflare provider は
 空でない R2 bucket を削除できません。そのため Takosumi 管理の実行では、operator が
 service-side InstallConfig に、レビュー済み OpenTofu destroy の前に bucket を空にする
 versioned `pre_destroy` lifecycle action と明示的な policy を設定します。対象 bucket などの
@@ -133,14 +154,5 @@ Worker 内部の `PUBLISHED_MCP_AUTH_TOKEN` として注入します。空なら
 ## 開発者向け
 
 ```sh
-bun test              # unit + real Git CLI clone/push/reclone E2E
-bun run check         # typecheck
-bun run build:worker  # emit local dist/worker.js for self-host applies
-tofu fmt -check
-tofu validate
+bun run check # format/static/type/tests/OpenTofu/build の portable gate
 ```
-
-deploy 後の smoke は exact scope を共有しないため、`TAKOS_GIT_MCP_TOKEN`、
-`TAKOS_GIT_READ_TOKEN`、`TAKOS_GIT_WRITE_TOKEN` を別々に渡します。
-`TAKOS_GIT_HOSTING_READ_TOKEN` を渡すと `/api/v1` も検証します。旧
-`TAKOS_GIT_ACCESS_TOKEN` は移行用 fallback だけで、新しい InterfaceBinding では使いません。

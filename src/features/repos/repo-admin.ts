@@ -212,7 +212,7 @@ const patchRepoHandler: Route["handler"] = async (ctx) => {
   return json({ repository: toRepositoryDto(updated, originBase(ctx)) });
 };
 
-/** `DELETE /api/v1/repos/:owner/:repo` — remove D1 row + R2 objects (owner). */
+/** `DELETE /api/v1/repos/:owner/:repo` — tombstone + quarantine (owner). */
 const deleteRepoHandler: Route["handler"] = async (ctx) => {
   const access = await requireRepoAccess(ctx, "repo.admin", SCOPES.hostingAdmin);
   if (access instanceof Response) return access;
@@ -223,8 +223,8 @@ const deleteRepoHandler: Route["handler"] = async (ctx) => {
   }
   const row = await getRepoRow(ctx.db!, access.repo.ownerLogin, access.repo.name);
   if (!row) return errorResponse(404, "not_found", "Not Found");
-  await deleteRepository(ctx.env.BUCKET, ctx.db!, row);
-  return json({ deleted: true });
+  const deletion = await deleteRepository(ctx.env.BUCKET, ctx.db!, row);
+  return json({ deleted: true, ...deletion }, 202);
 };
 
 /** `POST /api/v1/orgs` — create an org owner; the caller becomes its admin. */

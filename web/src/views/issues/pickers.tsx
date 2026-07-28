@@ -10,11 +10,11 @@ import {
   createMemo,
   createSignal,
   Index,
-  onCleanup,
   Show,
   type JSX,
 } from "solid-js";
 import { cn } from "../../lib/cn.ts";
+import { createReactiveListener } from "../../lib/lifecycle.ts";
 import { Icons, Spinner, TextInput } from "../../ui/index.ts";
 import { LabelChip, principalName } from "./parts.tsx";
 import type { LabelDto, MilestoneDto, PrincipalRef } from "../../api/types.ts";
@@ -48,18 +48,17 @@ export function Popover(props: {
   const onKey = (e: KeyboardEvent) => {
     if (e.key === "Escape") close();
   };
-  createEffect(() => {
-    if (open()) {
-      document.addEventListener("click", onDocClick);
-      document.addEventListener("keydown", onKey);
-    } else {
-      document.removeEventListener("click", onDocClick);
-      document.removeEventListener("keydown", onKey);
-    }
+  createReactiveListener({
+    active: open,
+    target: document,
+    type: "click",
+    handler: onDocClick as EventListener,
   });
-  onCleanup(() => {
-    document.removeEventListener("click", onDocClick);
-    document.removeEventListener("keydown", onKey);
+  createReactiveListener({
+    active: open,
+    target: document,
+    type: "keydown",
+    handler: onKey as EventListener,
   });
 
   return (

@@ -1,7 +1,8 @@
-import { Show, onCleanup, onMount, type JSX } from "solid-js";
+import { Show, type JSX } from "solid-js";
 import { Portal } from "solid-js/web";
 import { cn } from "../lib/cn.ts";
 import { Icons } from "../lib/Icons.tsx";
+import { createReactiveListener } from "../lib/lifecycle.ts";
 import { IconButton } from "./IconButton.tsx";
 
 /**
@@ -22,12 +23,14 @@ export function Dialog(props: {
 
   let panel: HTMLDivElement | undefined;
 
-  onMount(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") props.onClose();
-    };
-    document.addEventListener("keydown", onKey);
-    onCleanup(() => document.removeEventListener("keydown", onKey));
+  const onKey = (event: KeyboardEvent): void => {
+    if (event.key === "Escape") props.onClose();
+  };
+  createReactiveListener({
+    active: () => props.open,
+    target: document,
+    type: "keydown",
+    handler: onKey as EventListener,
   });
 
   return (

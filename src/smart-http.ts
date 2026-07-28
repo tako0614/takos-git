@@ -27,6 +27,12 @@ import {
 } from "./git/refs-store.ts";
 import { collectReachableObjects } from "./git/reachability.ts";
 import { repositoryObjectStore } from "./git/repo-object-store.ts";
+import {
+  GitResourceLimitError,
+  MAX_REACHABLE_OBJECTS,
+  MAX_RECEIVE_PACK_REQUEST_BYTES,
+  MAX_UPLOAD_PACK_REQUEST_BYTES,
+} from "./git/limits.ts";
 
 const ZERO_OID = "0".repeat(40);
 const OID = /^[0-9a-f]{40}$/;
@@ -40,7 +46,6 @@ const RECEIVE_CAPABILITIES = [
   AGENT,
 ].join(" ");
 const MAX_REF_COMMANDS = 128;
-const MAX_REACHABLE_OBJECTS = 100_000;
 
 export type GitService = "git-upload-pack" | "git-receive-pack";
 
@@ -174,8 +179,17 @@ export async function handleUploadPack(
   repo: string,
   requestBody: Uint8Array,
 ): Promise<Response> {
+  if (requestBody.byteLength > MAX_UPLOAD_PACK_REQUEST_BYTES) {
+    return json({ error: "upload_pack_too_large" }, 413);
+  }
   const objectStore = repositoryObjectStore(bucket, repo);
-  const { wants, haves } = parseUploadPackRequest(requestBody);
+  let parsed: ReturnType<typeof parseUploadPackRequest>;
+  try {
+    parsed = parseUploadPackRequest(requestBody);
+  } catch {
+    return json({ error: "invalid_upload_pack_request" }, 400);
+  }
+  const { wants, haves } = parsed;
   if (wants.length === 0) return json({ error: "no_wants" }, 400);
 
   // Every want must be a tip advertised by this repository. The object store
@@ -185,13 +199,24 @@ export async function handleUploadPack(
     if (!refs.tips.has(want)) return json({ error: "invalid_want" }, 400);
   }
 
-  const shas = await collectReachableObjects(
-    objectStore,
-    wants,
-    new Set(haves),
-  );
-  const { pack, missing } = await writePackFromShas(objectStore, shas);
-  if (missing.length > 0) return json({ error: "repository_incomplete" }, 500);
+  let pack: Uint8Array;
+  try {
+    const shas = await collectReachableObjects(
+      objectStore,
+      wants,
+      new Set(haves),
+    );
+    const written = await writePackFromShas(objectStore, shas);
+    if (written.missing.length > 0) {
+      return json({ error: "repository_incomplete" }, 500);
+    }
+    pack = written.pack;
+  } catch (error) {
+    if (error instanceof GitResourceLimitError) {
+      return json({ error: "upload_pack_limit_exceeded" }, 413);
+    }
+    return json({ error: "repository_incomplete" }, 500);
+  }
 
   const response = concatBytes(pktLineString("NAK\n"), pack);
   return new Response(bytesToBody(response), {
@@ -427,7 +452,15 @@ export interface ReceivePackHooks {
    * a direct push (`src/auth/acl.ts`); absent when no D1 plane is configured, so
    * the DB-less clone/push path is unchanged.
    */
-  readonly authorizeRef?: (refName: string) => Promise<boolean> | boolean;
+  readonly authorizeRef?: (
+    update: AppliedRefUpdate,
+  ) =>
+    | { readonly allow: boolean; readonly allowNonFastForward?: boolean }
+    | boolean
+    | Promise<
+        | { readonly allow: boolean; readonly allowNonFastForward?: boolean }
+        | boolean
+      >;
 }
 
 export async function handleReceivePack(
@@ -436,6 +469,11 @@ export async function handleReceivePack(
   requestBody: Uint8Array,
   hooks?: ReceivePackHooks,
 ): Promise<Response> {
+  if (requestBody.byteLength > MAX_RECEIVE_PACK_REQUEST_BYTES) {
+    return unpackFailure(
+      `receive-pack request exceeds the ${MAX_RECEIVE_PACK_REQUEST_BYTES}-byte limit`,
+    );
+  }
   const objectStore = repositoryObjectStore(bucket, repo);
   let receive: ReceiveRequest;
   try {
@@ -475,17 +513,38 @@ export async function handleReceivePack(
   // Per-ref authorization (branch protection) BEFORE any object write or the R2
   // CAS. Every ref command must clear the gate; a single denial rejects the whole
   // atomic push. No-op when no hook is supplied (DB-less deploy).
+  const forceAllowed = new Set<string>();
   if (hooks?.authorizeRef) {
     for (const command of receive.commands) {
-      if (!(await hooks.authorizeRef(command.name))) {
+      let authorization:
+        | { readonly allow: boolean; readonly allowNonFastForward?: boolean }
+        | boolean;
+      try {
+        authorization = await hooks.authorizeRef(command);
+      } catch {
+        authorization = false;
+      }
+      const allowed =
+        typeof authorization === "boolean"
+          ? authorization
+          : authorization.allow;
+      if (!allowed) {
         return receiveResponse(
           receive.commands,
           `protected ref: ${command.name}`,
         );
       }
+      if (
+        typeof authorization !== "boolean" &&
+        authorization.allowNonFastForward === true
+      ) {
+        forceAllowed.add(command.name);
+      }
     }
   }
 
+  const validatedTagObjects = new Set<string>();
+  let remainingTagObjects = MAX_REACHABLE_OBJECTS;
   try {
     if (receive.pack.length > 0) {
       if (
@@ -517,10 +576,20 @@ export async function handleReceivePack(
         await validateCommitClosure(objectStore, command.newSha);
         if (
           command.oldSha !== ZERO_OID &&
-          !(await isAncestor(objectStore, command.oldSha, command.newSha))
+          !(await isAncestor(objectStore, command.oldSha, command.newSha)) &&
+          !forceAllowed.has(command.name)
         ) {
           throw new Error("non-fast-forward branch update");
         }
+      } else if (command.name.startsWith("refs/tags/")) {
+        const reachable = await collectReachableObjects(
+          objectStore,
+          [command.newSha],
+          validatedTagObjects,
+          { maxObjects: remainingTagObjects },
+        );
+        remainingTagObjects -= reachable.length;
+        for (const sha of reachable) validatedTagObjects.add(sha);
       }
     }
   } catch (error) {

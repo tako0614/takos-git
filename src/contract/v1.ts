@@ -73,6 +73,8 @@ export interface Principal {
   /** ULID from `principals.id`, or the sentinel `"anon"`. */
   readonly id: string;
   readonly kind: PrincipalKind;
+  /** Canonical OIDC issuer origin. */
+  readonly issuer: string;
   /** OIDC `sub` / Interface OAuth `sub`, or `"anonymous"`. */
   readonly subject: string;
   /** Interface OAuth `interface_binding_id` (automation identities only). */
@@ -84,6 +86,7 @@ export interface Principal {
 export const ANONYMOUS_PRINCIPAL: Principal = {
   id: "anon",
   kind: "anonymous",
+  issuer: "",
   subject: "anonymous",
 };
 
@@ -154,7 +157,12 @@ export type AuthzReason =
   | "unconfigured";
 
 export type AuthzDecision =
-  | { readonly allow: true; readonly role: Role }
+  | {
+      readonly allow: true;
+      readonly role: Role;
+      /** Explicit branch-policy permission; absent/false keeps fast-forward only. */
+      readonly allowNonFastForward?: boolean;
+    }
   | {
       readonly allow: false;
       readonly status: 401 | 403 | 404 | 503;

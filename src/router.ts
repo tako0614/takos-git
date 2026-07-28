@@ -36,6 +36,7 @@ import {
 } from "./contract/v1.ts";
 import { createDbClient, type D1Binding, type DbClient } from "./db/index.ts";
 import type { ObjectStoreBinding } from "./git/types.ts";
+import { inlineScope, type BackgroundScope } from "./lifecycle.ts";
 import {
   hasValidInterfaceOAuthConfiguration,
   interfaceAudience,
@@ -67,6 +68,11 @@ export interface RouteContext {
   readonly auth: AuthContext;
   /** A DB client when the metadata plane is configured, else null. */
   readonly db: DbClient | null;
+  /**
+   * Owner of any work the handler starts but does not await (webhook delivery,
+   * fan-out). Always present: a handler cannot start unowned background work.
+   */
+  readonly scope: BackgroundScope;
   readonly interfaceUserInfoFetch?: OAuthFetch;
 }
 
@@ -76,6 +82,14 @@ export interface DispatchInput {
   readonly request: Request;
   readonly env: RouterEnv;
   readonly url?: URL;
+  /**
+   * Scope background work started by the matched handler belongs to. When the
+   * caller has an `ExecutionContext` it passes a {@link deferredScope} and owns
+   * the work past the Response. When omitted, `handle()` runs the handler under
+   * an inline scope and AWAITS that work before returning — the omission can
+   * only cost latency, never a delivery.
+   */
+  readonly scope?: BackgroundScope;
   readonly interfaceUserInfoFetch?: OAuthFetch;
 }
 
@@ -258,17 +272,23 @@ export class RouteRegistry {
       }
     }
 
-    return matched.def.handler({
+    // No caller-supplied scope means no ExecutionContext upstream, so this
+    // dispatch owns the background work and must drain it before answering.
+    const scope = input.scope ?? inlineScope();
+    const response = await matched.def.handler({
       request: input.request,
       url,
       env: input.env,
       params,
       auth: auth.ctx,
       db: auth.db,
+      scope,
       ...(input.interfaceUserInfoFetch
         ? { interfaceUserInfoFetch: input.interfaceUserInfoFetch }
         : {}),
     });
+    if (!input.scope) await scope.settled();
+    return response;
   }
 }
 
@@ -340,6 +360,7 @@ async function authenticate(
       };
     }
     const principal = await upsertPrincipal(db, {
+      issuer: env.OIDC_ISSUER_URL ?? "",
       subject: session.subject,
       kind: "user",
       displayName: session.name,
@@ -414,6 +435,7 @@ async function authenticate(
     };
   }
   const principal = await upsertPrincipal(db, {
+    issuer: env.OIDC_ISSUER_URL ?? "",
     subject: credential.subject,
     kind: "service_account",
     bindingId: credential.interfaceBindingId,

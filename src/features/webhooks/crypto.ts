@@ -11,15 +11,20 @@
  * 2. **Delivery signing.** Each delivery body is signed HMAC-SHA256 with the
  *    webhook's (decrypted) secret. This is a documented takos-git scheme, NOT
  *    GitHub wire-compat: the header is `X-Takos-Git-Signature-256: sha256=<hex>`.
+ *    Signing is mandatory: a delivery that cannot be signed is recorded `failed`
+ *    instead of being sent (`service.ts`), so a key-less install never ships an
+ *    unauthenticatable payload to a third-party URL.
  */
 
 import type { RouterEnv } from "../../router.ts";
 
 /**
  * The env-provided key material used to seal webhook secrets. A dedicated
- * `WEBHOOK_SECRET_KEY` worker secret is preferred; `APP_SESSION_SECRET` is the
- * fallback so a single-secret deploy still gets at-rest encryption. Returns null
- * when neither is configured (callers then reject secret storage, fail-closed).
+ * `WEBHOOK_SECRET_KEY` worker secret is preferred (OpenTofu `webhook_secret_key`,
+ * bound independently of browser auth so an automation-only install can sign);
+ * `APP_SESSION_SECRET` is the fallback so a single-secret deploy still gets
+ * at-rest encryption. Returns null when neither is configured — callers then
+ * reject secret storage and refuse delivery, fail-closed.
  */
 export function webhookEncryptionKey(env: RouterEnv): string | null {
   const bag = env as unknown as Record<string, unknown>;

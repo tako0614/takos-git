@@ -10,6 +10,8 @@
 export interface ObjectStoreObjectBody {
   readonly key: string;
   readonly etag: string;
+  /** Present on Cloudflare R2 objects; optional for minimal compatible stores. */
+  readonly size?: number;
   arrayBuffer(): Promise<ArrayBuffer>;
 }
 

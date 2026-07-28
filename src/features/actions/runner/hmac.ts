@@ -34,10 +34,20 @@ async function hmacKey(secret: string): Promise<CryptoKey> {
   );
 }
 
+/**
+ * Constant-time string equality. The length difference is folded into the
+ * accumulator and the loop runs over the longer operand, so the comparison time
+ * does not vary with where the first differing character is nor with whether the
+ * lengths match. Do not re-introduce an early length check: it leaks the
+ * signature length via timing.
+ */
 function timingSafeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let index = 0; index < a.length; index += 1) diff |= a.charCodeAt(index) ^ b.charCodeAt(index);
+  const length = Math.max(a.length, b.length);
+  let diff = a.length ^ b.length;
+  for (let index = 0; index < length; index += 1) {
+    diff |= (index < a.length ? a.charCodeAt(index) : 0) ^
+      (index < b.length ? b.charCodeAt(index) : 0);
+  }
   return diff === 0;
 }
 

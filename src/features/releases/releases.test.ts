@@ -43,7 +43,7 @@ async function seedOwned(
   handle: TestEnvHandle,
   visibility: "public" | "private" = "public",
 ): Promise<string> {
-  const alice = await seedPrincipal(handle.db, "sub-alice");
+  const alice = await seedPrincipal(handle.db, "sub-alice", "service_account");
   const seeded = await seedFullRepo(handle, {
     ownerLogin: "alice",
     ownerType: "user",

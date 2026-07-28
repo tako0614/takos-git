@@ -108,6 +108,18 @@ variable "app_session_secret" {
   }
 }
 
+variable "webhook_secret_key" {
+  description = "Key material sealing per-webhook HMAC secrets at rest and signing every outbound delivery (Worker secret WEBHOOK_SECRET_KEY). Independent of browser auth: an automation-only install (Interface OAuth, no app_session_secret) still reaches the webhook API and must be able to sign. Required whenever enable_metadata is true; app_session_secret is accepted as the fallback for a single-secret deploy."
+  type        = string
+  default     = ""
+  sensitive   = true
+
+  validation {
+    condition     = trimspace(var.webhook_secret_key) == "" || length(var.webhook_secret_key) >= 32
+    error_message = "webhook_secret_key must be empty or at least 32 characters."
+  }
+}
+
 variable "published_mcp_auth_token" {
   description = "Optional standalone bearer protecting /mcp for direct/self-host clients. When empty, only Interface OAuth is accepted and no static bearer is provisioned."
   type        = string
@@ -138,6 +150,7 @@ variable "env" {
         "OIDC_CLIENT_SECRET",
         "APP_SESSION_SECRET",
         "PUBLISHED_MCP_AUTH_TOKEN",
+        "WEBHOOK_SECRET_KEY",
       ], name)
     ])
     error_message = "env keys must be uppercase Worker plain-text variable names and must not be secret-like or reserved by the takos-git module."
@@ -168,7 +181,7 @@ variable "enable_metadata" {
 }
 
 variable "enable_actions" {
-  description = "Provision the self-hosted Actions runner backing resources (Workflow Queue + Dead-Letter Queue, the runner-coordinator and job-runner Durable Object namespaces, and the Actions logs/artifacts R2 bucket) and bind them to the Worker. Requires enable_metadata and enable_cloudflare_worker_script. Off by default keeps takos-git a single-file, R2-only Worker with no Container/DO/Queue bindings."
+  description = "Provision the self-hosted Actions runner backing resources (Workflow Queue + Dead-Letter Queue, the runner-coordinator and job-runner Durable Object namespaces, and the Actions logs/artifacts R2 bucket) and bind them to the Worker. Requires enable_metadata, enable_cloudflare_worker_script, and actions_container_binding_applied. Off by default keeps takos-git a single-file, R2-only Worker with no Container/DO/Queue bindings. Runner egress and CPU/memory are enforced only by the container platform, never by takos-git: a `run:` step reaches the network unrestricted unless the `[[containers]]` step applies the RUNNER_CONTAINER_REQUIREMENTS shape."
   type        = bool
   default     = false
 }
@@ -203,6 +216,12 @@ variable "actions_runner_image" {
   default     = ""
 }
 
+variable "actions_container_binding_applied" {
+  description = "Operator attestation that the runner Container is actually attached: the `[[containers]]` wrangler step has been applied for this Worker AND the deployed bundle ships the `@cloudflare/containers` runtime. Both are out-of-band (the cloudflare provider 5.19.1 has no `containers` attribute, and the takos-git bundle does not depend on `@cloudflare/containers` today), and without them EVERY Actions job fails at dispatch. enable_actions is refused while this is false so the failure lands at plan time instead of on every CI run."
+  type        = bool
+  default     = false
+}
+
 variable "actions_runner_max_instances" {
   description = "Maximum concurrent runner Container instances (wrangler `[[containers]].max_instances`). Applied by the wrangler container step, not by OpenTofu."
   type        = number
@@ -221,7 +240,7 @@ variable "worker_bundle_path" {
 }
 
 variable "worker_release_tag" {
-  description = "GitHub release tag whose takosumi-artifact.json selects the default Worker bundle and SHA-256. Set empty to use worker_bundle_path."
+  description = "Release tag selected from the append-only release.lock.json. The lock pins both the manifest and Worker artifact; unlisted tags are rejected. Set empty to use worker_bundle_path."
   type        = string
   default     = "v0.5.1"
 
@@ -243,7 +262,7 @@ variable "worker_bundle_url" {
 }
 
 variable "worker_bundle_sha256" {
-  description = "Expected SHA-256 of the Worker module JS. Accepts lowercase hex or sha256:<hex>. Required when worker_bundle_url is set."
+  description = "Explicit SHA-256 assertion for the Worker module JS. Required with worker_bundle_url; optional with worker_release_tag but, when supplied, must equal the release.lock.json digest. Accepts lowercase hex or sha256:<hex>."
   type        = string
   default     = ""
 
@@ -295,22 +314,38 @@ variable "worker_compatibility_flags" {
 }
 
 locals {
-  cloudflare_resources_enabled  = var.enable_cloudflare_resources
-  cloudflare_worker_enabled     = local.cloudflare_resources_enabled && var.enable_cloudflare_worker_script
-  metadata_enabled              = local.cloudflare_resources_enabled && var.enable_metadata
-  actions_enabled               = local.cloudflare_resources_enabled && var.enable_actions
-  cloudflare_route_enabled      = local.cloudflare_worker_enabled && trimspace(var.cloudflare_route_zone_id) != "" && trimspace(var.cloudflare_route_pattern) != ""
-  worker_release_tag            = trimspace(var.worker_release_tag)
-  worker_bundle_explicit_url    = trimspace(var.worker_bundle_url)
-  worker_bundle_uses_manifest   = local.cloudflare_worker_enabled && local.worker_bundle_explicit_url == "" && local.worker_release_tag != ""
-  worker_release_manifest       = local.worker_bundle_uses_manifest ? jsondecode(data.http.worker_release_manifest[0].response_body) : null
-  worker_bundle_url             = local.worker_bundle_explicit_url != "" ? local.worker_bundle_explicit_url : try(local.worker_release_manifest.artifact.url, "")
-  worker_bundle_uses_url        = local.cloudflare_worker_enabled && local.worker_bundle_url != ""
-  worker_bundle_sha256_input    = trimspace(var.worker_bundle_sha256) != "" ? trimspace(var.worker_bundle_sha256) : (local.worker_bundle_uses_manifest ? try(local.worker_release_manifest.artifact.sha256, "") : "")
-  worker_bundle_expected_sha256 = startswith(local.worker_bundle_sha256_input, "sha256:") ? replace(local.worker_bundle_sha256_input, "sha256:", "") : local.worker_bundle_sha256_input
-  worker_bundle_local_path      = startswith(var.worker_bundle_path, "/") ? var.worker_bundle_path : "${path.module}/${var.worker_bundle_path}"
-  worker_bundle_body            = local.worker_bundle_uses_url ? data.http.worker_bundle[0].response_body : null
-  worker_bundle_content_sha256  = local.cloudflare_worker_enabled ? (local.worker_bundle_uses_url ? sha256(data.http.worker_bundle[0].response_body) : (local.worker_bundle_uses_manifest ? null : filesha256(local.worker_bundle_local_path))) : null
+  cloudflare_resources_enabled = var.enable_cloudflare_resources
+  cloudflare_worker_enabled    = local.cloudflare_resources_enabled && var.enable_cloudflare_worker_script
+  metadata_enabled             = local.cloudflare_resources_enabled && var.enable_metadata
+  actions_enabled              = local.cloudflare_resources_enabled && var.enable_actions
+  cloudflare_route_enabled     = local.cloudflare_worker_enabled && trimspace(var.cloudflare_route_zone_id) != "" && trimspace(var.cloudflare_route_pattern) != ""
+  # A release tag is only a selector. The checked-in, append-only lock owns the
+  # executable URL and both expected digests; the remotely fetched manifest is
+  # validated against the lock and can never authorize its own artifact.
+  worker_release_lock                     = jsondecode(file("${path.module}/release.lock.json"))
+  worker_release_tag                      = trimspace(var.worker_release_tag)
+  worker_bundle_explicit_url              = trimspace(var.worker_bundle_url)
+  worker_bundle_sha256_input              = trimspace(var.worker_bundle_sha256)
+  worker_bundle_sha256_assertion          = startswith(local.worker_bundle_sha256_input, "sha256:") ? replace(local.worker_bundle_sha256_input, "sha256:", "") : local.worker_bundle_sha256_input
+  worker_release_requested                = local.cloudflare_worker_enabled && local.worker_bundle_explicit_url == "" && local.worker_release_tag != ""
+  worker_release_pin                      = try(local.worker_release_lock.releases[local.worker_release_tag], null)
+  worker_release_pinned                   = local.worker_release_pin != null
+  worker_bundle_uses_release_pin          = local.worker_release_requested && local.worker_release_pinned
+  worker_bundle_uses_explicit_url         = local.cloudflare_worker_enabled && local.worker_bundle_explicit_url != ""
+  worker_release_artifact_filename        = try(local.worker_release_pin.artifact.filename, "")
+  worker_release_artifact_url             = try(local.worker_release_pin.artifact.url, "")
+  worker_release_artifact_sha256_input    = try(local.worker_release_pin.artifact.sha256, "")
+  worker_release_artifact_expected_sha256 = startswith(local.worker_release_artifact_sha256_input, "sha256:") ? replace(local.worker_release_artifact_sha256_input, "sha256:", "") : local.worker_release_artifact_sha256_input
+  worker_release_manifest_url             = try(local.worker_release_pin.manifest.url, "")
+  worker_release_manifest_sha256_input    = try(local.worker_release_pin.manifest.sha256, "")
+  worker_release_manifest_expected_sha256 = startswith(local.worker_release_manifest_sha256_input, "sha256:") ? replace(local.worker_release_manifest_sha256_input, "sha256:", "") : local.worker_release_manifest_sha256_input
+  worker_release_manifest                 = local.worker_bundle_uses_release_pin ? jsondecode(data.http.worker_release_manifest[0].response_body) : null
+  worker_release_manifest_digest          = local.worker_bundle_uses_release_pin ? sha256(data.http.worker_release_manifest[0].response_body) : ""
+  worker_bundle_url                       = local.worker_bundle_uses_explicit_url ? local.worker_bundle_explicit_url : (local.worker_bundle_uses_release_pin ? local.worker_release_artifact_url : "")
+  worker_bundle_uses_url                  = local.cloudflare_worker_enabled && local.worker_bundle_url != ""
+  worker_bundle_local_path                = startswith(var.worker_bundle_path, "/") ? var.worker_bundle_path : "${path.module}/${var.worker_bundle_path}"
+  worker_bundle_body                      = local.worker_bundle_uses_url ? data.http.worker_bundle[0].response_body : (local.worker_release_requested ? "" : null)
+  worker_bundle_content_sha256            = local.cloudflare_worker_enabled ? (local.worker_bundle_uses_url ? sha256(data.http.worker_bundle[0].response_body) : (local.worker_release_requested ? sha256("") : filesha256(local.worker_bundle_local_path))) : null
 
   resource_prefix        = var.project_name
   public_subdomain       = trimspace(var.public_subdomain) != "" ? trimspace(var.public_subdomain) : local.resource_prefix
@@ -330,6 +365,10 @@ locals {
   extra_worker_env       = { for name, value in var.env : name => value if trimspace(value) != "" }
   actions_runner_secret  = trimspace(var.actions_runner_secret)
   actions_secrets_key    = trimspace(var.actions_secrets_key)
+  webhook_secret_key     = trimspace(var.webhook_secret_key)
+  # Signing key actually available to the Worker: the dedicated secret, or the
+  # browser-auth session secret that `webhookEncryptionKey()` falls back to.
+  webhook_signing_ready = local.webhook_secret_key != "" || (local.browser_auth_ready && local.app_session_secret != "")
 
   r2_objects_bucket = "${local.resource_prefix}-objects"
   d1_metadata_name  = local.resource_prefix
@@ -339,8 +378,8 @@ locals {
 }
 
 data "http" "worker_release_manifest" {
-  count              = local.worker_bundle_uses_manifest ? 1 : 0
-  url                = "https://github.com/tako0614/takos-git/releases/download/${local.worker_release_tag}/takosumi-artifact.json"
+  count              = local.worker_bundle_uses_release_pin ? 1 : 0
+  url                = local.worker_release_manifest_url
   request_timeout_ms = 30000
 
   request_headers = {
@@ -413,8 +452,17 @@ resource "cloudflare_d1_database" "metadata" {
 #
 # D1 schema migrations self-apply inside the released Worker. The DO namespace +
 # the `new_sqlite_classes` migration for both DO classes ARE declared on the worker
-# script below, so only the container image attachment is deferred to wrangler.
-# TODO(wrangler): apply the `[[containers]]` image binding.
+# script below.
+#
+# NOT YET DEPLOYABLE. Two things are missing, not one: the `[[containers]]` image
+# attachment above, AND the `@cloudflare/containers` runtime itself — takos-git
+# does not depend on it, and `scripts/build-worker.ts` produces a single bundle,
+# so `ActionsJobRunner`'s runtime import can never resolve and every dispatched
+# job fails immediately. `enable_actions` is therefore gated on the
+# `actions_container_binding_applied` attestation below, so an install cannot
+# quietly provision the whole Actions binding set and then red-flag every CI run.
+# TODO(runner): add the `@cloudflare/containers` dependency to the worker bundle,
+# then apply the `[[containers]]` image binding.
 resource "cloudflare_queue" "workflows" {
   count      = local.actions_enabled ? 1 : 0
   account_id = var.cloudflare_account_id
@@ -451,8 +499,8 @@ resource "cloudflare_workers_script" "worker" {
   count               = local.cloudflare_worker_enabled ? 1 : 0
   account_id          = var.cloudflare_account_id
   script_name         = local.runtime_name
-  content             = local.worker_bundle_uses_url ? sensitive(local.worker_bundle_body) : null
-  content_file        = local.worker_bundle_uses_url ? null : local.worker_bundle_local_path
+  content             = local.worker_bundle_uses_url || local.worker_release_requested ? sensitive(local.worker_bundle_body) : null
+  content_file        = local.worker_bundle_uses_url || local.worker_release_requested ? null : local.worker_bundle_local_path
   content_sha256      = local.worker_bundle_content_sha256
   main_module         = var.worker_main_module
   compatibility_date  = var.worker_compatibility_date
@@ -510,6 +558,16 @@ resource "cloudflare_workers_script" "worker" {
         type = "secret_text"
         name = "PUBLISHED_MCP_AUTH_TOKEN"
         text = local.provided_mcp_token
+      },
+    ] : [],
+    # Bound independently of browser auth: webhooks are reachable with an
+    # Interface OAuth bearer alone, so an automation-only install must be able to
+    # seal and sign them.
+    local.webhook_secret_key != "" ? [
+      {
+        type = "secret_text"
+        name = "WEBHOOK_SECRET_KEY"
+        text = local.webhook_secret_key
       },
     ] : [],
     local.metadata_enabled ? [
@@ -580,8 +638,18 @@ resource "cloudflare_workers_script" "worker" {
     }
 
     precondition {
+      condition     = !local.metadata_enabled || local.webhook_signing_ready
+      error_message = "enable_metadata exposes the webhook API, which only delivers HMAC-signed payloads: set webhook_secret_key (>= 32 chars), or app_session_secret together with the browser-auth variables."
+    }
+
+    precondition {
       condition     = !local.actions_enabled || local.metadata_enabled
       error_message = "enable_actions requires enable_metadata (Actions run/job/secret state shares the collaboration-core D1)."
+    }
+
+    precondition {
+      condition     = !local.actions_enabled || (var.actions_container_binding_applied && trimspace(var.actions_runner_image) != "")
+      error_message = "enable_actions requires actions_runner_image and actions_container_binding_applied: without the out-of-band wrangler `[[containers]]` image binding (and a bundle shipping @cloudflare/containers) the ActionsJobRunner Durable Object has no container and every job fails at dispatch."
     }
 
     precondition {
@@ -590,25 +658,81 @@ resource "cloudflare_workers_script" "worker" {
     }
 
     precondition {
-      condition = !local.worker_bundle_uses_manifest || (
-        try(local.worker_release_manifest.kind, "") == "takosumi.worker-artifact@v1" &&
-        try(local.worker_release_manifest.app, "") == "takos-git" &&
-        try(local.worker_release_manifest.releaseTag, "") == local.worker_release_tag &&
-        local.worker_bundle_uses_url
-      )
-      error_message = "worker_release_tag must resolve to a valid takos-git takosumi.worker-artifact@v1 manifest."
+      condition     = try(local.worker_release_lock.kind, "") == "takos.release-artifact-lock@v1" && try(local.worker_release_lock.app, "") == "takos-git"
+      error_message = "release.lock.json must be a takos.release-artifact-lock@v1 lock owned by takos-git."
     }
 
     precondition {
-      condition     = !local.worker_bundle_uses_url || (local.worker_bundle_expected_sha256 != "" && local.worker_bundle_expected_sha256 == local.worker_bundle_content_sha256)
+      condition     = !local.worker_release_requested || local.worker_release_pinned
+      error_message = "worker_release_tag is not pinned in release.lock.json; add a reviewed append-only release entry before deploying it."
+    }
+
+    precondition {
+      condition = !local.worker_bundle_uses_release_pin || (
+        local.worker_release_artifact_filename != "" &&
+        can(regex("^[a-f0-9]{40}$", try(local.worker_release_pin.commit, ""))) &&
+        can(regex("^https://[^[:space:]]+$", local.worker_release_artifact_url)) &&
+        can(regex("^https://[^[:space:]]+$", local.worker_release_manifest_url)) &&
+        can(regex("^[a-f0-9]{64}$", local.worker_release_artifact_expected_sha256)) &&
+        can(regex("^[a-f0-9]{64}$", local.worker_release_manifest_expected_sha256))
+      )
+      error_message = "worker_release_tag has a malformed release.lock.json entry; tag, commit, HTTPS URLs, and both SHA-256 digests must be pinned."
+    }
+
+    precondition {
+      condition     = !local.worker_bundle_uses_release_pin || local.worker_release_manifest_expected_sha256 == local.worker_release_manifest_digest
+      error_message = "The fetched release manifest does not match the SHA-256 pinned in release.lock.json."
+    }
+
+    precondition {
+      condition = !local.worker_bundle_uses_release_pin || (
+        try(local.worker_release_manifest.kind, "") == "takosumi.worker-artifact@v1" &&
+        try(local.worker_release_manifest.app, "") == "takos-git" &&
+        try(local.worker_release_manifest.releaseTag, "") == local.worker_release_tag &&
+        try(local.worker_release_manifest.ref, "") == local.worker_release_tag &&
+        try(local.worker_release_manifest.commit, "") == try(local.worker_release_pin.commit, "") &&
+        try(local.worker_release_manifest.artifact.filename, "") == local.worker_release_artifact_filename &&
+        try(local.worker_release_manifest.artifact.url, "") == local.worker_release_artifact_url &&
+        try(local.worker_release_manifest.manifestUrl, "") == local.worker_release_manifest_url
+      )
+      error_message = "The fetched manifest identity, commit, artifact filename/URL, or manifest URL does not match release.lock.json."
+    }
+
+    precondition {
+      condition     = !local.worker_bundle_uses_release_pin || local.worker_release_artifact_expected_sha256 == local.worker_bundle_content_sha256
+      error_message = "The fetched Worker artifact does not match the SHA-256 pinned in release.lock.json."
+    }
+
+    precondition {
+      condition     = !local.worker_release_requested || local.worker_bundle_sha256_assertion == "" || local.worker_bundle_sha256_assertion == local.worker_release_artifact_expected_sha256
+      error_message = "worker_bundle_sha256 is only an additional release-tag assertion and must equal the artifact digest in release.lock.json."
+    }
+
+    precondition {
+      condition     = !local.worker_bundle_uses_explicit_url || (local.worker_bundle_sha256_assertion != "" && local.worker_bundle_sha256_assertion == local.worker_bundle_content_sha256)
       error_message = "worker_bundle_sha256 is required for worker_bundle_url and must match the downloaded artifact."
     }
 
     precondition {
-      condition     = local.worker_bundle_uses_url || local.worker_bundle_uses_manifest || local.worker_bundle_expected_sha256 == "" || local.worker_bundle_expected_sha256 == local.worker_bundle_content_sha256
+      condition     = local.worker_release_requested || local.worker_bundle_uses_explicit_url || local.worker_bundle_sha256_assertion == "" || local.worker_bundle_sha256_assertion == local.worker_bundle_content_sha256
       error_message = "worker_bundle_sha256 does not match worker_bundle_path."
     }
   }
+}
+
+# Durable webhook retry outbox. Fetch requests also drain a bounded batch, but
+# the cron is required so an idle Capsule still makes progress after a receiver
+# outage or isolate cancellation.
+resource "cloudflare_workers_cron_trigger" "webhook_outbox" {
+  count       = local.cloudflare_worker_enabled && local.metadata_enabled ? 1 : 0
+  account_id  = var.cloudflare_account_id
+  script_name = cloudflare_workers_script.worker[0].script_name
+
+  schedules = [
+    {
+      cron = "* * * * *"
+    },
+  ]
 }
 
 resource "cloudflare_workers_script_subdomain" "worker" {

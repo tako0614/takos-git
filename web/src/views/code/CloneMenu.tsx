@@ -1,4 +1,5 @@
-import { createSignal, onCleanup, Show, type JSX } from "solid-js";
+import { createSignal, Show, type JSX } from "solid-js";
+import { createReactiveListener } from "../../lib/lifecycle.ts";
 import { Icons } from "../../ui/index.ts";
 import { CopyButton } from "./CopyButton.tsx";
 
@@ -19,8 +20,6 @@ export function CloneMenu(props: { cloneUrl: string }): JSX.Element {
   };
   const close = () => {
     setOpen(false);
-    document.removeEventListener("click", onDocClick);
-    document.removeEventListener("keydown", onKey);
   };
   const toggle = () => {
     if (open()) {
@@ -28,12 +27,18 @@ export function CloneMenu(props: { cloneUrl: string }): JSX.Element {
       return;
     }
     setOpen(true);
-    document.addEventListener("click", onDocClick);
-    document.addEventListener("keydown", onKey);
   };
-  onCleanup(() => {
-    document.removeEventListener("click", onDocClick);
-    document.removeEventListener("keydown", onKey);
+  createReactiveListener({
+    active: open,
+    target: document,
+    type: "click",
+    handler: onDocClick as EventListener,
+  });
+  createReactiveListener({
+    active: open,
+    target: document,
+    type: "keydown",
+    handler: onKey as EventListener,
   });
 
   const cloneCmd = () => `git clone ${props.cloneUrl}`;

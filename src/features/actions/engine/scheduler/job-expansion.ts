@@ -21,6 +21,28 @@ export function normalizeNeedsInput(needs: unknown): string[] {
   return [];
 }
 
+// --- 展開バジェット ---
+
+/**
+ * Workflow-wide expansion budget. SECURITY (DoS): the per-unit caps multiply —
+ * the validator allows 1000 jobs and 1000 steps per job, and each job may expand
+ * to 256 matrix combinations, so `jobs × matrix × steps` is ~2.5×10^8 step rows,
+ * all materialized synchronously on the Worker event loop and then written to D1
+ * one awaited INSERT at a time by `createWorkflowRun`. Nothing capped the
+ * product. Both budgets are charged WHILE the expansion is built, so the
+ * explosion is rejected instead of allocated.
+ */
+const MAX_EXPANDED_JOBS_PER_WORKFLOW = 256;
+const MAX_EXPANDED_STEPS_PER_WORKFLOW = 10000;
+
+/** Thrown when a workflow's expansion exceeds the workflow-wide budget. */
+export class WorkflowExpansionLimitError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "WorkflowExpansionLimitError";
+  }
+}
+
 // --- マトリクス展開されたジョブ ---
 
 /**
@@ -51,6 +73,24 @@ export function buildExpandedJobs(workflow: Workflow): {
 } {
   const jobs = new Map<string, ExpandedJob>();
   const expansionMap = new Map<string, string[]>();
+  let totalSteps = 0;
+
+  /** 展開エントリを 1 件バジェットに計上する（超過したら即中断）。 */
+  const charge = (steps: number): void => {
+    totalSteps += steps;
+    if (jobs.size > MAX_EXPANDED_JOBS_PER_WORKFLOW) {
+      throw new WorkflowExpansionLimitError(
+        `Workflow expands to more than ${MAX_EXPANDED_JOBS_PER_WORKFLOW} jobs. ` +
+          `Reduce the number of jobs or matrix combinations.`,
+      );
+    }
+    if (totalSteps > MAX_EXPANDED_STEPS_PER_WORKFLOW) {
+      throw new WorkflowExpansionLimitError(
+        `Workflow expands to more than ${MAX_EXPANDED_STEPS_PER_WORKFLOW} steps. ` +
+          `Reduce the number of steps or matrix combinations.`,
+      );
+    }
+  };
 
   for (const [jobId, job] of Object.entries(workflow.jobs)) {
     const expansions = expandMatrix(job.strategy);
@@ -62,6 +102,7 @@ export function buildExpandedJobs(workflow: Workflow): {
         baseId: jobId,
         job,
       });
+      charge(job.steps?.length ?? 0);
       expansionMap.set(jobId, [jobId]);
       continue;
     }
@@ -84,6 +125,7 @@ export function buildExpandedJobs(workflow: Workflow): {
         matrix: expansion.matrix,
         strategy: expansion.strategy,
       });
+      charge(job.steps?.length ?? 0);
       expandedIds.push(uniqueId);
     }
     expansionMap.set(jobId, expandedIds);

@@ -39,7 +39,7 @@ async function dispatch(
 }
 
 async function seedOwned(handle: TestEnvHandle): Promise<void> {
-  const alice = await seedPrincipal(handle.db, "sub-alice");
+  const alice = await seedPrincipal(handle.db, "sub-alice", "service_account");
   await seedFullRepo(handle, {
     ownerLogin: "alice",
     ownerType: "user",

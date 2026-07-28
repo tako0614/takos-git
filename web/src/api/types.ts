@@ -503,18 +503,29 @@ export interface BranchProtectionRuleDto {
 export interface WebhookDto {
   readonly id: string;
   readonly url: string;
+  readonly contentType: "application/json" | "application/x-www-form-urlencoded";
   readonly events: readonly string[];
   readonly active: boolean;
+  readonly sslVerify: boolean;
+  readonly hasSecret: boolean;
   readonly createdAt: number;
   readonly updatedAt: number;
 }
 
 export interface WebhookDeliveryDto {
   readonly id: string;
+  readonly webhookId: string;
   readonly event: string;
-  readonly statusCode: number | null;
-  readonly success: boolean;
-  readonly durationMs: number | null;
+  readonly status: "pending" | "success" | "failed";
+  readonly attempt: number;
+  readonly responseStatus: number | null;
+  readonly responseMs: number | null;
+  readonly error: string | null;
+  readonly requestHeaders: Readonly<Record<string, string>>;
+  readonly retryable: boolean;
+  readonly nextRetryDelayMs: number | null;
+  readonly nextAttemptAt: number | null;
+  readonly deliveredAt: number | null;
   readonly createdAt: number;
 }
 

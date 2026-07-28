@@ -49,7 +49,7 @@ Queue or Workflow (later milestone)
 ```
 
 現在の per-repository refs document と conditional R2 write は Git receive-pack の atomic
-boundary として維持する。D1 を追加しても、Git object と ref の正本を暗黙に D1 へ二重化しない。
+boundary として維持する。D1 を追加しても、Git object と ref の正とする情報を暗黙に D1 へ二重化しない。
 metadata operation と ref update をまたぐ処理は retryable state machine として明示する。
 
 ## Authentication and authorization
@@ -90,7 +90,8 @@ reader へ絞り込む。repository ごとに Takosumi Interface を量産しな
 
 ### M3: automation and large repositories
 
-- webhook delivery with retry and audit evidence
+- durable R2-backed webhook delivery with a D1 audit/outbox ledger, leased
+  retries, bounded exponential backoff, and a scheduled drain
 - check run / status API
 - **self-hosted Actions runner**: Actions の実行層は takos-git 自身の Worker に埋め込んだ
   Cloudflare Container + Durable Object。外部 runner Capsule でも Takos agent でもない
@@ -112,10 +113,10 @@ versioned capability として追加し、未対応 API を GitHub 互換とし�
 ## Self-hosted Actions runner
 
 Actions の実行層は takos-git 自身の Worker に埋め込む。これは
-[`github-parity-build.md`](github-parity-build.md) の Decision record の正本判断であり、旧稿の
+[`github-parity-build.md`](github-parity-build.md) の Decision record を正とする判断であり、旧稿の
 「runner Interface を使う Actions dispatch」を **上書き** する。**外部 runner Capsule ではなく、
 Takos agent でもない**。旧 Takos product 側の Actions 実行層 (`TakosRuntimeContainer` /
-`RUNTIME_HOST` / `src/worker/runtime/queues/workflow-*`) は **retire** 済みで、この
+`RUNTIME_HOST` / `src/worker/runtime/queues/workflow-*`) は **廃止** 済みで、この
 self-hosted runner が唯一の後継。shim も dual path も Takos runtime への依存も持たない。
 
 ### 実行トポロジ
@@ -139,7 +140,7 @@ receive-pack success
   Container DO に dispatch する。matrix job は job_key を共有し、集約 conclusion は最悪 cell。
   prerequisite が success 以外に settle したら dependent は skip。job timeout は alarm で
   reap。状態遷移は 5a callback (`startRun` / `startJob` / `updateStep` / `completeJob` /
-  `cancelRun`) だけを通し、二重 source of truth を作らない。再配送に対して idempotent。
+  `cancelRun`) だけを通し、二重の正とする情報を作らない。再配送に対しても同じ結果になる。
 - **Container DO (`ActionsJobRunner`)**: per-job で runner Container を起動し、job body を
   forward し、`ActionsJobResult` を coordinator に relay する。timeout / cancellation と
   RunnerProfile 相当の resource / network / secret policy (`default-deny` egress、bounded
@@ -152,7 +153,7 @@ receive-pack success
 
 ### R2 と run-pin
 
-git data の正本は R2。run は作成時の commit を内部 ref `refs/takos-actions/<runId>` に
+git data は R2 を正とする。run は作成時の commit を内部 ref `refs/takos-actions/<runId>` に
 **pin** する (refs-doc と同じ ETag CAS 規律、`src/git/refs-store.ts`)。pin は git-visible な
 refs doc の外に隔離した per-repo pin document (`git/v2/actions-pins/<repo>.json`) に置き、
 smart-http では advertise されず client から push もできない。これにより run 実行中に
@@ -164,7 +165,7 @@ force-push が並行しても、runner が build する tree は動かない。l
 
 `/internal/actions/{checkout,logs,artifacts}` は Interface OAuth / browser session とは
 **別の HMAC trust boundary**。container の callback は run 単位に mint した
-`ACTIONS_RUNNER_SECRET` bearer (runId+jobId を bind) で認証する。fail-closed
+`ACTIONS_RUNNER_SECRET` bearer (runId+jobId を bind) で認証する。安全側に停止
 (secret 未設定なら常に 401) で、router より前に dispatch し、`/api/v1` / `/git/` / `/mcp`
 からは到達不能。checkout の repo / commit は token を信用せず runId から D1/R2 で解決する。
 

@@ -52,7 +52,7 @@ async function seedRepoWithWriter(
     name: opts.name,
     visibility: opts.visibility ?? "public",
   });
-  const writerId = await seedPrincipal(handle.db, "sub-writer");
+  const writerId = await seedPrincipal(handle.db, "sub-writer", "service_account");
   await grant(handle.db, seeded.repoId, writerId, "writer");
   return seeded;
 }

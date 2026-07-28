@@ -15,6 +15,7 @@ import type { OAuthFetch } from "../../browser-auth.ts";
 import type { Visibility } from "../../contract/v1.ts";
 
 export const TEST_APP_URL = "https://git.example";
+export const TEST_ISSUER = "https://accounts.example";
 export const TEST_WORKSPACE = "workspace_a";
 export const TEST_CAPSULE = "capsule_git";
 
@@ -35,7 +36,7 @@ export function makeEnv(): TestEnvHandle {
     BUCKET: bucket,
     DB: fake,
     APP_URL: TEST_APP_URL,
-    OIDC_ISSUER_URL: "https://accounts.example",
+    OIDC_ISSUER_URL: TEST_ISSUER,
     APP_WORKSPACE_ID: TEST_WORKSPACE,
     APP_CAPSULE_ID: TEST_CAPSULE,
   };
@@ -46,12 +47,15 @@ export async function seedPrincipal(
   db: DbClient,
   subject: string,
   kind: "user" | "service_account" = "user",
+  bindingId = kind === "service_account" ? `binding_${subject}` : "",
 ): Promise<string> {
   const id = db.id();
   const now = db.now();
   await db.run(
-    `INSERT INTO principals (id, subject, kind, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
-    [id, subject, kind, now, now],
+    `INSERT INTO principals
+       (id, issuer, subject, binding_id, kind, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [id, TEST_ISSUER, subject, bindingId, kind, now, now],
   );
   return id;
 }
@@ -128,6 +132,7 @@ export async function seedFullRepo(
 export interface InterfaceToken {
   readonly scope: string;
   readonly subject: string;
+  readonly bindingId?: string;
 }
 
 /**
@@ -152,7 +157,7 @@ export function interfaceUserInfoFetch(
         workspace_id: TEST_WORKSPACE,
         capsule_id: TEST_CAPSULE,
         interface_id: "interface_git",
-        interface_binding_id: `binding_${entry.subject}`,
+        interface_binding_id: entry.bindingId ?? `binding_${entry.subject}`,
         interface_resolved_revision: 1,
       },
     });

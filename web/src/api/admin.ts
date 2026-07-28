@@ -40,24 +40,24 @@ export const branchProtectionApi = {
 
 export const webhooksApi = {
   list(owner: string, repo: string, signal?: AbortSignal): Promise<Page<WebhookDto>> {
-    return getPage<WebhookDto>(`${repoPath(owner, repo)}/hooks`, "hooks", {}, signal);
+    return getPage<WebhookDto>(`${repoPath(owner, repo)}/webhooks`, "webhooks", {}, signal);
   },
-  get(owner: string, repo: string, id: string, signal?: AbortSignal): Promise<{ hook: WebhookDto }> {
-    return api.get(`${repoPath(owner, repo)}/hooks/${encodeURIComponent(id)}`, undefined, signal);
+  get(owner: string, repo: string, id: string, signal?: AbortSignal): Promise<{ webhook: WebhookDto }> {
+    return api.get(`${repoPath(owner, repo)}/webhooks/${encodeURIComponent(id)}`, undefined, signal);
   },
-  create(owner: string, repo: string, input: { url: string; secret?: string; events: string[]; active?: boolean }): Promise<{ hook: WebhookDto }> {
-    return api.post(`${repoPath(owner, repo)}/hooks`, input);
+  create(owner: string, repo: string, input: { url: string; secret: string; events: string[]; active?: boolean }): Promise<{ webhook: WebhookDto }> {
+    return api.post(`${repoPath(owner, repo)}/webhooks`, input);
   },
-  update(owner: string, repo: string, id: string, patch: Partial<{ url: string; secret: string; events: string[]; active: boolean }>): Promise<{ hook: WebhookDto }> {
-    return api.patch(`${repoPath(owner, repo)}/hooks/${encodeURIComponent(id)}`, patch);
+  update(owner: string, repo: string, id: string, patch: Partial<{ url: string; secret: string; events: string[]; active: boolean }>): Promise<{ webhook: WebhookDto }> {
+    return api.patch(`${repoPath(owner, repo)}/webhooks/${encodeURIComponent(id)}`, patch);
   },
-  remove(owner: string, repo: string, id: string): Promise<void> {
-    return api.del(`${repoPath(owner, repo)}/hooks/${encodeURIComponent(id)}`);
+  remove(owner: string, repo: string, id: string): Promise<{ removed: true }> {
+    return api.del(`${repoPath(owner, repo)}/webhooks/${encodeURIComponent(id)}`);
   },
-  ping(owner: string, repo: string, id: string): Promise<void> {
-    return api.post(`${repoPath(owner, repo)}/hooks/${encodeURIComponent(id)}/pings`);
+  ping(owner: string, repo: string, id: string): Promise<{ delivery: WebhookDeliveryDto | null }> {
+    return api.post(`${repoPath(owner, repo)}/webhooks/${encodeURIComponent(id)}/pings`);
   },
   deliveries(owner: string, repo: string, id: string, signal?: AbortSignal): Promise<Page<WebhookDeliveryDto>> {
-    return getPage<WebhookDeliveryDto>(`${repoPath(owner, repo)}/hooks/${encodeURIComponent(id)}/deliveries`, "deliveries", {}, signal);
+    return getPage<WebhookDeliveryDto>(`${repoPath(owner, repo)}/webhooks/${encodeURIComponent(id)}/deliveries`, "deliveries", {}, signal);
   },
 };

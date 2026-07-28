@@ -19,7 +19,8 @@
 
 import type { DbClient } from "../../db/index.ts";
 import { findMergeBase, isAncestor } from "../../git/merge-base.ts";
-import { getCommitData } from "../../git/object-store.ts";
+import { getCommitData, getObjectKey } from "../../git/object-store.ts";
+import { collectReachableObjects } from "../../git/reachability.ts";
 import {
   deleteRepo,
   readRepoRefs,
@@ -119,7 +120,7 @@ export async function getRepoById(
   id: string,
 ): Promise<RepoFullRow | null> {
   const row = await db.queryOne<RawRepoFullRow>(
-    `${REPO_SELECT} WHERE r.id = ? LIMIT 1`,
+    `${REPO_SELECT} WHERE r.id = ? AND r.lifecycle_state = 'active' LIMIT 1`,
     [id],
   );
   return row ? toRepoFullRow(row) : null;
@@ -131,7 +132,8 @@ export async function getRepoByOwnerName(
   name: string,
 ): Promise<RepoFullRow | null> {
   const row = await db.queryOne<RawRepoFullRow>(
-    `${REPO_SELECT} WHERE o.login = ? COLLATE NOCASE AND r.name = ? COLLATE NOCASE LIMIT 1`,
+    `${REPO_SELECT} WHERE o.login = ? COLLATE NOCASE AND r.name = ? COLLATE NOCASE
+      AND r.lifecycle_state = 'active' LIMIT 1`,
     [owner, name],
   );
   return row ? toRepoFullRow(row) : null;
@@ -253,6 +255,34 @@ export async function copyRepoObjects(
     }
     cursor = page.truncated ? page.cursor : undefined;
   } while (cursor);
+  return copied;
+}
+
+/**
+ * Copy only the objects reachable from `tips` (minus `haves`), instead of the
+ * whole source prefix. Used by upstream sync: a whole-prefix copy would hand the
+ * fork owner every object in the upstream — including history only reachable from
+ * branches and pull requests the sync never named — for one branch's worth of
+ * fast-forward. Same head-hit skip as `copyRepoObjects`, so it stays idempotent.
+ */
+export async function copyReachableObjects(
+  bucket: ObjectStoreBinding,
+  fromStorageKey: string,
+  toStorageKey: string,
+  tips: readonly string[],
+  haves: ReadonlySet<string> = new Set<string>(),
+): Promise<number> {
+  const src = repositoryObjectStore(bucket, fromStorageKey);
+  const dst = repositoryObjectStore(bucket, toStorageKey);
+  let copied = 0;
+  for (const sha of await collectReachableObjects(src, tips, haves)) {
+    const key = getObjectKey(sha);
+    if (await dst.head(key)) continue;
+    const body = await src.get(key);
+    if (!body) continue;
+    await dst.put(key, new Uint8Array(await body.arrayBuffer()));
+    copied += 1;
+  }
   return copied;
 }
 
@@ -483,8 +513,16 @@ export async function syncFork(
     if (!ff) return { ok: false, code: "diverged" };
   }
 
-  // Bring the new commits (and their trees/blobs) into the fork prefix.
-  await copyRepoObjects(bucket, upstream.storageKey, fork.storageKey);
+  // Bring the new commits (and their trees/blobs) into the fork prefix —
+  // reachability-scoped, never the whole upstream prefix. The fork tip is a
+  // `have` because a fast-forward proved it (and its history) is already here.
+  await copyReachableObjects(
+    bucket,
+    upstream.storageKey,
+    fork.storageKey,
+    [upstreamTip],
+    forkTip === null ? new Set<string>() : new Set([forkTip]),
+  );
 
   const result = await writeRefsWithMetadata(bucket, {
     repo: fork.storageKey,

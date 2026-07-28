@@ -8,12 +8,10 @@
  * kept fresh by polling while runs/jobs are non-terminal (CSP-safe; no WS needed).
  */
 import {
-  createEffect,
   createMemo,
   createResource,
   createSignal,
   For,
-  onCleanup,
   Show,
   type JSX,
 } from "solid-js";
@@ -25,6 +23,7 @@ import {
   Pagination,
   Select,
 } from "../../ui/index.ts";
+import { createPolling } from "../../lib/lifecycle.ts";
 import { actionsApi, type RunListFilter } from "../../api/actions.ts";
 import { ApiError } from "../../api/client.ts";
 import { RunsList } from "./RunsList.tsx";
@@ -103,17 +102,10 @@ export function ActionsView(): JSX.Element {
   const resetPaging = () => setCursors([null]);
 
   // Poll while any visible run is still live.
-  let timer: ReturnType<typeof setInterval> | undefined;
-  createEffect(() => {
-    const live = items().some((r) => runIsLive(r));
-    if (timer) {
-      clearInterval(timer);
-      timer = undefined;
-    }
-    if (live) timer = setInterval(() => void refetch(), POLL_MS);
-  });
-  onCleanup(() => {
-    if (timer) clearInterval(timer);
+  createPolling({
+    active: () => items().some((r) => runIsLive(r)),
+    intervalMs: POLL_MS,
+    tick: () => void refetch(),
   });
 
   const goNext = () => {

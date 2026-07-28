@@ -1,4 +1,5 @@
-import { createSignal, onCleanup, Show, type JSX } from "solid-js";
+import { createSignal, Show, type JSX } from "solid-js";
+import { createLifecycleOwner } from "../../lib/lifecycle.ts";
 import { Icons, useToast } from "../../ui/index.ts";
 import { cn } from "../../lib/cn.ts";
 
@@ -16,18 +17,18 @@ export function CopyButton(props: {
 }): JSX.Element {
   const toast = useToast();
   const [copied, setCopied] = createSignal(false);
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  onCleanup(() => {
-    if (timer) clearTimeout(timer);
-  });
+  const lifecycle = createLifecycleOwner();
+  let copyVersion = 0;
 
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(props.value);
       setCopied(true);
       toast.success(props.label ? `${props.label} copied` : "Copied to clipboard");
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => setCopied(false), 1500);
+      const version = ++copyVersion;
+      lifecycle.timeout(1500, () => {
+        if (version === copyVersion) setCopied(false);
+      });
     } catch {
       toast.error("Copy failed — your browser blocked clipboard access");
     }

@@ -13,6 +13,12 @@ import { describe, expect, test } from "bun:test";
 import { createGitWorker } from "./worker.ts";
 import { concatBytes } from "./git/sha1.ts";
 import { PKT_FLUSH, pktLineString } from "./git/pack-common.ts";
+import { getCommitData, putCommit } from "./git/object-store.ts";
+import { repositoryObjectStore } from "./git/repo-object-store.ts";
+import {
+  readRepoRefsSnapshot,
+  writeRepoRefs,
+} from "./git/refs-store.ts";
 import {
   makeEnv,
   seedFullRepo,
@@ -209,6 +215,123 @@ describe("smart-HTTP per-repo ACL", () => {
     // The refs-doc was never advanced — main still points at the seeded commit.
     const refs = await worker.fetch(gitReq(UPLOAD_REFS, "taksrv_reader"), handle.env);
     expect(await refs.text()).toContain(commitSha);
+  });
+
+  test("protected branch deletion is denied unless allow_deletions is enabled", async () => {
+    const { handle, commitSha } = await seedPrivateRepo();
+    const repoRow = await handle.db.queryOne<{ id: string }>(
+      `SELECT id FROM repositories WHERE storage_key = ?`,
+      ["acme/secret"],
+    );
+    const now = handle.db.now();
+    await handle.db.run(
+      `INSERT INTO branch_protection_rules
+         (id, repo_id, pattern, allow_deletions, enforce_admins, created_at, updated_at)
+       VALUES (?, ?, 'main', 0, 1, ?, ?)`,
+      [handle.db.id(), repoRow!.id, now, now],
+    );
+    const deletion = concatBytes(
+      pktLineString(
+        `${commitSha} ${"0".repeat(40)} refs/heads/main\0report-status delete-refs\n`,
+      ),
+      PKT_FLUSH,
+    );
+
+    const denied = await worker.fetch(
+      gitReq(
+        "/git/acme/secret.git/git-receive-pack",
+        "taksrv_writer_w",
+        deletion,
+      ),
+      handle.env,
+    );
+    expect(await denied.text()).toContain("protected ref: refs/heads/main");
+
+    await handle.db.run(
+      `UPDATE branch_protection_rules
+          SET allow_deletions = 1
+        WHERE repo_id = ? AND pattern = 'main'`,
+      [repoRow!.id],
+    );
+    const allowed = await worker.fetch(
+      gitReq(
+        "/git/acme/secret.git/git-receive-pack",
+        "taksrv_writer_w",
+        deletion,
+      ),
+      handle.env,
+    );
+    expect(await allowed.text()).toContain("ok refs/heads/main");
+  });
+
+  test("protected branch non-fast-forward update requires allow_force_push", async () => {
+    const { handle, commitSha } = await seedPrivateRepo();
+    const repoRow = await handle.db.queryOne<{ id: string }>(
+      `SELECT id FROM repositories WHERE storage_key = ?`,
+      ["acme/secret"],
+    );
+    const objects = repositoryObjectStore(handle.bucket, "acme/secret");
+    const root = await getCommitData(objects, commitSha);
+    if (!root) throw new Error("seed commit missing");
+    const childSha = await putCommit(objects, {
+      tree: root.tree,
+      parents: [commitSha],
+      author: root.author,
+      committer: root.committer,
+      message: "child\n",
+    });
+    const snapshot = await readRepoRefsSnapshot(handle.bucket, "acme/secret");
+    if (!snapshot) throw new Error("seed refs missing");
+    expect(
+      await writeRepoRefs(
+        handle.bucket,
+        "acme/secret",
+        {
+          defaultBranch: "main",
+          refs: [{ name: "refs/heads/main", sha: childSha }],
+        },
+        snapshot.etag,
+      ),
+    ).toBe(true);
+    const now = handle.db.now();
+    await handle.db.run(
+      `INSERT INTO branch_protection_rules
+         (id, repo_id, pattern, allow_force_push, enforce_admins, created_at, updated_at)
+       VALUES (?, ?, 'main', 0, 1, ?, ?)`,
+      [handle.db.id(), repoRow!.id, now, now],
+    );
+    const rewind = concatBytes(
+      pktLineString(
+        `${childSha} ${commitSha} refs/heads/main\0report-status\n`,
+      ),
+      PKT_FLUSH,
+    );
+
+    const denied = await worker.fetch(
+      gitReq(
+        "/git/acme/secret.git/git-receive-pack",
+        "taksrv_writer_w",
+        rewind,
+      ),
+      handle.env,
+    );
+    expect(await denied.text()).toContain("non-fast-forward branch update");
+
+    await handle.db.run(
+      `UPDATE branch_protection_rules
+          SET allow_force_push = 1
+        WHERE repo_id = ? AND pattern = 'main'`,
+      [repoRow!.id],
+    );
+    const allowed = await worker.fetch(
+      gitReq(
+        "/git/acme/secret.git/git-receive-pack",
+        "taksrv_writer_w",
+        rewind,
+      ),
+      handle.env,
+    );
+    expect(await allowed.text()).toContain("ok refs/heads/main");
   });
 
   test("an UNprotected branch is not blocked by the protection gate for a writer", async () => {

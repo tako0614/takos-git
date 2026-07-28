@@ -283,20 +283,21 @@ function DeliveryLog(props: { owner: string; repo: string; hookId: string }): JS
 
 function DeliveryRow(props: { delivery: WebhookDeliveryDto }): JSX.Element {
   const d = () => props.delivery;
+  const succeeded = () => d().status === "success";
   return (
     <div class="flex flex-wrap items-center gap-3 border-b border-border px-4 py-2.5 text-sm last:border-b-0">
       <Show
-        when={d().success}
+        when={succeeded()}
         fallback={<Icons.X class="h-4 w-4 shrink-0 text-danger" aria-label="Failed" />}
       >
         <Icons.Check class="h-4 w-4 shrink-0 text-success" aria-label="Succeeded" />
       </Show>
       <Mono class="font-semibold">{d().event}</Mono>
-      <Label tone={d().success ? "success" : "danger"}>
-        {d().statusCode != null ? `HTTP ${d().statusCode}` : "no response"}
+      <Label tone={succeeded() ? "success" : "danger"}>
+        {d().responseStatus != null ? `HTTP ${d().responseStatus}` : d().status}
       </Label>
-      <Show when={d().durationMs != null}>
-        <span class="text-xs text-muted">{d().durationMs} ms</span>
+      <Show when={d().responseMs != null}>
+        <span class="text-xs text-muted">{d().responseMs} ms</span>
       </Show>
       <span class="ml-auto text-xs text-muted">
         <RelativeTime epochMs={d().createdAt} />
@@ -339,7 +340,10 @@ function WebhookEditorDialog(props: {
     }
   };
   const hasEvents = (): boolean => props.value.everything || props.value.events.length > 0;
-  const canSave = (): boolean => validUrl() && hasEvents() && !saving();
+  const hasRequiredSecret = (): boolean =>
+    !isNew() || props.value.secret.trim().length > 0;
+  const canSave = (): boolean =>
+    validUrl() && hasEvents() && hasRequiredSecret() && !saving();
 
   async function save(): Promise<void> {
     if (!canSave()) return;
@@ -350,9 +354,9 @@ function WebhookEditorDialog(props: {
       if (isNew()) {
         await webhooksApi.create(props.owner, props.repo, {
           url: props.value.url.trim(),
+          secret,
           events,
           active: props.value.active,
-          ...(secret ? { secret } : {}),
         });
         toast.success("Webhook created.");
       } else {
@@ -402,7 +406,7 @@ function WebhookEditorDialog(props: {
 
         <Field
           label="Secret"
-          hint={isNew() ? "Optional. Used to sign each delivery (X-Hub-Signature-256)." : "Leave blank to keep the current secret."}
+          hint={isNew() ? "Required. Used to sign each delivery (X-Hub-Signature-256)." : "Leave blank to keep the current secret."}
           for="hook-secret"
         >
           <TextInput
@@ -414,6 +418,9 @@ function WebhookEditorDialog(props: {
             onInput={(e) => patch({ secret: e.currentTarget.value })}
           />
         </Field>
+        <Show when={isNew() && !hasRequiredSecret()}>
+          <p class="-mt-2 text-xs text-danger">Enter a signing secret.</p>
+        </Show>
 
         <fieldset class="space-y-2">
           <legend class="text-sm font-semibold text-fg">Which events should trigger this webhook?</legend>

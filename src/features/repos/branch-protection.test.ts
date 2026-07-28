@@ -9,6 +9,7 @@ import {
   makeEnv,
   seedOwner,
   seedPrincipal,
+  TEST_ISSUER,
 } from "./testkit.ts";
 import {
   authorizeRepo,
@@ -94,7 +95,12 @@ describe("branch protection CRUD via router", () => {
     // Make carol a maintainer.
     await dispatch(
       reg,
-      jsonRequest("PUT", "/api/v1/repos/alice/web/collaborators/sub-carol", { role: "maintainer" }, "taksrv_alice_a"),
+      jsonRequest(
+        "PUT",
+        "/api/v1/repos/alice/web/collaborators/sub-carol",
+        { role: "maintainer", bindingId: "binding_sub-carol" },
+        "taksrv_alice_a",
+      ),
       handle.env,
       tokens,
     );
@@ -104,7 +110,18 @@ describe("branch protection CRUD via router", () => {
       jsonRequest(
         "PUT",
         "/api/v1/repos/alice/web/branch-protection/main",
-        { requiredReviews: 2, restrictPush: true, pushAllowlist: ["p1"] },
+        {
+          requiredReviews: 2,
+          dismissStaleReviews: true,
+          requireCodeOwner: true,
+          requiredStatusChecks: ["ci/build"],
+          strictStatusChecks: true,
+          enforceAdmins: true,
+          restrictPush: true,
+          pushAllowlist: ["p1"],
+          allowForcePush: true,
+          allowDeletions: true,
+        },
         "taksrv_alice_a",
       ),
       handle.env,
@@ -112,7 +129,19 @@ describe("branch protection CRUD via router", () => {
     );
     expect(put.status).toBe(200);
     expect(await put.json()).toMatchObject({
-      rule: { pattern: "main", requiredReviews: 2, restrictPush: true, pushAllowlist: ["p1"] },
+      rule: {
+        pattern: "main",
+        requiredReviews: 2,
+        dismissStaleReviews: true,
+        requireCodeOwner: true,
+        requiredStatusChecks: ["ci/build"],
+        strictStatusChecks: true,
+        enforceAdmins: true,
+        restrictPush: true,
+        pushAllowlist: ["p1"],
+        allowForcePush: true,
+        allowDeletions: true,
+      },
     });
 
     // maintainer can list.
@@ -147,7 +176,11 @@ describe("checkBranchProtection enforcement (via authorizeRepo)", () => {
     alice: Principal;
   }> {
     const handle = makeEnv();
-    const alice = await upsertPrincipal(handle.db, { subject: "sub-alice", kind: "user" });
+    const alice = await upsertPrincipal(handle.db, {
+      issuer: TEST_ISSUER,
+      subject: "sub-alice",
+      kind: "user",
+    });
     const ownerId = await seedOwner(handle.db, "alice", "user", alice.id);
     const now = handle.db.now();
     const repoId = handle.db.id();

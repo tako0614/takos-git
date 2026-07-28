@@ -23,7 +23,7 @@ export interface RunListFilter {
 
 export const actionsApi = {
   workflows(owner: string, repo: string, signal?: AbortSignal): Promise<Page<WorkflowDto>> {
-    return getPage<WorkflowDto>(`${repoPath(owner, repo)}/workflows`, "workflows", {}, signal);
+    return getPage<WorkflowDto>(`${repoPath(owner, repo)}/actions/workflows`, "workflows", {}, signal);
   },
 
   runs(owner: string, repo: string, filter: RunListFilter = {}, signal?: AbortSignal): Promise<Page<WorkflowRunDto>> {
@@ -46,13 +46,8 @@ export const actionsApi = {
     return api.get(`${repoPath(owner, repo)}/actions/jobs/${encodeURIComponent(jobId)}`, undefined, signal);
   },
 
-  jobLogsUrl(owner: string, repo: string, jobId: string): string {
-    return downloadUrl(`${repoPath(owner, repo)}/actions/jobs/${encodeURIComponent(jobId)}/logs`);
-  },
-
-  /** Same-origin WS/SSE URL for a live run log/status stream. */
-  runStreamUrl(owner: string, repo: string, runId: string): string {
-    return downloadUrl(`${repoPath(owner, repo)}/actions/runs/${encodeURIComponent(runId)}/ws`);
+  jobLogs(owner: string, repo: string, jobId: string, signal?: AbortSignal): Promise<{ jobId: string; logs: string }> {
+    return api.get(`${repoPath(owner, repo)}/actions/jobs/${encodeURIComponent(jobId)}/logs`, undefined, signal);
   },
 
   artifacts(owner: string, repo: string, runId: string, signal?: AbortSignal): Promise<Page<WorkflowArtifactDto>> {
@@ -70,10 +65,13 @@ export const actionsApi = {
   // --- writes ---------------------------------------------------------------
 
   dispatch(owner: string, repo: string, path: string, input: { ref: string; inputs?: Record<string, string> }): Promise<{ run: WorkflowRunDto }> {
-    return api.post(`${repoPath(owner, repo)}/workflows/${path.split("/").map(encodeURIComponent).join("/")}/dispatch`, input);
+    return api.post(`${repoPath(owner, repo)}/actions/runs`, {
+      workflow: path,
+      ...input,
+    });
   },
 
-  cancel(owner: string, repo: string, runId: string): Promise<{ run: WorkflowRunDto }> {
+  cancel(owner: string, repo: string, runId: string): Promise<{ cancelled: true }> {
     return api.post(`${repoPath(owner, repo)}/actions/runs/${encodeURIComponent(runId)}/cancel`);
   },
 
@@ -81,11 +79,11 @@ export const actionsApi = {
     return api.post(`${repoPath(owner, repo)}/actions/runs/${encodeURIComponent(runId)}/rerun`);
   },
 
-  setSecret(owner: string, repo: string, name: string, value: string): Promise<void> {
+  setSecret(owner: string, repo: string, name: string, value: string): Promise<{ secret: WorkflowSecretDto }> {
     return api.put(`${repoPath(owner, repo)}/actions/secrets/${encodeURIComponent(name)}`, { value });
   },
 
-  deleteSecret(owner: string, repo: string, name: string): Promise<void> {
+  deleteSecret(owner: string, repo: string, name: string): Promise<{ removed: true }> {
     return api.del(`${repoPath(owner, repo)}/actions/secrets/${encodeURIComponent(name)}`);
   },
 };

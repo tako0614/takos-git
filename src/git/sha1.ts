@@ -19,7 +19,12 @@ export function hexToBytes(hex: string): Uint8Array {
   return bytes;
 }
 
-function toBufferSource(bytes: Uint8Array): ArrayBuffer {
+function toBufferSource(
+  bytes: Uint8Array,
+): ArrayBuffer | Uint8Array<ArrayBuffer> {
+  if (bytes.buffer instanceof ArrayBuffer) {
+    return new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  }
   return bytes.slice().buffer as ArrayBuffer;
 }
 

@@ -14,6 +14,7 @@
  */
 
 import type { DbClient } from "../db/index.ts";
+import { matchBranchPattern } from "../features/repos/branch-pattern.ts";
 import {
   ACTION_REQUIRED_ROLE,
   ACTION_REQUIRED_SCOPE,
@@ -70,6 +71,7 @@ export async function resolveRepoRow(
        FROM repositories r
        JOIN owners o ON o.id = r.owner_id
       WHERE o.login = ? COLLATE NOCASE AND r.name = ? COLLATE NOCASE
+        AND r.lifecycle_state = 'active'
       LIMIT 1`,
     [owner, name],
   );
@@ -192,33 +194,8 @@ interface ProtectionRuleRow {
   restrict_push: number;
   push_allowlist: string | null;
   enforce_admins: number;
-}
-
-/** fnmatch-style branch glob: `*` within a segment, `**` across segments. */
-function matchBranchPattern(pattern: string, branch: string): boolean {
-  if (pattern === branch) return true;
-  let out = "^";
-  for (let index = 0; index < pattern.length; index += 1) {
-    const char = pattern[index];
-    if (char === "*") {
-      if (pattern[index + 1] === "*") {
-        out += ".*";
-        index += 1;
-      } else {
-        out += "[^/]*";
-      }
-    } else if (char === "?") {
-      out += "[^/]";
-    } else {
-      out += char.replace(/[.+^${}()|[\]\\]/gu, "\\$&");
-    }
-  }
-  out += "$";
-  try {
-    return new RegExp(out, "u").test(branch);
-  } catch {
-    return false;
-  }
+  allow_force_push: number;
+  allow_deletions: number;
 }
 
 function parseIdAllowlist(value: string | null): string[] {
@@ -231,6 +208,30 @@ function parseIdAllowlist(value: string | null): string[] {
   } catch {
     return [];
   }
+}
+
+async function principalIsPushAllowed(
+  db: DbClient,
+  principalId: string,
+  allowlist: readonly string[],
+): Promise<boolean> {
+  if (allowlist.includes(principalId)) return true;
+  if (allowlist.length === 0) return false;
+  const bounded = allowlist.slice(0, 100);
+  const placeholders = bounded.map(() => "?").join(", ");
+  const membership = await db.queryOne<{ allowed: number }>(
+    `SELECT 1 AS allowed
+       FROM team_members
+      WHERE principal_id = ? AND team_id IN (${placeholders})
+      LIMIT 1`,
+    [principalId, ...bounded],
+  );
+  return membership !== null;
+}
+
+interface BranchProtectionDecision {
+  readonly allow: boolean;
+  readonly allowNonFastForward: boolean;
 }
 
 /**
@@ -255,42 +256,69 @@ async function checkBranchProtection(
   role: Role,
   action: RepoAction,
   ref: string | undefined,
-): Promise<boolean> {
+  update?: { readonly oldSha: string; readonly newSha: string },
+): Promise<BranchProtectionDecision> {
   // No concrete ref (e.g. the smart-HTTP repo-level edge check passes ref "*"):
   // per-ref protection is enforced where the old→new update is known.
-  if (!ref || ref === "*") return true;
+  if (!ref || ref === "*") {
+    return { allow: true, allowNonFastForward: false };
+  }
+  if (ref.startsWith("refs/") && !ref.startsWith("refs/heads/")) {
+    return { allow: true, allowNonFastForward: false };
+  }
   const branch = ref.startsWith("refs/heads/")
     ? ref.slice("refs/heads/".length)
     : ref;
-  if (branch === "" || branch === "*") return true;
+  if (branch === "" || branch === "*") {
+    return { allow: true, allowNonFastForward: false };
+  }
 
   let rules: ProtectionRuleRow[];
   try {
     rules = await db.query<ProtectionRuleRow>(
-      `SELECT pattern, required_reviews, restrict_push, push_allowlist, enforce_admins
+      `SELECT pattern, required_reviews, restrict_push, push_allowlist,
+              enforce_admins, allow_force_push, allow_deletions
          FROM branch_protection_rules WHERE repo_id = ?`,
       [repo.id],
     );
   } catch {
-    return false; // fail closed
+    return { allow: false, allowNonFastForward: false }; // fail closed
   }
 
+  let effectiveRules = 0;
+  let everyRuleAllowsForcePush = true;
+  const deleting = update?.newSha === "0".repeat(40);
   for (const rule of rules) {
     if (!matchBranchPattern(rule.pattern, branch)) continue;
     const adminBypass =
       rule.enforce_admins === 0 && roleAtLeast(role, "maintainer");
     if (adminBypass) continue;
+    effectiveRules += 1;
+    if (rule.allow_force_push !== 1) everyRuleAllowsForcePush = false;
+    if (deleting && rule.allow_deletions !== 1) {
+      return { allow: false, allowNonFastForward: false };
+    }
     if (rule.restrict_push === 1) {
       const allow = parseIdAllowlist(rule.push_allowlist);
-      if (!allow.includes(principal.id)) return false;
+      if (!(await principalIsPushAllowed(db, principal.id, allow))) {
+        return { allow: false, allowNonFastForward: false };
+      }
     }
-    if (action === "contents.write") {
-      if (rule.required_reviews > 0) return false;
+    if (action === "contents.write" && !deleting) {
+      if (rule.required_reviews > 0) {
+        return { allow: false, allowNonFastForward: false };
+      }
     } else if (action === "pulls.merge") {
-      if (!roleAtLeast(role, "maintainer")) return false;
+      if (!roleAtLeast(role, "maintainer")) {
+        return { allow: false, allowNonFastForward: false };
+      }
     }
   }
-  return true;
+  return {
+    allow: true,
+    allowNonFastForward:
+      effectiveRules > 0 && everyRuleAllowsForcePush && !deleting,
+  };
 }
 
 // ============================================================================
@@ -314,7 +342,7 @@ export async function authorizeRepo(
   owner: string,
   name: string,
   action: RepoAction,
-  opts?: { ref?: string },
+  opts?: { ref?: string; oldSha?: string; newSha?: string },
 ): Promise<AuthzDecision> {
   // (a) repo must exist.
   const repo = await resolveRepoRow(db, owner, name);
@@ -342,15 +370,25 @@ export async function authorizeRepo(
 
   // (e) branch protection on ref-advancing actions.
   if (WRITE_ACTIONS.has(action)) {
-    const ok = await checkBranchProtection(
+    const protection = await checkBranchProtection(
       db,
       repo,
       ctx.principal,
       role,
       action,
       opts?.ref,
+      opts?.oldSha && opts?.newSha
+        ? { oldSha: opts.oldSha, newSha: opts.newSha }
+        : undefined,
     );
-    if (!ok) return deny(403, "protected_ref");
+    if (!protection.allow) return deny(403, "protected_ref");
+    return {
+      allow: true,
+      role,
+      ...(protection.allowNonFastForward
+        ? { allowNonFastForward: true }
+        : {}),
+    };
   }
 
   return { allow: true, role };
@@ -372,18 +410,21 @@ export function requireRepoRole(min: Role): (role: Role | null) => boolean {
 }
 
 // ============================================================================
-// Principal resolution (JIT upsert keyed on OIDC subject)
+// Principal resolution (JIT upsert keyed on issuer + subject + binding)
 // ============================================================================
 
 interface PrincipalRow {
   id: string;
+  issuer: string;
   subject: string;
+  binding_id: string;
   kind: string;
   display_name: string | null;
   email: string | null;
 }
 
 export interface PrincipalClaims {
+  readonly issuer: string;
   readonly subject: string;
   readonly kind: "user" | "service_account";
   readonly displayName?: string | null;
@@ -392,27 +433,89 @@ export interface PrincipalClaims {
   readonly bindingId?: string | null;
 }
 
+function canonicalIssuer(value: string): string {
+  const issuer = new URL(value);
+  if (
+    issuer.protocol !== "https:" ||
+    issuer.username !== "" ||
+    issuer.password !== "" ||
+    issuer.pathname !== "/" ||
+    issuer.search !== "" ||
+    issuer.hash !== ""
+  ) {
+    throw new Error("principal issuer must be an HTTPS origin");
+  }
+  return issuer.origin;
+}
+
 /**
- * JIT-upsert a principal keyed on its OIDC subject. Identity is the subject; the
- * display_name/email caches refresh but are never trusted for authorization. The
- * stored `kind` is never downgraded on conflict.
+ * JIT-upsert a principal keyed on canonical `(issuer, subject, binding_id)`.
+ * Human principals use an empty binding id; Interface automation requires its
+ * exact binding. Profile caches refresh but are never trusted for authorization.
  */
 export async function upsertPrincipal(
   db: DbClient,
   claims: PrincipalClaims,
 ): Promise<Principal> {
+  const issuer = canonicalIssuer(claims.issuer);
+  const subject = claims.subject.trim();
+  if (subject === "") throw new Error("principal subject is required");
+  const bindingId =
+    claims.kind === "service_account" ? claims.bindingId?.trim() ?? "" : "";
+  if (claims.kind === "service_account" && bindingId === "") {
+    throw new Error("service-account principal requires an InterfaceBinding id");
+  }
   const now = db.now();
+
+  // 0001 principals did not persist issuer/binding. Adopt at most one matching
+  // legacy row on its first authenticated use so grants survive the additive
+  // migration. A later issuer/binding gets a distinct row and no inherited ACL.
+  try {
+    await db.run(
+      `UPDATE principals
+          SET issuer = ?, binding_id = ?, display_name = COALESCE(?, display_name),
+              email = COALESCE(?, email), updated_at = ?
+        WHERE id = (
+          SELECT id FROM principals
+           WHERE issuer = '' AND subject = ? AND binding_id = '' AND kind = ?
+           LIMIT 1
+        )
+          AND NOT EXISTS (
+            SELECT 1 FROM principals
+             WHERE issuer = ? AND subject = ? AND binding_id = ?
+          )`,
+      [
+        issuer,
+        bindingId,
+        claims.displayName ?? null,
+        claims.email ?? null,
+        now,
+        subject,
+        claims.kind,
+        issuer,
+        subject,
+        bindingId,
+      ],
+    );
+  } catch {
+    // A concurrent request may have adopted/inserted the same identity. The
+    // conflict-safe UPSERT below resolves the winner.
+  }
+
   const row = await db.queryOne<PrincipalRow>(
-    `INSERT INTO principals (id, subject, kind, display_name, email, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(subject) DO UPDATE SET
-          display_name = excluded.display_name,
-          email = excluded.email,
+    `INSERT INTO principals
+          (id, issuer, subject, binding_id, kind, display_name, email, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(issuer, subject, binding_id) DO UPDATE SET
+          display_name = COALESCE(excluded.display_name, principals.display_name),
+          email = COALESCE(excluded.email, principals.email),
           updated_at = excluded.updated_at
-       RETURNING id, subject, kind, display_name, email`,
+       RETURNING id, issuer, subject, binding_id, kind, display_name, email`,
     [
       db.id(),
-      claims.subject,
+      issuer,
+      subject,
+      bindingId,
       claims.kind,
       claims.displayName ?? null,
       claims.email ?? null,
@@ -427,8 +530,9 @@ export async function upsertPrincipal(
   return {
     id: row.id,
     kind: row.kind === "service_account" ? "service_account" : "user",
+    issuer: row.issuer,
     subject: row.subject,
-    bindingId: claims.bindingId ?? null,
+    bindingId: row.binding_id || null,
     displayName: row.display_name,
     email: row.email,
   };

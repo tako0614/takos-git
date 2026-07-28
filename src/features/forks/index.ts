@@ -23,6 +23,7 @@ export {
   forkRepository,
   syncFork,
   copyRepoObjects,
+  copyReachableObjects,
   listForkChildren,
   forkNetworkRoot,
   forkNetworkMembers,

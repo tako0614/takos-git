@@ -14,6 +14,7 @@
 
 import type { DbClient } from "../../db/index.ts";
 import type { OwnerType, Principal } from "../../contract/v1.ts";
+import { upsertPrincipal } from "../../auth/acl.ts";
 
 export interface OwnerRow {
   readonly id: string;
@@ -200,39 +201,22 @@ export async function orgMembershipRole(
 }
 
 /**
- * Ensure a bare principal row exists for an OIDC subject WITHOUT clobbering an
- * existing profile cache (unlike `upsertPrincipal`, which refreshes name/email).
- * Used when granting a collaborator/team-member a subject that has not signed in
- * yet — the grant targets the stable principal id.
+ * Ensure a principal exists for the configured issuer and subject. Supplying a
+ * binding id targets one Interface automation identity; omitting it targets the
+ * human identity. Null profile inputs never clobber an existing cache.
  */
 export async function ensurePrincipalBySubject(
   db: DbClient,
+  issuer: string,
   subject: string,
+  bindingId?: string | null,
 ): Promise<Principal> {
-  const now = db.now();
-  await db.run(
-    `INSERT INTO principals (id, subject, kind, created_at, updated_at)
-     VALUES (?, ?, 'user', ?, ?)
-     ON CONFLICT(subject) DO NOTHING`,
-    [db.id(), subject, now, now],
-  );
-  const row = await db.queryOne<{
-    id: string;
-    subject: string;
-    kind: string;
-    display_name: string | null;
-    email: string | null;
-  }>(
-    `SELECT id, subject, kind, display_name, email FROM principals WHERE subject = ? LIMIT 1`,
-    [subject],
-  );
-  if (!row) throw new Error("principal ensure returned no row");
-  return {
-    id: row.id,
-    kind: row.kind === "service_account" ? "service_account" : "user",
-    subject: row.subject,
-    bindingId: null,
-    displayName: row.display_name,
-    email: row.email,
-  };
+  return bindingId
+    ? upsertPrincipal(db, {
+        issuer,
+        subject,
+        kind: "service_account",
+        bindingId,
+      })
+    : upsertPrincipal(db, { issuer, subject, kind: "user" });
 }
