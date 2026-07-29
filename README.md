@@ -69,10 +69,13 @@ manifest (`takosumi-artifact.json`) は mutable な tag 越しに署名なしで
 URL は選べても integrity の根拠にはなりません。digest は release ページの
 `worker.js.sha256` から operator が out-of-band に固定します。
 
-[`install-options.json`](install-options.json) は、現在実行可能な Cloudflare OpenTofu module を選ぶための任意の
-`CapsuleSourceOptions` 表示ドキュメントです。Takosumi 専用 manifest ではなく、通常の Git URL + module path での
-直接インストールには不要です。この文書は、それを含む次の通常の安定版タグから利用できます。別クラウドの選択肢は、
-対応する実在 module を出荷したときだけ追加します。
+[`install-options.json`](install-options.json) は、導入元を選ぶ任意の
+`CapsuleSourceOptions` 文書です。[`.well-known/takosumi.json`](.well-known/takosumi.json)
+は別の一般 `Repository` manifest で、root の direct module と
+`deploy/takoform` の入力名・表示 projection を同じ Git commit から提案します。
+どちらも provider credential、secret、Cloudflare account、Interface grant、
+実行権限を持ちません。Takosumi は検証後に DB-owned InstallConfig へ compile し、
+通常の Plan / Apply を行います。
 
 ## 仕組み
 
