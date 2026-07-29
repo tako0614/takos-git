@@ -4,7 +4,7 @@ terraform {
   required_providers {
     takoform = {
       source  = "registry.opentofu.org/tako0614/takoform"
-      version = "= 0.1.2"
+      version = "= 0.2.0"
     }
   }
 }
@@ -48,23 +48,57 @@ variable "worker_bundle_sha256" {
   }
 }
 
-variable "worker_compatibility_date" {
-  description = "Portable edge runtime compatibility date requested by Takos Git."
-  type        = string
-  default     = "2026-04-01"
-}
-
-variable "worker_compatibility_flags" {
-  description = "Portable edge runtime compatibility flags requested by Takos Git."
-  type        = set(string)
-  default     = ["global_fetch_strictly_public"]
-}
-
 locals {
   artifact_url            = trimspace(var.worker_bundle_url)
   artifact_sha256         = trimspace(var.worker_bundle_sha256)
   artifact_sha256_checked = startswith(local.artifact_sha256, "sha256:") ? local.artifact_sha256 : "sha256:${local.artifact_sha256}"
   release_tag             = trimspace(var.worker_release_tag)
+  interface_declarations = {
+    launcher = {
+      name = "takos-git.launcher"
+      document = {
+        launcher = true
+        display = {
+          title = "Takos Git"
+          icon  = "/icons/takos-git.svg"
+        }
+        endpoint = { originInput = "origin", path = "/" }
+      }
+    }
+    smart_http = {
+      name = "takos-git.smart-http"
+      document = {
+        display = { title = "Takos Git Smart HTTP" }
+        endpoint = {
+          originInput = "origin"
+          pathPrefix  = "/git"
+        }
+        permissions = [
+          "source.git.smart_http.read",
+          "source.git.smart_http.write",
+        ]
+      }
+    }
+    hosting = {
+      name = "takos-git.hosting"
+      document = {
+        display = { title = "Takos Git Hosting API" }
+        endpoint = {
+          originInput = "origin"
+          path        = "/api/v1"
+        }
+        permissions = ["source.git.hosting.read"]
+      }
+    }
+    mcp = {
+      name = "takos-git.mcp"
+      document = {
+        transport = "streamable-http"
+        display   = { title = "Takos Git" }
+        endpoint  = { originInput = "origin", path = "/mcp" }
+      }
+    }
+  }
 }
 
 resource "takoform_object_bucket" "objects" {
@@ -72,31 +106,29 @@ resource "takoform_object_bucket" "objects" {
   storage_class = "standard"
 }
 
-resource "takoform_sql_database" "metadata" {
+resource "takoform_relational_database" "metadata" {
   name   = "${var.project_name}-metadata"
   engine = "sqlite"
 }
 
-resource "takoform_edge_worker" "worker" {
-  name                = var.project_name
-  artifact_url        = local.artifact_url
-  artifact_sha256     = local.artifact_sha256_checked
-  compatibility_date  = var.worker_compatibility_date
-  compatibility_flags = var.worker_compatibility_flags
-  profiles            = ["workers_bindings"]
+resource "takoform_http_service" "worker" {
+  name            = var.project_name
+  artifact_url    = local.artifact_url
+  artifact_sha256 = local.artifact_sha256_checked
+  runtime         = "javascript"
 
   connections = [
     {
       name        = "BUCKET"
       resource    = takoform_object_bucket.objects.id
       permissions = ["delete", "list", "read", "write"]
-      projection  = "runtime_binding"
+      projection  = "object.binding.v1"
     },
     {
       name        = "DB"
-      resource    = takoform_sql_database.metadata.id
+      resource    = takoform_relational_database.metadata.id
       permissions = ["connect", "read", "write"]
-      projection  = "runtime_binding"
+      projection  = "sql.binding.v1"
     },
   ]
 
@@ -119,9 +151,26 @@ resource "takoform_schedule" "webhook_outbox" {
   connections = [
     {
       name        = "WORKER"
-      resource    = takoform_edge_worker.worker.id
+      resource    = takoform_http_service.worker.id
       permissions = ["invoke"]
-      projection  = "schedule_trigger"
+      projection  = "schedule.trigger.v1"
     },
   ]
+}
+
+resource "takoform_interface" "surface" {
+  for_each = local.interface_declarations
+
+  name          = each.value.name
+  version       = "1"
+  resource_kind = "HttpService"
+  resource_name = takoform_http_service.worker.name
+  document_json = jsonencode(each.value.document)
+  inputs_json = jsonencode([
+    {
+      name    = "origin"
+      source  = "output"
+      pointer = "/url"
+    }
+  ])
 }

@@ -1,5 +1,5 @@
 locals {
-  launch_url = try(takoform_edge_worker.worker.outputs["url"], null)
+  launch_url = try(takoform_http_service.worker.outputs["url"], null)
 }
 
 output "launch_url" {
@@ -25,9 +25,9 @@ output "mcp_url" {
 output "takoform_resource_ids" {
   description = "Canonical portable Resource identities for this instance."
   value = {
-    worker         = takoform_edge_worker.worker.id
+    worker         = takoform_http_service.worker.id
     objects        = takoform_object_bucket.objects.id
-    metadata       = takoform_sql_database.metadata.id
+    metadata       = takoform_relational_database.metadata.id
     webhook_outbox = takoform_schedule.webhook_outbox.id
   }
 }

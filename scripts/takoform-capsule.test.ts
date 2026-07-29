@@ -11,12 +11,24 @@ const [main, outputs, readme, buildWorkerSource, directMain] = await Promise.all
 ]);
 
 describe("Takos Git Takoform Capsule", () => {
-  test("owns the default portable Worker, bucket, and metadata graph", () => {
-    expect(main).toContain('resource "takoform_edge_worker" "worker"');
+  test("owns the default portable service, data, and Interface graph", () => {
+    expect(main).toContain('resource "takoform_http_service" "worker"');
     expect(main).toContain('resource "takoform_object_bucket" "objects"');
-    expect(main).toContain('resource "takoform_sql_database" "metadata"');
+    expect(main).toContain(
+      'resource "takoform_relational_database" "metadata"',
+    );
+    expect(main).toContain('resource "takoform_interface" "surface"');
+    for (const name of [
+      "takos-git.launcher",
+      "takos-git.smart-http",
+      "takos-git.hosting",
+      "takos-git.mcp",
+    ]) {
+      expect(main).toContain(`name = "${name}"`);
+    }
     expect(main).toContain('name        = "BUCKET"');
     expect(main).toContain('name        = "DB"');
+    expect(main).toContain('originInput = "origin"');
   });
 
   test("does not partially claim the currently disabled Actions graph", () => {
@@ -28,7 +40,7 @@ describe("Takos Git Takoform Capsule", () => {
 
   test("both install paths schedule the durable webhook outbox", () => {
     expect(main).toContain('resource "takoform_schedule" "webhook_outbox"');
-    expect(main).toContain('projection  = "schedule_trigger"');
+    expect(main).toContain('projection  = "schedule.trigger.v1"');
     expect(outputs).toContain("webhook_outbox = takoform_schedule.webhook_outbox.id");
     expect(directMain).toContain(
       'resource "cloudflare_workers_cron_trigger" "webhook_outbox"',
@@ -44,6 +56,8 @@ describe("Takos Git Takoform Capsule", () => {
     );
     expect(main).not.toContain("cloudflare/cloudflare");
     expect(main).not.toContain("/compat/cloudflare/");
+    expect(main).not.toContain("compatibility_date");
+    expect(main).not.toContain("compatibility_flags");
     for (const name of [
       "launch_url",
       "api_url",
