@@ -1,0 +1,220 @@
+{
+  "apiVersion": "takosumi.com/v1alpha1",
+  "kind": "Repository",
+  "install": {
+    "modules": {
+      ".": {
+        "inputs": [
+          {
+            "name": "project_name",
+            "source": {
+              "kind": "capsule_name"
+            },
+            "type": "string",
+            "format": "subdomain",
+            "label": {
+              "ja": "サービス名",
+              "en": "Service name"
+            }
+          },
+          {
+            "name": "public_subdomain",
+            "source": {
+              "kind": "module_default"
+            },
+            "type": "string",
+            "format": "subdomain",
+            "label": {
+              "ja": "公開サブドメイン",
+              "en": "Public subdomain"
+            },
+            "advanced": true
+          },
+          {
+            "name": "public_url",
+            "source": {
+              "kind": "user"
+            },
+            "type": "string",
+            "format": "url",
+            "required": false,
+            "label": {
+              "ja": "公開URL",
+              "en": "Public URL"
+            },
+            "helper": {
+              "ja": "空欄の場合は利用可能なWorker URLを使います。",
+              "en": "Uses an available Worker URL when omitted."
+            },
+            "placeholder": "https://git.example.com"
+          },
+          {
+            "name": "takosumi_accounts_issuer_url",
+            "source": {
+              "kind": "module_default"
+            },
+            "type": "string",
+            "format": "url",
+            "label": {
+              "ja": "Takosumi Accounts発行者",
+              "en": "Takosumi Accounts issuer"
+            },
+            "advanced": true
+          },
+          {
+            "name": "takosumi_accounts_client_id",
+            "source": {
+              "kind": "module_default"
+            },
+            "type": "string",
+            "label": {
+              "ja": "Takosumi Accountsクライアント",
+              "en": "Takosumi Accounts client"
+            },
+            "advanced": true
+          },
+          {
+            "name": "worker_release_tag",
+            "source": {
+              "kind": "module_default"
+            },
+            "type": "string",
+            "label": {
+              "ja": "Workerリリース",
+              "en": "Worker release"
+            },
+            "advanced": true
+          },
+          {
+            "name": "worker_bundle_url",
+            "source": {
+              "kind": "module_default"
+            },
+            "type": "string",
+            "format": "url",
+            "label": {
+              "ja": "Worker URL",
+              "en": "Worker URL"
+            },
+            "advanced": true
+          },
+          {
+            "name": "worker_bundle_sha256",
+            "source": {
+              "kind": "module_default"
+            },
+            "type": "string",
+            "label": {
+              "ja": "Worker SHA-256",
+              "en": "Worker SHA-256"
+            },
+            "advanced": true
+          }
+        ],
+        "installExperience": {
+          "projections": [
+            {
+              "kind": "service_name",
+              "variable": "project_name"
+            },
+            {
+              "kind": "public_endpoint",
+              "variables": {
+                "url": "public_url",
+                "subdomain": "public_subdomain"
+              }
+            },
+            {
+              "kind": "oidc_client",
+              "variables": {
+                "issuerUrl": "takosumi_accounts_issuer_url",
+                "clientId": "takosumi_accounts_client_id"
+              },
+              "callbackPath": "/api/auth/callback",
+              "scopes": [
+                "openid",
+                "profile",
+                "email"
+              ]
+            },
+            {
+              "kind": "artifact",
+              "variables": {
+                "url": "worker_bundle_url",
+                "sha256": "worker_bundle_sha256"
+              }
+            }
+          ]
+        }
+      },
+      "deploy/takoform": {
+        "inputs": [
+          {
+            "name": "project_name",
+            "source": {
+              "kind": "capsule_name"
+            },
+            "type": "string",
+            "format": "subdomain",
+            "label": {
+              "ja": "サービス名",
+              "en": "Service name"
+            }
+          },
+          {
+            "name": "worker_release_tag",
+            "source": {
+              "kind": "module_default"
+            },
+            "type": "string",
+            "label": {
+              "ja": "Workerリリース",
+              "en": "Worker release"
+            },
+            "advanced": true
+          },
+          {
+            "name": "worker_bundle_url",
+            "source": {
+              "kind": "module_default"
+            },
+            "type": "string",
+            "format": "url",
+            "label": {
+              "ja": "Worker URL",
+              "en": "Worker URL"
+            },
+            "advanced": true
+          },
+          {
+            "name": "worker_bundle_sha256",
+            "source": {
+              "kind": "module_default"
+            },
+            "type": "string",
+            "label": {
+              "ja": "Worker SHA-256",
+              "en": "Worker SHA-256"
+            },
+            "advanced": true
+          }
+        ],
+        "installExperience": {
+          "projections": [
+            {
+              "kind": "service_name",
+              "variable": "project_name"
+            },
+            {
+              "kind": "artifact",
+              "variables": {
+                "url": "worker_bundle_url",
+                "sha256": "worker_bundle_sha256"
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

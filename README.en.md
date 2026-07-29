@@ -127,6 +127,15 @@ no signature, so it may select the bundle URL but can never be its own integrity
 root; the operator pins the digest out of band from the release's
 `worker.js.sha256`.
 
+[`install-options.json`](install-options.json) is the optional source chooser.
+The separate general
+[`.well-known/takosumi.json`](.well-known/takosumi.json) `Repository` manifest
+proposes input names and presentation projections for the root direct module and
+`deploy/takoform` from the same Git commit. Neither document carries provider
+credentials, secrets, Cloudflare account authority, Interface grants, or
+execution authority. Takosumi validates the proposal and compiles it into a
+DB-owned InstallConfig before the ordinary Plan and Apply lifecycle.
+
 The repository delete API immediately tombstones the namespace, hides refs and
 Actions pins, and returns `202 Accepted`. Scheduled maintenance removes the
 repository-owned object prefix only after a ten-minute quarantine and only when
