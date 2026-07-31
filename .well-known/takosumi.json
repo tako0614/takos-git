@@ -1,5 +1,5 @@
 {
-  "apiVersion": "takosumi.com/v1alpha1",
+  "apiVersion": "takosumi.com/v1",
   "kind": "Repository",
   "install": {
     "modules": {
@@ -10,6 +10,7 @@
             "source": {
               "kind": "capsule_name"
             },
+            "role": "service_name",
             "type": "string",
             "format": "subdomain",
             "label": {
@@ -111,41 +112,32 @@
             "advanced": true
           }
         ],
-        "installExperience": {
-          "projections": [
-            {
-              "kind": "service_name",
-              "variable": "project_name"
-            },
-            {
-              "kind": "public_endpoint",
+        "requires": [
+          {
+            "kind": "http.endpoint",
+            "deliver": {
               "variables": {
                 "url": "public_url",
                 "subdomain": "public_subdomain"
               }
-            },
-            {
-              "kind": "oidc_client",
+            }
+          },
+          {
+            "kind": "identity.oidc",
+            "callbackPath": "/api/auth/callback",
+            "scopes": [
+              "openid",
+              "profile",
+              "email"
+            ],
+            "deliver": {
               "variables": {
                 "issuerUrl": "takosumi_accounts_issuer_url",
                 "clientId": "takosumi_accounts_client_id"
-              },
-              "callbackPath": "/api/auth/callback",
-              "scopes": [
-                "openid",
-                "profile",
-                "email"
-              ]
-            },
-            {
-              "kind": "artifact",
-              "variables": {
-                "url": "worker_bundle_url",
-                "sha256": "worker_bundle_sha256"
               }
             }
-          ]
-        }
+          }
+        ]
       },
       "deploy/takoform": {
         "inputs": [
@@ -154,6 +146,7 @@
             "source": {
               "kind": "capsule_name"
             },
+            "role": "service_name",
             "type": "string",
             "format": "subdomain",
             "label": {
@@ -198,22 +191,7 @@
             },
             "advanced": true
           }
-        ],
-        "installExperience": {
-          "projections": [
-            {
-              "kind": "service_name",
-              "variable": "project_name"
-            },
-            {
-              "kind": "artifact",
-              "variables": {
-                "url": "worker_bundle_url",
-                "sha256": "worker_bundle_sha256"
-              }
-            }
-          ]
-        }
+        ]
       }
     }
   }
