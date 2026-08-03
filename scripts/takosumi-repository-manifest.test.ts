@@ -24,9 +24,10 @@ test("Takos Git publishes a closed Repository manifest", () => {
     "install",
     "kind",
   ]);
-  expect(manifest.apiVersion).toBe("takosumi.com/v1alpha1");
+  expect(manifest.apiVersion).toBe("takosumi.com/v2.1");
   expect(manifest.kind).toBe("Repository");
-  expect(Object.keys(manifest.install)).toEqual(["modules"]);
+  expect(Object.keys(manifest.install)).toEqual(["defaultModule", "modules"]);
+  expect(manifest.install.defaultModule).toBe(".");
   expect(Object.keys(manifest.install.modules)).toEqual([
     ".",
     "deploy/takoform",
@@ -92,7 +93,10 @@ function referencedVariables(module: RepositoryModule): Set<string> {
 interface RepositoryManifest {
   apiVersion: string;
   kind: string;
-  install: { modules: Record<string, RepositoryModule> };
+  install: {
+    defaultModule: string;
+    modules: Record<string, RepositoryModule>;
+  };
 }
 
 interface RepositoryModule {

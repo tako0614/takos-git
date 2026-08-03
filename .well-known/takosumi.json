@@ -1,7 +1,8 @@
 {
-  "apiVersion": "takosumi.com/v1",
+  "apiVersion": "takosumi.com/v2.1",
   "kind": "Repository",
   "install": {
+    "defaultModule": ".",
     "modules": {
       ".": {
         "inputs": [
