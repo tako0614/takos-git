@@ -14,7 +14,7 @@
 
 - Owns: Git Smart HTTP object and ref data plane / Repository and forge state plus browser, API, and MCP surfaces / Embedded self-hosted Actions execution design and runtime
 - Does not own: Takos chat, agent, or workspace shell / Takosumi install, Run, state, output, audit, or identity authority / The storage.object service
-- Hazards: Actions execution requires an operator-owned Container image attachment with a reviewed instance type and egress allowlist; bindings alone do not make the runner usable. / Legacy Git code in Takos is migration debt, not shared ownership.
+- Hazards: Actions execution is not deployable until isolation and resource limits are complete. / Legacy Git code in Takos is migration debt, not shared ownership.
 
 ## Required workflow
 
