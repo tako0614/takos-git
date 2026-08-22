@@ -11,24 +11,26 @@ const [main, outputs, readme, buildWorkerSource, directMain] = await Promise.all
 ]);
 
 describe("Takos Git Takoform Capsule", () => {
-  test("owns the default portable service, data, and Interface graph", () => {
-    expect(main).toContain('resource "takoform_http_service" "worker"');
-    expect(main).toContain('resource "takoform_object_bucket" "objects"');
-    expect(main).toContain(
-      'resource "takoform_relational_database" "metadata"',
-    );
-    expect(main).toContain('resource "takoform_interface" "surface"');
-    for (const name of [
-      "takos-git.launcher",
-      "takos-git.smart-http",
-      "takos-git.hosting",
-      "takos-git.mcp",
-    ]) {
-      expect(main).toContain(`name = "${name}"`);
-    }
+  test("owns the current portable Worker, data, and attachment graph", () => {
+    expect(main).toContain('resource "takoform_module_worker" "worker"');
+    expect(main).toContain('resource "takoform_worker_bundle" "worker"');
+    expect(main).toContain('resource "takoform_worker_version" "worker"');
+    expect(main).toContain('resource "takoform_worker_deployment" "worker"');
+    expect(main).toContain('resource "takoform_worker_endpoint" "worker"');
+    expect(main).toContain('resource "takoform_edge_object_bucket" "objects"');
+    expect(main).toContain('resource "takoform_sqlite_database" "metadata"');
+    expect(main).not.toContain('resource "takoform_interface"');
     expect(main).toContain('name        = "BUCKET"');
     expect(main).toContain('name        = "DB"');
-    expect(main).toContain('originInput = "origin"');
+    expect(main).toContain('source  = "registry.terraform.io/tako0614/takoform"');
+    expect(main).toContain('version = "= 2.1.1"');
+    expect(main).toContain('variable "worker_bundle_manifest_digest"');
+    expect(main).toContain(
+      'manifest_digest = trimspace(var.worker_bundle_manifest_digest)',
+    );
+    expect(main).not.toContain('hashicorp/external');
+    expect(main).not.toContain('data "external"');
+    expect(main).not.toContain("content_file");
   });
 
   test("does not partially claim the currently disabled Actions graph", () => {
@@ -39,9 +41,10 @@ describe("Takos Git Takoform Capsule", () => {
   });
 
   test("both install paths schedule the durable webhook outbox", () => {
-    expect(main).toContain('resource "takoform_schedule" "webhook_outbox"');
-    expect(main).toContain('projection  = "schedule.trigger.v1"');
-    expect(outputs).toContain("webhook_outbox = takoform_schedule.webhook_outbox.id");
+    expect(main).toContain('resource "takoform_worker_cron_trigger" "webhook_outbox"');
+    expect(outputs).toContain(
+      "webhook_outbox = takoform_worker_cron_trigger.webhook_outbox.uid",
+    );
     expect(directMain).toContain(
       'resource "cloudflare_workers_cron_trigger" "webhook_outbox"',
     );
@@ -52,7 +55,7 @@ describe("Takos Git Takoform Capsule", () => {
 
   test("uses Takoform directly and ordinary outputs only", () => {
     expect(main).toContain(
-      'source  = "registry.opentofu.org/tako0614/takoform"',
+      'source  = "registry.terraform.io/tako0614/takoform"',
     );
     expect(main).not.toContain("cloudflare/cloudflare");
     expect(main).not.toContain("/compat/cloudflare/");

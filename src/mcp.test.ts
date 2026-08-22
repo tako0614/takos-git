@@ -121,7 +121,7 @@ describe("takos-git MCP", () => {
     });
   });
 
-  test("Interface OAuth accepts only the exact mcp.invoke audience and owner evidence", async () => {
+  test("Interface OAuth derives its exact audience and accepts live owner evidence", async () => {
     const interfaceWorker = createGitWorker(async () =>
       Response.json({
         token_use: "interface_oauth",
@@ -139,10 +139,7 @@ describe("takos-git MCP", () => {
     );
     const target: Env = {
       BUCKET: new MemoryBucket(),
-      APP_URL: "https://git.example",
       OIDC_ISSUER_URL: "https://accounts.example",
-      APP_WORKSPACE_ID: "workspace_a",
-      APP_CAPSULE_ID: "capsule_git",
     };
     const response = await interfaceWorker.fetch(
       mcpRequest("taksrv_git_mcp", "tools/list"),

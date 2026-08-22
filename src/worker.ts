@@ -659,7 +659,7 @@ async function dispatchRequest(
     service === "git-receive-pack"
       ? "source.git.smart_http.write"
       : "source.git.smart_http.read";
-  const audience = interfaceAudience(env.APP_URL, "/git");
+  const audience = interfaceAudience(env.APP_URL, "/git", request.url);
   if (
     !hasValidInterfaceOAuthConfiguration({
       issuerUrl: env.OIDC_ISSUER_URL,

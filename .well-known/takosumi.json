@@ -1,8 +1,8 @@
 {
-  "apiVersion": "takosumi.com/v2.1",
+  "apiVersion": "takosumi.com/v2.3",
   "kind": "Repository",
   "install": {
-    "defaultModule": ".",
+    "defaultModule": "deploy/takoform",
     "modules": {
       ".": {
         "inputs": [
@@ -138,6 +138,95 @@
               }
             }
           }
+        ],
+        "interfaces": [
+          {
+            "key": "launcher",
+            "name": "takos-git.launcher",
+            "spec": {
+              "type": "interface.ui.surface",
+              "version": "1",
+              "document": {
+                "launcher": true,
+                "display": {
+                  "title": "Takos Git",
+                  "icon": "/icons/takos-git.svg"
+                }
+              },
+              "inputs": {
+                "url": {
+                  "source": "output",
+                  "outputName": "launch_url",
+                  "outputType": "url"
+                }
+              },
+              "access": {
+                "visibility": "workspace"
+              }
+            },
+            "bindingRequests": [
+              {
+                "key": "installer",
+                "subject": { "source": "installing_principal" },
+                "permissions": ["ui.open"],
+                "delivery": { "type": "none" }
+              }
+            ]
+          },
+          {
+            "key": "git-smart-http",
+            "name": "takos-git.smart-http",
+            "spec": {
+              "type": "source.git.smart_http",
+              "version": "1",
+              "document": {
+                "protocol": "http.git-smart",
+                "display": { "title": "Takos Git Smart HTTP" }
+              },
+              "inputs": {
+                "endpoint": {
+                  "source": "output",
+                  "outputName": "api_url",
+                  "outputType": "url"
+                }
+              },
+              "access": {
+                "visibility": "workspace",
+                "resourceUriInput": "endpoint"
+              }
+            }
+          },
+          {
+            "key": "mcp",
+            "name": "takos-git.mcp",
+            "spec": {
+              "type": "mcp.server",
+              "version": "2025-11-25",
+              "document": {
+                "transport": "streamable-http",
+                "display": { "title": "Takos Git" }
+              },
+              "inputs": {
+                "endpoint": {
+                  "source": "output",
+                  "outputName": "mcp_url",
+                  "outputType": "url"
+                }
+              },
+              "access": {
+                "visibility": "workspace",
+                "resourceUriInput": "endpoint"
+              }
+            },
+            "bindingRequests": [
+              {
+                "key": "installer",
+                "subject": { "source": "installing_principal" },
+                "permissions": ["mcp.invoke"],
+                "delivery": { "type": "oauth2" }
+              }
+            ]
+          }
         ]
       },
       "deploy/takoform": {
@@ -156,41 +245,110 @@
             }
           },
           {
-            "name": "worker_release_tag",
+            "name": "worker_bundle_manifest_digest",
             "source": {
               "kind": "module_default"
             },
             "type": "string",
             "label": {
-              "ja": "Workerリリース",
-              "en": "Worker release"
+              "ja": "Worker bundle manifest digest",
+              "en": "Worker bundle manifest digest"
             },
             "advanced": true
           },
           {
-            "name": "worker_bundle_url",
+            "name": "takosumi_accounts_issuer_url",
             "source": {
               "kind": "module_default"
             },
             "type": "string",
             "format": "url",
             "label": {
-              "ja": "Worker URL",
-              "en": "Worker URL"
+              "ja": "Takosumi Accounts発行者",
+              "en": "Takosumi Accounts issuer"
             },
             "advanced": true
           },
           {
-            "name": "worker_bundle_sha256",
+            "name": "takosumi_accounts_client_id",
             "source": {
               "kind": "module_default"
             },
             "type": "string",
             "label": {
-              "ja": "Worker SHA-256",
-              "en": "Worker SHA-256"
+              "ja": "Takosumi Accountsクライアント",
+              "en": "Takosumi Accounts client"
             },
             "advanced": true
+          }
+        ],
+        "requires": [
+          {
+            "kind": "identity.oidc",
+            "callbackPath": "/api/auth/callback",
+            "scopes": ["openid", "profile", "email"],
+            "deliver": {
+              "variables": {
+                "issuerUrl": "takosumi_accounts_issuer_url",
+                "clientId": "takosumi_accounts_client_id"
+              }
+            }
+          }
+        ],
+        "interfaces": [
+          {
+            "key": "git-smart-http",
+            "name": "takos-git.smart-http",
+            "spec": {
+              "type": "source.git.smart_http",
+              "version": "1",
+              "document": {
+                "protocol": "http.git-smart",
+                "display": { "title": "Takos Git Smart HTTP" }
+              },
+              "inputs": {
+                "endpoint": {
+                  "source": "output",
+                  "outputName": "api_url",
+                  "outputType": "url"
+                }
+              },
+              "access": {
+                "visibility": "workspace",
+                "resourceUriInput": "endpoint"
+              }
+            }
+          },
+          {
+            "key": "mcp",
+            "name": "takos-git.mcp",
+            "spec": {
+              "type": "mcp.server",
+              "version": "2025-11-25",
+              "document": {
+                "transport": "streamable-http",
+                "display": { "title": "Takos Git" }
+              },
+              "inputs": {
+                "endpoint": {
+                  "source": "output",
+                  "outputName": "mcp_url",
+                  "outputType": "url"
+                }
+              },
+              "access": {
+                "visibility": "workspace",
+                "resourceUriInput": "endpoint"
+              }
+            },
+            "bindingRequests": [
+              {
+                "key": "installer",
+                "subject": { "source": "installing_principal" },
+                "permissions": ["mcp.invoke"],
+                "delivery": { "type": "oauth2" }
+              }
+            ]
           }
         ]
       }

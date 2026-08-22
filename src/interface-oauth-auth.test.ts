@@ -65,10 +65,32 @@ describe("Interface OAuth verifier", () => {
     expect(interfaceAudience("https://user@git.example", "/git")).toBe("");
     expect(interfaceAudience("http://git.example", "/git")).toBe("");
     expect(interfaceAudience(undefined, "/git")).toBe("");
+    expect(
+      interfaceAudience(
+        undefined,
+        "/git",
+        "https://git.example/git/acme/widgets.git/info/refs?service=git-upload-pack",
+      ),
+    ).toBe("https://git.example/git");
   });
 
   test("accepts exact audience, permission, owner, Binding, and revision evidence", async () => {
     expect(await verify(validClaims)).toBe(true);
+  });
+
+  test("accepts complete live owner evidence when deployment config does not duplicate authority ids", async () => {
+    expect(
+      await verifyInterfaceOAuthBearer(
+        new Request("https://git.example/git/acme/widgets.git/info/refs"),
+        TOKEN,
+        PERMISSION,
+        {
+          issuerUrl: "https://accounts.example/",
+          expectedAudience: "https://git.example/git",
+          fetchImpl: async () => Response.json(validClaims),
+        },
+      ),
+    ).toBe(true);
   });
 
   test("rejects mismatched or incomplete authorization evidence", async () => {

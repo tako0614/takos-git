@@ -126,7 +126,7 @@ async function authorize(
       return { kind: "capsule" };
     }
   }
-  const audience = interfaceAudience(env.APP_URL, "/mcp");
+  const audience = interfaceAudience(env.APP_URL, "/mcp", request.url);
   const interfaceOAuthConfigured = hasValidInterfaceOAuthConfiguration({
     issuerUrl: env.OIDC_ISSUER_URL,
     audience,
@@ -388,7 +388,7 @@ export async function handleMcp(
     return jsonRpcResult(body.id, {
       protocolVersion: MCP_PROTOCOL_VERSION,
       capabilities: { tools: {} },
-      serverInfo: { name: "takos-git", version: "0.5.1" },
+      serverInfo: { name: "takos-git", version: "0.5.2" },
     });
   }
   if (body.method === "notifications/initialized")

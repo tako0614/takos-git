@@ -52,39 +52,41 @@ invocation-only Interface credential.
 | POST   | `/git/<repo>.git/git-receive-pack`                   | `source.git.smart_http.write`                | validated push            |
 | POST   | `/mcp`                                               | `mcp.invoke`                                 | repository lifecycle MCP  |
 
-Takosumi-managed Git, hosting, and MCP calls use service-side Interfaces that
-explicitly map the ordinary `api_url` / `hosting_api_url` / `mcp_url` Outputs
-as resource URIs. Their
+Takosumi-managed Git and MCP calls use repository-owned Interface declarations
+that explicitly map the ordinary `api_url` / `mcp_url` Outputs as resource
+URIs. Their
 declarations list the permissions above, and InterfaceBindings grant only the
 needed permissions. Accounts revalidates current Core Interface/Binding state
 before UserInfo reports the token active. The Worker then verifies exact
 audience, scope, Workspace, Capsule, subject, and complete Interface/Binding
 evidence shape. Interface ids and resolved revisions are not static module
 inputs or Worker env, avoiding a first-apply dependency on Interfaces that
-materialize only after apply. The service-side InstallConfig supplies
-`APP_WORKSPACE_ID` and `APP_CAPSULE_ID` through the ordinary non-secret `env`
-input; declarations and credentials do not enter Outputs.
+materialize only after apply. The portable Worker validates the non-empty
+Workspace and Capsule identities in live evidence without copying those
+control-plane ids into the Resource graph. Declarations and credentials do not
+enter Outputs.
 
 An explicitly supplied `PUBLISHED_MCP_AUTH_TOKEN` is retained only as
 standalone direct/self-host MCP authentication. It is not InterfaceBinding
 delivery and is never exposed as an Output. Empty configuration creates no
 static credential.
 
-The service-side `interfaceBlueprints` declaration is explicit (the binding
+The default `deploy/takoform` module declaration is explicit (the binding
 subject is selected after install):
 
 | Interface type          | Resource URI input | Supported InterfaceBinding permissions                      |
 | ----------------------- | ------------------ | ----------------------------------------------------------- |
 | `source.git.smart_http` | `api_url`          | `source.git.smart_http.read`, `source.git.smart_http.write` |
-| `source.git.hosting`    | `hosting_api_url`  | `source.git.hosting.read`                                   |
 | `mcp.server`            | `mcp_url`          | `mcp.invoke`                                                |
 
-To enable browser sign-in, provide `takosumi_accounts_issuer_url`,
+The portable module does not yet declare the launcher or hosting API. To
+enable browser sign-in through the direct/self-host module, provide
+`takosumi_accounts_issuer_url`,
 `takosumi_accounts_client_id`, and an `app_session_secret` of at least 32
 characters together. Confidential clients also receive
-`takosumi_accounts_client_secret` as a secret input. A managed InstallConfig
-explicitly supplies `env.APP_WORKSPACE_ID` and `env.APP_CAPSULE_ID`; secrets do
-not enter the repository or Outputs.
+`takosumi_accounts_client_secret` as a secret input. The direct module also
+receives `env.APP_WORKSPACE_ID` and `env.APP_CAPSULE_ID`; secrets do not enter
+the repository or Outputs.
 
 ## Develop
 
@@ -97,8 +99,21 @@ bun run check # portable format/static/type/tests/OpenTofu/build gate
 This example changes infrastructure owned by the user or operator. It is not
 the Takos ecosystem's official artifact-publication or hosted-production
 deploy path. GitHub Actions in this repository neither deploys nor publishes.
-An ecosystem surface is deployed by this repository's own entrypoint, which does
-not exist yet; writing it is the next step. The shared rules live in
+The official Worker release is published only by this repository-owned
+entrypoint:
+
+```sh
+# Verify a candidate from a clean commit equal to origin/main, without publishing.
+bun run deploy -- takos-git-worker-release
+
+# Publish one immutable tag and three release assets after the same checks.
+bun run deploy -- takos-git-worker-release --execute
+```
+
+The publication commit increments `package.json`. A separate reviewed adoption
+commit then appends the downloaded digests to `release.lock.json` and advances
+the module default. This avoids making a manifest or lock claim to certify its
+own not-yet-known source commit. Shared rules live in
 `takos-control/engineering.policy.json` → `deploy`.
 
 The module is inert until its Cloudflare feature flags are enabled:
@@ -130,8 +145,8 @@ root; the operator pins the digest out of band from the release's
 [`install-options.json`](install-options.json) is the optional source chooser.
 The separate general
 [`.well-known/takosumi.json`](.well-known/takosumi.json) `Repository` manifest
-proposes input names and presentation projections for the root direct module and
-`deploy/takoform` from the same Git commit. Neither document carries provider
+selects `deploy/takoform` by default while keeping the root direct module
+available from the same Git commit. Neither document carries provider
 credentials, secrets, Cloudflare account authority, Interface grants, or
 execution authority. Takosumi validates the proposal and compiles it into a
 DB-owned InstallConfig before the ordinary Plan and Apply lifecycle.

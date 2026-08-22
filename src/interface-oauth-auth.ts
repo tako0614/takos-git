@@ -75,21 +75,24 @@ function canonicalResourceUri(value: string): string | null {
 export function interfaceAudience(
   configuredOrigin: string | undefined,
   path: string,
+  requestUrl?: string,
 ): string {
-  if (!configuredOrigin?.trim() || !path.startsWith("/")) return "";
+  const candidate = configuredOrigin?.trim() || requestUrl;
+  if (!candidate || !path.startsWith("/")) return "";
   try {
-    const origin = new URL(configuredOrigin.trim());
+    const origin = new URL(candidate);
+    const configured = Boolean(configuredOrigin?.trim());
     if (
       origin.protocol !== "https:" ||
       origin.username !== "" ||
       origin.password !== "" ||
-      origin.pathname !== "/" ||
-      origin.search !== "" ||
-      origin.hash !== ""
+      (configured && origin.pathname !== "/") ||
+      (configured && origin.search !== "") ||
+      (configured && origin.hash !== "")
     ) {
       return "";
     }
-    return new URL(path, origin).href;
+    return new URL(path, origin.origin).href;
   } catch {
     return "";
   }
@@ -123,8 +126,8 @@ export function hasValidInterfaceOAuthConfiguration(input: {
   return (
     userInfoEndpoint(input.issuerUrl) !== null &&
     canonicalResourceUri(input.audience ?? "") !== null &&
-    boundedId(input.workspaceId) &&
-    boundedId(input.capsuleId)
+    (input.workspaceId === undefined || boundedId(input.workspaceId)) &&
+    (input.capsuleId === undefined || boundedId(input.capsuleId))
   );
 }
 
@@ -203,8 +206,9 @@ export async function verifyInterfaceOAuthCredential(
   if (
     !endpoint ||
     !expectedAudience ||
-    !boundedId(expectedWorkspaceId) ||
-    !boundedId(expectedCapsuleId) ||
+    (options.expectedWorkspaceId !== undefined &&
+      !boundedId(expectedWorkspaceId)) ||
+    (options.expectedCapsuleId !== undefined && !boundedId(expectedCapsuleId)) ||
     !validPermission(expectedPermission) ||
     !requestTargetsResource(request, expectedAudience) ||
     !token.startsWith(INTERFACE_TOKEN_PREFIX) ||
@@ -235,8 +239,12 @@ export async function verifyInterfaceOAuthCredential(
       boundedId(claims.sub) &&
       claims.aud === expectedAudience &&
       claims.scope === expectedPermission &&
-      evidence.workspace_id === expectedWorkspaceId &&
-      evidence.capsule_id === expectedCapsuleId &&
+      boundedId(evidence.workspace_id) &&
+      boundedId(evidence.capsule_id) &&
+      (expectedWorkspaceId === undefined ||
+        evidence.workspace_id === expectedWorkspaceId) &&
+      (expectedCapsuleId === undefined ||
+        evidence.capsule_id === expectedCapsuleId) &&
       boundedId(evidence.interface_id) &&
       boundedId(evidence.interface_binding_id) &&
       Number.isSafeInteger(evidence.interface_resolved_revision) &&

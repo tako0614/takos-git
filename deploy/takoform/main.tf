@@ -1,10 +1,10 @@
 terraform {
-  required_version = ">= 1.5"
+  required_version = ">= 1.8.0"
 
   required_providers {
     takoform = {
-      source  = "registry.opentofu.org/tako0614/takoform"
-      version = "= 0.2.0"
+      source  = "registry.terraform.io/tako0614/takoform"
+      version = "= 2.1.1"
     }
   }
 }
@@ -20,157 +20,111 @@ variable "project_name" {
   }
 }
 
-variable "worker_release_tag" {
-  description = "Takos Git release selected by the pinned Worker artifact."
+variable "worker_bundle_manifest_digest" {
+  description = "Content-addressed reviewed WorkerBundle manifest committed to the selected Takoform Host for Takos Git."
   type        = string
-  default     = "v0.5.1"
-}
-
-variable "worker_bundle_url" {
-  description = "Immutable HTTPS Worker artifact URL pinned by this release."
-  type        = string
-  default     = "https://github.com/tako0614/takos-git/releases/download/v0.5.1/worker.js"
+  default     = "sha256:faeef72b6550823b44b2f521889885864e90fadd85257fe53909013c8fd1e914"
 
   validation {
-    condition     = can(regex("^https://[^[:space:]]+$", trimspace(var.worker_bundle_url)))
-    error_message = "worker_bundle_url must be an https URL."
+    condition     = can(regex("^sha256:[a-f0-9]{64}$", trimspace(var.worker_bundle_manifest_digest)))
+    error_message = "worker_bundle_manifest_digest must be a canonical sha256:<hex> manifest digest."
   }
 }
 
-variable "worker_bundle_sha256" {
-  description = "Expected SHA-256 for the pinned Worker artifact."
+variable "takosumi_accounts_issuer_url" {
+  description = "Takosumi Accounts issuer used to validate short-lived Interface OAuth credentials."
   type        = string
-  default     = "sha256:8ae7c8c017871c54675f0e6e03b358c73ff5949dc7f1bd29f37f2cfa84edd24b"
+  default     = ""
+}
 
-  validation {
-    condition     = can(regex("^(sha256:)?[a-f0-9]{64}$", trimspace(var.worker_bundle_sha256)))
-    error_message = "worker_bundle_sha256 must be lowercase SHA-256 hex or sha256:<hex>."
-  }
+variable "takosumi_accounts_client_id" {
+  description = "Public PKCE client id allocated to this installed Capsule."
+  type        = string
+  default     = ""
 }
 
 locals {
-  artifact_url            = trimspace(var.worker_bundle_url)
-  artifact_sha256         = trimspace(var.worker_bundle_sha256)
-  artifact_sha256_checked = startswith(local.artifact_sha256, "sha256:") ? local.artifact_sha256 : "sha256:${local.artifact_sha256}"
-  release_tag             = trimspace(var.worker_release_tag)
-  interface_declarations = {
-    launcher = {
-      name = "takos-git.launcher"
-      document = {
-        launcher = true
-        display = {
-          title = "Takos Git"
-          icon  = "/icons/takos-git.svg"
-        }
-        endpoint = { originInput = "origin", path = "/" }
-      }
-    }
-    smart_http = {
-      name = "takos-git.smart-http"
-      document = {
-        display = { title = "Takos Git Smart HTTP" }
-        endpoint = {
-          originInput = "origin"
-          pathPrefix  = "/git"
-        }
-        permissions = [
-          "source.git.smart_http.read",
-          "source.git.smart_http.write",
-        ]
-      }
-    }
-    hosting = {
-      name = "takos-git.hosting"
-      document = {
-        display = { title = "Takos Git Hosting API" }
-        endpoint = {
-          originInput = "origin"
-          path        = "/api/v1"
-        }
-        permissions = ["source.git.hosting.read"]
-      }
-    }
-    mcp = {
-      name = "takos-git.mcp"
-      document = {
-        transport = "streamable-http"
-        display   = { title = "Takos Git" }
-        endpoint  = { originInput = "origin", path = "/mcp" }
-      }
-    }
+  runtime_vars = merge(
+    trimspace(var.takosumi_accounts_issuer_url) == "" ? {} : {
+      OIDC_ISSUER_URL = trimspace(var.takosumi_accounts_issuer_url)
+    },
+    trimspace(var.takosumi_accounts_client_id) == "" ? {} : {
+      OIDC_CLIENT_ID = trimspace(var.takosumi_accounts_client_id)
+    },
+  )
+}
+
+resource "takoform_edge_object_bucket" "objects" {
+  name = "${var.project_name}-objects"
+}
+
+resource "takoform_sqlite_database" "metadata" {
+  name = "${var.project_name}-metadata"
+}
+
+resource "takoform_module_worker" "worker" {
+  name = var.project_name
+}
+
+resource "takoform_worker_bundle" "worker" {
+  revision_owner  = var.project_name
+  manifest_digest = trimspace(var.worker_bundle_manifest_digest)
+
+  lifecycle {
+    create_before_destroy = true
   }
 }
 
-resource "takoform_object_bucket" "objects" {
-  name          = "${var.project_name}-objects"
-  storage_class = "standard"
-}
+resource "takoform_worker_version" "worker" {
+  revision_owner = var.project_name
+  worker         = takoform_module_worker.worker.name
+  bundle         = takoform_worker_bundle.worker.name
+  handlers       = ["fetch", "scheduled"]
+  vars_json      = jsonencode(local.runtime_vars)
 
-resource "takoform_relational_database" "metadata" {
-  name   = "${var.project_name}-metadata"
-  engine = "sqlite"
-}
-
-resource "takoform_http_service" "worker" {
-  name            = var.project_name
-  artifact_url    = local.artifact_url
-  artifact_sha256 = local.artifact_sha256_checked
-  runtime         = "javascript"
-
-  connections = [
+  bucket_bindings = [
     {
       name        = "BUCKET"
-      resource    = takoform_object_bucket.objects.id
-      permissions = ["delete", "list", "read", "write"]
-      projection  = "object.binding.v1"
+      target_name = takoform_edge_object_bucket.objects.name
     },
+  ]
+  sqlite_bindings = [
     {
       name        = "DB"
-      resource    = takoform_relational_database.metadata.id
-      permissions = ["connect", "read", "write"]
-      projection  = "sql.binding.v1"
+      target_name = takoform_sqlite_database.metadata.name
     },
   ]
 
   lifecycle {
-    precondition {
-      condition     = strcontains(local.artifact_url, "/releases/download/${local.release_tag}/")
-      error_message = "worker_bundle_url must select the exact worker_release_tag."
-    }
+    create_before_destroy = true
   }
 }
 
-# Durable webhook retries. The Worker also opportunistically drains due rows on
-# ordinary requests, while this portable schedule guarantees progress during
-# idle periods.
-resource "takoform_schedule" "webhook_outbox" {
-  name     = "${var.project_name}-webhook-outbox"
-  cron     = "* * * * *"
-  timezone = "UTC"
-
-  connections = [
+resource "takoform_worker_deployment" "worker" {
+  name   = "${var.project_name}-deployment"
+  worker = takoform_module_worker.worker.name
+  versions = [
     {
-      name        = "WORKER"
-      resource    = takoform_http_service.worker.id
-      permissions = ["invoke"]
-      projection  = "schedule.trigger.v1"
+      worker_version = takoform_worker_version.worker.name
+      weight         = 10000
     },
   ]
 }
 
-resource "takoform_interface" "surface" {
-  for_each = local.interface_declarations
+resource "takoform_worker_endpoint" "worker" {
+  name   = "${var.project_name}-endpoint"
+  worker = takoform_module_worker.worker.name
 
-  name          = each.value.name
-  version       = "1"
-  resource_kind = "HttpService"
-  resource_name = takoform_http_service.worker.name
-  document_json = jsonencode(each.value.document)
-  inputs_json = jsonencode([
-    {
-      name    = "origin"
-      source  = "output"
-      pointer = "/url"
-    }
-  ])
+  depends_on = [takoform_worker_deployment.worker]
+}
+
+# Durable webhook retries. The Worker also opportunistically drains due rows
+# on ordinary requests, while this portable attachment guarantees progress
+# during idle periods.
+resource "takoform_worker_cron_trigger" "webhook_outbox" {
+  name   = "${var.project_name}-webhook-outbox"
+  worker = takoform_module_worker.worker.name
+  cron   = "* * * * *"
+
+  depends_on = [takoform_worker_deployment.worker]
 }

@@ -40,10 +40,21 @@ Interface credential と一緒に使います。
 
 この例は利用者または operator が自分の環境を変更するための手順で、Takos
 ecosystem の公式 artifact 公開や hosted production release ではありません。この
-repo の GitHub Actions は deploy / publish を行いません。ecosystem surface の
-deploy はこの repository の entrypoint が入口です (まだ存在しないので、作るのが
-次の作業です)。共通 rule は `takos-control` の `engineering.policy.json` →
-`deploy` が正本です。
+repo の GitHub Actions は deploy / publish を行いません。公式 Worker release は
+この repository が所有する次の entrypoint だけが発行します。
+
+```sh
+# clean かつ origin/main と同一の commit で、公開せず候補を検証する
+bun run deploy -- takos-git-worker-release
+
+# 同じ検査後に immutable tag と3つのrelease assetを一度だけ発行する
+bun run deploy -- takos-git-worker-release --execute
+```
+
+発行commitでは `package.json` のversionを上げ、公開後の別reviewed commitで
+`release.lock.json` とmodule既定値へ取得済みdigestを追加します。これにより
+manifestやlockが自分自身の未確定commitを証明する循環を作りません。共通ruleは
+`takos-control` の `engineering.policy.json` → `deploy` が正本です。
 
 module は Cloudflare の feature flag を有効にするまでリソースを作りません。
 
@@ -71,8 +82,8 @@ URL は選べても integrity の根拠にはなりません。digest は releas
 
 [`install-options.json`](install-options.json) は、導入元を選ぶ任意の
 `CapsuleSourceOptions` 文書です。[`.well-known/takosumi.json`](.well-known/takosumi.json)
-は別の一般 `Repository` manifest で、root の direct module と
-`deploy/takoform` の入力名・表示 projection を同じ Git commit から提案します。
+は別の一般 `Repository` manifest で、`deploy/takoform` を既定 module とし、root の
+direct module も同じ Git commit から選択可能にします。
 どちらも provider credential、secret、Cloudflare account、Interface grant、
 実行権限を持ちません。Takosumi は検証後に DB-owned InstallConfig へ compile し、
 通常の Plan / Apply を行います。
@@ -95,32 +106,33 @@ URL は選べても integrity の根拠にはなりません。digest は releas
 | POST   | `/git/<repo>.git/git-receive-pack`                   | `source.git.smart_http.write`                | 検証付き push                  |
 | POST   | `/mcp`                                               | `mcp.invoke`                                 | リポジトリのライフサイクル MCP |
 
-Takosumi-managed な Git/hosting/MCP 呼び出しは、通常の `api_url` / `hosting_api_url` /
-`mcp_url` Output を resource URI に
-明示 mapping した service-side Interface と InterfaceBinding を使います。Interface/blueprint は上記
+Takosumi-managed な Git/MCP 呼び出しは、通常の `api_url` / `mcp_url` Output を
+resource URI に明示 mapping した repository-owned Interface 宣言と、Takosumi が所有する
+InterfaceBinding を使います。Interface は上記
 permission を明示します。Accounts は UserInfo が token を active と返す前に current Core の
 Interface / Binding state を再検証し、Worker は audience、scope、Workspace、Capsule、subject と
 完全な Interface / Binding evidence shape を検証し、不備があれば安全側に停止します。Interface id / resolved revision
 は static module input や Worker env にせず、apply 後に生成される Interface を初回 apply 前に
-要求する循環を作りません。managed InstallConfig は通常の `env` input 経由で `APP_WORKSPACE_ID` と
-`APP_CAPSULE_ID` を渡します。宣言・credential は Output に入れません。
+要求する循環を作りません。portable Worker は live evidence に含まれる non-empty Workspace / Capsule
+identity を検証し、Resource graph へそれらの control-plane id を複製しません。宣言・credential は
+Output に入れません。
 
 `PUBLISHED_MCP_AUTH_TOKEN` は直接/self-host deployment 用の standalone MCP bearer としてだけ残し、
 InterfaceBinding delivery とは扱いません。値は output しません。
 
-service-side `interfaceBlueprints` が宣言する surface は次の通りです (binding の subject は install 後に選択します)。
+既定 `deploy/takoform` module が宣言する surface は次の通りです (binding の subject は install 後に選択します)。
 
 | Interface type          | Resource URI input | Supported InterfaceBinding permissions                      |
 | ----------------------- | ------------------ | ----------------------------------------------------------- |
 | `source.git.smart_http` | `api_url`          | `source.git.smart_http.read`, `source.git.smart_http.write` |
-| `source.git.hosting`    | `hosting_api_url`  | `source.git.hosting.read`                                   |
 | `mcp.server`            | `mcp_url`          | `mcp.invoke`                                                |
 
-browser sign-in を有効にする場合は `takosumi_accounts_issuer_url`、
+portable 版は launcher / hosting API をまだ宣言しません。browser sign-in を有効にする
+direct/self-host module の場合は `takosumi_accounts_issuer_url`、
 `takosumi_accounts_client_id`、32 文字以上の `app_session_secret` を一緒に渡します。
 confidential client なら `takosumi_accounts_client_secret` も secret input として渡します。
-managed InstallConfig は `env.APP_WORKSPACE_ID` / `env.APP_CAPSULE_ID` も明示します。secret は
-repo や Output に書きません。
+direct module は `env.APP_WORKSPACE_ID` / `env.APP_CAPSULE_ID` も明示します。secret は repo や
+Output に書きません。
 
 ### 削除と後片付け
 

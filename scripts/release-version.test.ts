@@ -59,24 +59,37 @@ const ciWorkflow = parseYaml(ciWorkflowSource) as {
 };
 
 describe("release version and Capsule contract", () => {
-  test("keeps the module default and embedded MCP version aligned with the published release", () => {
-    for (const source of [moduleSource, takoformModuleSource]) {
-      const releaseVariable = source.match(
-        /variable\s+"worker_release_tag"\s*\{([\s\S]*?)\n\}/,
-      )?.[1];
-      expect(releaseVariable).toBeDefined();
-      const releaseDefault = releaseVariable?.match(
-        /^\s*default\s*=\s*"([^"]+)"\s*$/m,
-      )?.[1];
-      expect(releaseDefault).toBe(`v${packageVersion}`);
-    }
+  test("keeps the implementation version distinct from the last adopted immutable release", () => {
+    const releaseVariable = moduleSource.match(
+      /variable\s+"worker_release_tag"\s*\{([\s\S]*?)\n\}/,
+    )?.[1];
+    expect(releaseVariable).toBeDefined();
+    const adoptedRelease =
+      releaseVariable?.match(/^\s*default\s*=\s*"([^"]+)"\s*$/m)?.[1];
+    expect(adoptedRelease).toMatch(/^v[0-9]+\.[0-9]+\.[0-9]+$/);
     expect(takoformModuleSource).toContain(
-      `/releases/download/v${packageVersion}/worker.js`,
+      'variable "worker_bundle_manifest_digest"',
     );
     expect(takoformModuleSource).toMatch(/default\s+=\s+"sha256:[a-f0-9]{64}"/);
+    expect(takoformModuleSource).not.toContain("/releases/download/");
     expect(mcpSource).toContain(
       `serverInfo: { name: "takos-git", version: "${packageVersion}" }`,
     );
+    expect(releaseLock.releases[adoptedRelease ?? ""]).toBeDefined();
+    // Publication and adoption are deliberately separate commits. The source
+    // version may be newer while its immutable assets are being reviewed, but
+    // the install default may never point at an unpinned release.
+    const parts = (value: string) =>
+      value.replace(/^v/u, "").split(".").map((part) => Number(part));
+    const [packageMajor, packageMinor, packagePatch] = parts(packageVersion);
+    const [adoptedMajor, adoptedMinor, adoptedPatch] = parts(adoptedRelease ?? "");
+    expect(
+      packageMajor > adoptedMajor ||
+        (packageMajor === adoptedMajor && packageMinor > adoptedMinor) ||
+        (packageMajor === adoptedMajor &&
+          packageMinor === adoptedMinor &&
+          packagePatch >= adoptedPatch),
+    ).toBe(true);
   });
 
   test("keeps GitHub Actions credentialless and delegates to the owner gate", async () => {
@@ -135,7 +148,12 @@ describe("release version and Capsule contract", () => {
 
     expect(releaseLock.kind).toBe("takos.release-artifact-lock@v1");
     expect(releaseLock.app).toBe("takos-git");
-    const pin = releaseLock.releases[`v${packageVersion}`];
+    const releaseVariable = moduleSource.match(
+      /variable\s+"worker_release_tag"\s*\{([\s\S]*?)\n\}/,
+    )?.[1];
+    const adoptedRelease =
+      releaseVariable?.match(/^\s*default\s*=\s*"([^"]+)"\s*$/m)?.[1] ?? "";
+    const pin = releaseLock.releases[adoptedRelease];
     expect(pin).toBeDefined();
     expect(pin?.artifact.filename).toBe("worker.js");
     expect(pin?.artifact.url).toMatch(/^https:\/\//);

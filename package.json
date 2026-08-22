@@ -1,6 +1,6 @@
 {
   "name": "takos-git",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "private": true,
   "type": "module",
   "description": "Standalone Git Smart HTTP service (installable Capsule).",
@@ -9,6 +9,7 @@
     "build:worker": "bun run scripts/build-worker.ts",
     "build:web": "cd web && bun run build",
     "build": "bun run build:web && bun run build:worker",
+    "deploy": "bun scripts/deploy.ts",
     "dev:web": "cd web && vite",
     "git:pre-destroy": "bun run scripts/purge-r2-before-destroy.ts",
     "test": "bun test && bun run test:web",
@@ -17,7 +18,8 @@
     "lint": "bun run check:types && bun run check:web",
     "check:types": "bunx tsc --noEmit",
     "check:opentofu": "tofu init -backend=false -lockfile=readonly && tofu validate && tofu test && tofu plan -refresh=false -input=false -lock=false",
-    "check": "bun run fmt:check && bun run lint && bun run check:opentofu && bun run test && bun run build",
+    "check:takoform": "tofu -chdir=deploy/takoform init -backend=false -lockfile=readonly && tofu -chdir=deploy/takoform validate",
+    "check": "bun run fmt:check && bun run lint && bun run check:opentofu && bun run check:takoform && bun run test && bun run build",
     "check:web": "cd web && tsc --noEmit",
     "test:web": "cd web && bun test --conditions browser src"
   },

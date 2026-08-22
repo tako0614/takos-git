@@ -197,7 +197,7 @@ describe("takos-git worker", () => {
     expect(res.status).toBe(401);
   });
 
-  test("never derives Interface audience authority from the caller Host", async () => {
+  test("derives the exact request origin and rejects a token minted for another origin", async () => {
     const { env } = await setup();
     const res = await worker.fetch(
       new Request(
@@ -206,7 +206,7 @@ describe("takos-git worker", () => {
       ),
       { ...env, APP_URL: undefined },
     );
-    expect(res.status).toBe(503);
+    expect(res.status).toBe(401);
   });
 
   test("upload-pack returns a packfile for an advertised want", async () => {
