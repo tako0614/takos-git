@@ -2,14 +2,8 @@ import { expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
 
 const root = new URL("../", import.meta.url);
-const text = await readFile(
-  new URL(".well-known/takosumi.json", root),
-  "utf8",
-);
+const text = await readFile(new URL(".well-known/takosumi.json", root), "utf8");
 const manifest = JSON.parse(text) as RepositoryManifest;
-const options = JSON.parse(
-  await readFile(new URL("install-options.json", root), "utf8"),
-) as { options: Array<{ source: { path: string } }> };
 const moduleSources: Record<string, string> = {
   ".": await readFile(new URL("main.tf", root), "utf8"),
   "deploy/takoform": await readFile(
@@ -18,7 +12,7 @@ const moduleSources: Record<string, string> = {
   ),
 };
 
-test("Takos Git publishes a closed Repository manifest", () => {
+test("Takos Git publishes repository input and service hints", () => {
   expect(Object.keys(manifest).sort()).toEqual([
     "apiVersion",
     "install",
@@ -26,18 +20,17 @@ test("Takos Git publishes a closed Repository manifest", () => {
   ]);
   expect(manifest.apiVersion).toBe("takosumi.com/v2.3");
   expect(manifest.kind).toBe("Repository");
-  expect(Object.keys(manifest.install)).toEqual(["defaultModule", "modules"]);
-  expect(manifest.install.defaultModule).toBe("deploy/takoform");
+  expect(Object.keys(manifest.install)).toEqual(["modules"]);
   expect(Object.keys(manifest.install.modules)).toEqual([
     ".",
     "deploy/takoform",
   ]);
-  for (const option of options.options) {
-    expect(manifest.install.modules[option.source.path]).toBeDefined();
+  for (const path of Object.keys(manifest.install.modules)) {
+    expect(moduleSources[path]).toBeDefined();
   }
 });
 
-test("default portable install declares Git and agent MCP Interfaces", () => {
+test("portable service declarations advertise Git and agent MCP Interfaces", () => {
   const interfaces =
     manifest.install.modules["deploy/takoform"]?.interfaces ?? [];
   expect(interfaces.map((entry) => entry.spec.type)).toEqual([
@@ -57,7 +50,7 @@ test("default portable install declares Git and agent MCP Interfaces", () => {
   ]);
 });
 
-test("declared modules reference real variables and no secret or host authority", () => {
+test("repository install hints reference real variables and carry no secret or host authority", () => {
   for (const [path, module] of Object.entries(manifest.install.modules)) {
     const source = moduleSources[path];
     expect(source).toBeDefined();
@@ -74,6 +67,17 @@ test("declared modules reference real variables and no secret or host authority"
       expect(input.secret).toBeUndefined();
       if (input.source.kind === "module_default") {
         expect(variableBlock(source, input.name)).toMatch(/\n\s+default\s+=/);
+      }
+      expect(input.name).toMatch(/^[A-Za-z_][A-Za-z0-9_]*$/);
+      expect(typeof input.label.ja).toBe("string");
+      expect(typeof input.label.en).toBe("string");
+    }
+    for (const requirement of module.requires ?? []) {
+      expect(["http.endpoint", "identity.oidc", "interface.consume"]).toContain(
+        requirement.kind,
+      );
+      if (requirement.deliver) {
+        expect(Object.keys(requirement.deliver)).toHaveLength(1);
       }
     }
   }
@@ -114,7 +118,6 @@ interface RepositoryManifest {
   apiVersion: string;
   kind: string;
   install: {
-    defaultModule: string;
     modules: Record<string, RepositoryModule>;
   };
 }
@@ -123,7 +126,12 @@ interface RepositoryModule {
   inputs: Array<{
     name: string;
     source: { kind: string };
+    label: { ja: string; en: string };
     secret?: boolean;
+  }>;
+  requires?: Array<{
+    kind: string;
+    deliver?: Record<string, unknown>;
   }>;
   installExperience?: {
     projections: Array<{
@@ -132,10 +140,12 @@ interface RepositoryModule {
     }>;
   };
   interfaces?: Array<{
+    name: string;
     spec: {
       type: string;
       version: string;
       inputs: Record<string, { outputName?: string }>;
+      access?: Record<string, unknown>;
     };
     bindingRequests?: Array<Record<string, unknown>>;
   }>;

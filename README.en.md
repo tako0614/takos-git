@@ -142,14 +142,20 @@ no signature, so it may select the bundle URL but can never be its own integrity
 root; the operator pins the digest out of band from the release's
 `worker.js.sha256`.
 
-[`install-options.json`](install-options.json) is the optional source chooser.
-The separate general
-[`.well-known/takosumi.json`](.well-known/takosumi.json) `Repository` manifest
-selects `deploy/takoform` by default while keeping the root direct module
-available from the same Git commit. Neither document carries provider
-credentials, secrets, Cloudflare account authority, Interface grants, or
-execution authority. Takosumi validates the proposal and compiles it into a
-DB-owned InstallConfig before the ordinary Plan and Apply lifecycle.
+### Install on Takosumi
+
+Pass the Git repository URL to Takosumi's New app or `/install` screen:
+
+```text
+https://app.takosumi.com/install?git=https%3A%2F%2Fgithub.com%2Ftako0614%2Ftakos-git.git
+```
+
+Takosumi scans the OpenTofu tree at one Git revision and reads
+[`.well-known/takosumi.json`](.well-known/takosumi.json) for input UI hints and
+host service/interface declarations. Set the ref, module path, or service name
+in the screen when you need an override. There is no separate source-options
+document; the selected module's `.tf`, `.tofu`, `.tf.json`, and `.tofu.json`
+files are composed as one OpenTofu tree before compatibility is checked.
 
 The repository delete API immediately tombstones the namespace, hides refs and
 Actions pins, and returns `202 Accepted`. Scheduled maintenance removes the

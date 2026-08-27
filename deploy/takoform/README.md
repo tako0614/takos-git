@@ -1,8 +1,8 @@
 # Takos Git Takoform Capsule
 
-This is the canonical portable resource definition and the repository
-manifest's default module for Takos Git. The repository root remains the
-explicit direct Cloudflare path.
+This is the canonical portable resource definition for Takos Git. The
+repository root remains the explicit direct Cloudflare path; choose either
+OpenTofu module explicitly from the Git source.
 
 The graph uses current Takoform resources: an `ObjectBucket`, a
 `SqliteDatabase`, and a ModuleWorker bundle/version/deployment/endpoint with a
@@ -18,7 +18,7 @@ public service origin; runtime consumers discover a Ready Interface and use a
 short-lived Interface credential. No Interface, Binding, Workspace, Capsule,
 or provider authority is copied into the Resource graph.
 
-The portable default deliberately does not declare the browser launcher or
+This portable module deliberately does not declare the browser launcher or
 hosting API. Those surfaces require a browser-session secret and host runtime
 materialization that cannot be represented truthfully by this module yet. The
 direct root module remains available for an operator that explicitly supplies

@@ -80,13 +80,20 @@ manifest (`takosumi-artifact.json`) は mutable な tag 越しに署名なしで
 URL は選べても integrity の根拠にはなりません。digest は release ページの
 `worker.js.sha256` から operator が out-of-band に固定します。
 
-[`install-options.json`](install-options.json) は、導入元を選ぶ任意の
-`CapsuleSourceOptions` 文書です。[`.well-known/takosumi.json`](.well-known/takosumi.json)
-は別の一般 `Repository` manifest で、`deploy/takoform` を既定 module とし、root の
-direct module も同じ Git commit から選択可能にします。
-どちらも provider credential、secret、Cloudflare account、Interface grant、
-実行権限を持ちません。Takosumi は検証後に DB-owned InstallConfig へ compile し、
-通常の Plan / Apply を行います。
+### Takosumi でインストール
+
+Takosumi の「新しいアプリ」または `/install` 画面へ Git repository URL を渡します。
+
+```text
+https://app.takosumi.com/install?git=https%3A%2F%2Fgithub.com%2Ftako0614%2Ftakos-git.git
+```
+
+Takosumi は指定した Git revision の OpenTofu tree を走査し、
+[`.well-known/takosumi.json`](.well-known/takosumi.json) から入力 UI hint と host
+service/interface declaration を読み取ります。必要な場合だけ画面で ref、module
+path、サービス名を上書きしてください。専用の source-options 文書はなく、選択した
+module directory の `.tf`、`.tofu`、`.tf.json`、`.tofu.json` を一つの tree として
+compatibility 判定に渡します。
 
 ## 仕組み
 
