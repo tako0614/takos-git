@@ -30,27 +30,28 @@ Cloudflare profile では次の構成を使う。
 
 ```text
 Worker
-  browser app
-  hosting API
-  Git Smart HTTP
+  browser app (the built `web/` app, embedded in the Worker)
+  hosting API (feature route registry)
+  Git Smart HTTP (per-repository ACL when the metadata plane is enabled)
   MCP repository lifecycle
 
 R2
-  repository-scoped Git objects
-  release / LFS / Actions artifacts (later milestones)
+  repository-scoped Git objects and refs
+  Actions logs / artifacts (`R2_ACTIONS`, when Actions is enabled)
 
-D1 (next milestone)
+D1 (optional metadata plane, `enable_metadata`)
   repository metadata / ACL
   Issue / pull request / review
   release / webhook / checks
 
-Queue or Workflow (later milestone)
-  indexing / webhook delivery / checks / Actions dispatch
+Queue + Durable Objects (Actions, `enable_actions`)
+  workflow dispatch / run coordination / per-job runner dispatch
 ```
 
 現在の per-repository refs document と conditional R2 write は Git receive-pack の atomic
-boundary として維持する。D1 を追加しても、Git object と ref の正とする情報を暗黙に D1 へ二重化しない。
-metadata operation と ref update をまたぐ処理は retryable state machine として明示する。
+boundary として維持する。D1 はすでに利用できる metadata plane だが、Git object と ref の正とする情報を
+暗黙に D1 へ二重化しない。metadata operation と ref update をまたぐ処理は retryable state machine として
+明示する。D1 を無効にした deploy は、per-repository ACL を適用せず scope-only の互換動作へ縮退する。
 
 ## Authentication and authorization
 
@@ -65,9 +66,9 @@ metadata operation と ref update をまたぐ処理は retryable state machine 
 - MCP: `mcp.invoke` Interface OAuth。明示された standalone bearer は direct/self-host
   deployment だけに使い、InterfaceBinding credential と呼ばない。
 
-InterfaceBinding は service invocation を許可する。次 milestone で Takos Git の app-local
-repository ACL が、その認可済み Principal を repository ごとに owner / maintainer / writer /
-reader へ絞り込む。repository ごとに Takosumi Interface を量産しない。
+InterfaceBinding は service invocation を許可する。Takos Git の app-local repository ACL は、
+D1 が有効なとき、その認可済み Principal を repository ごとに owner / maintainer / writer / reader
+へ絞り込む。repository ごとに Takosumi Interface を量産しない。
 
 ## Product milestones
 
@@ -94,8 +95,9 @@ reader へ絞り込む。repository ごとに Takosumi Interface を量産しな
   retries, bounded exponential backoff, and a scheduled drain
 - check run / status API
 - **self-hosted Actions runner**: Actions の実行層は takos-git 自身の Worker に埋め込んだ
-  Cloudflare Container + Durable Object。外部 runner Capsule でも Takos agent でもない
-  (詳細は下記「Self-hosted Actions runner」)
+  Cloudflare Container + Durable Object。ソース実装はあるが、Worker bundle の
+  `@cloudflare/containers` と out-of-band の `[[containers]]` image attachment が
+  揃うまで実行可能な deploy にはならない (詳細は下記「Self-hosted Actions runner」)。
 - Git LFS, release assets, import/mirror jobs
 - asynchronous code index and search
 - protocol v2 / shallow clone / partial clone の compatibility evidence
@@ -112,14 +114,19 @@ versioned capability として追加し、未対応 API を GitHub 互換とし�
 
 ## Self-hosted Actions runner
 
-Actions の実行層は takos-git 自身の Worker に埋め込む。これは
+Actions の実行層は takos-git 自身の Worker に埋め込む。Queue consumer、run coordinator DO、
+job runner DO、in-container executor のソース実装は揃っているが、現在の deploy は runner
+Container の起動条件を満たしていない。これは
 [`github-parity-build.md`](github-parity-build.md) の Decision record を正とする判断であり、旧稿の
 「runner Interface を使う Actions dispatch」を **上書き** する。**外部 runner Capsule ではなく、
 Takos agent でもない**。旧 Takos product 側の Actions 実行層 (`TakosRuntimeContainer` /
 `RUNTIME_HOST` / `src/worker/runtime/queues/workflow-*`) は **廃止** 済みで、この
 self-hosted runner が唯一の後継。shim も dual path も Takos runtime への依存も持たない。
+`main.tf` は `enable_actions` 配下の Queue/DO/R2 backing resources を管理するが、
+`@cloudflare/containers` dependency と `[[containers]]` attachment が未適用のため、
+現状では dispatch された job は実行に到達せず失敗する。
 
-### 実行トポロジ
+### 実行トポロジ (source implemented, container attachment blocked)
 
 ```text
 receive-pack success
@@ -142,14 +149,17 @@ receive-pack success
   reap。状態遷移は 5a callback (`startRun` / `startJob` / `updateStep` / `completeJob` /
   `cancelRun`) だけを通し、二重の正とする情報を作らない。再配送に対しても同じ結果になる。
 - **Container DO (`ActionsJobRunner`)**: per-job で runner Container を起動し、job body を
-  forward し、`ActionsJobResult` を coordinator に relay する。timeout / cancellation と
-  RunnerProfile 相当の resource / network / secret policy (`default-deny` egress、bounded
-  CPU/memory、runner-only secret、redacted log) を課す。
+  forward し、`ActionsJobResult` を coordinator に relay する。timeout / cancellation と、
+  Worker が実際に適用する `RunnerPolicy` (concurrency、job/step timeout、log/artifact byte caps)
+  を扱う。`RUNNER_CONTAINER_REQUIREMENTS` の `default-deny` egress と CPU/memory 値は
+  container platform に渡す運用要件であり、takos-git の Worker は強制しない。attachment が
+  未適用の現在は Container を起動できず、dispatch された job は失敗する。
 - **In-container executor** (`containers/runner/src/`): job body を受け取り、run-pin tree を
   checkout してから各 `StepExecContract` step を workspace で実行する。`shell` /
   `working-directory` / `env` / `continue-on-error` / `timeout-minutes` を尊重し、log を
-  stream する。MVP の `uses:` は `checkout` と `upload-artifact` のみで、それ以外は `run:`
-  shell。secret 値は run step の process env として注入し、全 log から **redact** する。
+  stream する。現在の `uses:` は `checkout`、`upload-artifact`、`download-artifact` で、
+  それ以外は `run:` shell。secret 値は run step の process env として注入し、全 log から
+  **redact** する。
 
 ### R2 と run-pin
 
@@ -175,9 +185,10 @@ backing 資源 (Queue + DLQ、`ACTIONS_RUN` / `ACTIONS_JOB` DO namespace + `new_
 migration、`R2_ACTIONS`、secret) は `enable_actions` gate 配下で `main.tf` が管理する
 (default false で `tofu validate` / `plan` は zero resource)。runner Container image
 (`containers/runner/Dockerfile`) だけは cloudflare provider 5.19.1 が表現できないため、
-CI が image を build/push し、module output (`actions_runner_container`) を読む wrangler
-`[[containers]]` step で `ActionsJobRunner` class に attach する (bundle / D1 migration と
-同じ output-then-wrangler pattern)。
+CI/operator が image を build/push し、module output (`actions_runner_container`) を読む
+wrangler `[[containers]]` step で `ActionsJobRunner` class に attach する。現在は Worker bundle
+に `@cloudflare/containers` がなく attachment も未適用なので、この out-of-band step が完了する
+まで Actions execution は blocked のままである。
 
 ### Follow-ups (documented, out of MVP)
 

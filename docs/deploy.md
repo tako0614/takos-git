@@ -4,9 +4,10 @@ This reference is for an operator deploying takos-git (the collaborative forge
 + self-hosted Actions) into infrastructure that operator controls. It is not
 the Takos ecosystem's official artifact-publication or hosted-production
 deploy path. GitHub Actions in this repository neither deploys nor publishes.
-An ecosystem surface is deployed by this repository's own entrypoint, which does
-not exist yet; writing it is the next step. The shared rules live in
-`takos-control/engineering.policy.json` → `deploy`.
+This repository does expose `bun run deploy -- takos-git-worker-release`, which
+publishes the immutable GitHub Release surface for the Worker. That entrypoint
+does not apply operator infrastructure or the Actions container attachment. The
+shared rules live in `takos-control/engineering.policy.json` → `deploy`.
 
 **Secrets and the `tofu apply` are run in the operator environment, never
 committed.** The OpenTofu module creates nothing until the enable flags below
@@ -68,19 +69,19 @@ tofu apply \
   -var takosumi_accounts_client_id=<client-id> \
   -var app_session_secret=<32+ char secret> \
   -var webhook_secret_key=<32+ char secret> \
-  -var worker_bundle_sha256=<worker.js.sha256 from the release> \
+  -var worker_bundle_sha256=<optional worker.js.sha256 assertion> \
   -var 'env={APP_WORKSPACE_ID="<workspace-id>",APP_CAPSULE_ID="<capsule-id>"}' \
   -var takosumi_accounts_client_secret=<secret>
 ```
 
 Omit `takosumi_accounts_client_secret` for a public PKCE client.
 
-`worker_bundle_sha256` is **not optional on the default `worker_release_tag` path**.
-The release manifest is fetched over a mutable tag with no signature, so it selects
-the bundle URL but is never trusted for the digest — otherwise anyone who can
-re-point that tag ships a Worker holding the R2 objects bucket plus
-`APP_SESSION_SECRET` / `WEBHOOK_SECRET_KEY` / `ACTIONS_*`. Take the digest from the
-release's `worker.js.sha256` and pin it here.
+`worker_bundle_sha256` is optional on the default `worker_release_tag` path. The
+reviewed `release.lock.json` entry already pins the release artifact digest and
+the apply verifies that the fetched artifact matches it. When supplied, this
+variable is an additional assertion and must equal that pinned digest. It is
+required for an explicit `worker_bundle_url`, where there is no release-lock
+identity to provide the digest.
 
 Add self-hosted Actions:
 
@@ -93,20 +94,21 @@ Add self-hosted Actions:
   -var actions_container_binding_applied=true
 ```
 
-> **Actions execution is not deployable yet.** `actions_container_binding_applied`
-> attests that the runner Container is really attached — both the `[[containers]]`
-> wrangler step (step 3) **and** a Worker bundle that ships the
-> `@cloudflare/containers` runtime. takos-git does not depend on that package today,
-> so `ActionsJobRunner` cannot load a container and every dispatched job fails
-> immediately. The precondition keeps that failure at plan time instead of turning
-> every CI run red. Leave `enable_actions=false` until the dependency lands.
+> **Actions execution is currently blocked.** The runner implementation and its
+> Queue/DO/R2 backing resources exist, but `actions_container_binding_applied`
+> requires both the out-of-band `[[containers]]` image attachment (step 3) and a
+> Worker bundle that ships the `@cloudflare/containers` runtime. The current bundle
+> does not include that package, so `ActionsJobRunner` cannot load a container and
+> every dispatched job fails immediately. The precondition keeps that failure at
+> plan time instead of turning every CI run red; leave `enable_actions=false` until
+> both prerequisites are present.
 >
 > Runner **egress and CPU/memory are not enforced by takos-git.** `RunnerPolicy`
-> (`src/features/actions/runner/policy.ts`) only covers what this Worker enforces:
-> concurrency, job/step timeouts, and the log/artifact byte caps. The default-deny
-> egress and the CPU/memory ceiling in `RUNNER_CONTAINER_REQUIREMENTS` must be applied
-> by the container platform in the same out-of-band step; until then a `run:` step
-> reaches the network unrestricted.
+> (`src/features/actions/runner/policy.ts`) covers the Worker-enforced concurrency,
+> job/step timeouts, and log/artifact byte caps. The `default-deny` egress and the
+> CPU/memory ceiling in `RUNNER_CONTAINER_REQUIREMENTS` are declared container
+> platform requirements and must be applied by the out-of-band attachment; until
+> then a `run:` step reaches the network unrestricted.
 
 `enable_metadata=true` provisions the D1 database that the whole collaboration
 surface (ACL, issues, PRs, releases, …) needs. Without it the Worker still serves
@@ -143,9 +145,10 @@ queue          = "<workflow queue name>"   # binds the run-tick queue → Action
 ```
 
 For a direct/self-host install, keep the rendered configuration in the
-operator-owned apply process. For a hosted deploy, the configuration is input to
-this repository's deploy entrypoint. There is no credentialed workflow and no
-second raw Wrangler publication path.
+operator-owned apply process. This repository's deploy entrypoint exposes only
+the `takos-git-worker-release` GitHub Release surface; it does not accept hosted
+deployment configuration or run Wrangler/container attachment. A hosted deploy
+must apply this attachment through its owning deployment surface.
 
 ## 4. Worker secrets
 
@@ -167,8 +170,11 @@ next apply replaces the script's binding set and would drop an out-of-band secre
   as the HTTP-Basic password).
 - Private repo → 404 to a non-collaborator; public repo → anonymous read.
 - Open an issue + PR, request review, merge (respecting branch protection).
-- With Actions on: push a `.github/workflows/ci.yml` → a run + queued check-run appears;
-  the runner container executes `run:` steps and the check-run flips to success/failure.
+- Actions end-to-end execution is currently blocked: the Worker bundle still lacks
+  `@cloudflare/containers` and the `[[containers]]` attachment is not applied, so
+  the success smoke test cannot run. After both prerequisites are applied, push a
+  `.github/workflows/ci.yml` and verify the queued check-run, `run:` execution, and
+  final success/failure projection.
 - Provider-side secrets absent from `tofu output` / repo (`tofu output` shows only ids/urls).
 
 ## Notes / current limits
