@@ -14,7 +14,7 @@ filesystem サービスとは別の通常の installable product です。公開
 ライフサイクル操作用の `mcp.server` です。
 
 GitHub 的な共同作業機能へ広げる source-owner 境界と移行順は
-[`docs/collaborative-hosting.md`](docs/collaborative-hosting.md) が正本です。
+[`docs/collaborative-hosting.md`](docs/collaborative-hosting.md) が正本 (正とする情報) です。
 
 ## できること
 
@@ -140,7 +140,7 @@ Output に書きません。
 `202 Accepted` を返します。削除世代を記録した quarantine marker と一致する場合だけ、
 10 分の quarantine 後に scheduled maintenance が repository-owned object prefix を消します。
 同名リポジトリを再作成しても generation が異なるため、古い cleanup が新しいデータを
-削除しません。cleanup は idempotent で、失敗時は台帳から再試行されます。
+削除しません。cleanup は何度実行しても結果が同じで、失敗時は履歴から再試行されます。
 Git object だけでなく、release asset、webhook outbox payload、Actions log / artifact も
 同じ cleanup で削除し、tombstone 後の runner callback は書き込み前に拒否します。
 
