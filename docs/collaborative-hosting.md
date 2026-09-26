@@ -91,7 +91,7 @@ D1 が有効なとき、その認可済み Principal を repository ごとに ow
 
 ### M3: automation and large repositories
 
-- durable R2-backed webhook delivery with a D1 audit/outbox ledger, leased
+- durable R2-backed webhook delivery with a D1 audit/outbox log, leased
   retries, bounded exponential backoff, and a scheduled drain
 - check run / status API
 - **self-hosted Actions runner**: Actions の実行層は takos-git 自身の Worker に埋め込んだ
