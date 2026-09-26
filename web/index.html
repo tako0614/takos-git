@@ -5,6 +5,41 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <!-- No CSP <meta>: the worker is the single, code-reviewed source of the CSP. -->
     <title>Takos Git</title>
+    <meta
+      name="description"
+      content="Collaborative Git hosting — standard clone, fetch, and push on top of an R2 data plane."
+    />
+    <script>
+      /* Pre-hydration theme init: mirrors lib/theme.ts (takos-git:theme storage,
+         "system" follows prefers-color-scheme) so a stored light/dark choice is
+         applied before first paint. styles.css already follows the OS theme
+         pre-JS when nothing is stored. */
+      (function () {
+        try {
+          var pref = localStorage.getItem("takos-git:theme");
+          if (pref === "light" || pref === "dark") {
+            document.documentElement.setAttribute("data-theme", pref);
+          }
+        } catch {
+          /* localStorage may be unavailable; the app will apply the theme. */
+        }
+      })();
+    </script>
+    <style>
+      /* Pre-hydration flash guard — must match styles.css --canvas-default /
+         --fg-default (light + dark). */
+      html,
+      body {
+        margin: 0;
+        background: #ffffff;
+        color: #1f2328;
+      }
+      html[data-theme="dark"],
+      html[data-theme="dark"] body {
+        background: #0d1117;
+        color: #f0f6fc;
+      }
+    </style>
     <link rel="icon" href="/icons/takos-git.svg" />
   </head>
   <body>
