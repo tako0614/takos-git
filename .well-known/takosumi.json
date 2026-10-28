@@ -1,8 +1,7 @@
 {
-  "apiVersion": "takosumi.com/v2.3",
+  "apiVersion": "takosumi.com/v2.5",
   "kind": "Repository",
   "install": {
-    "defaultModule": "deploy/takoform",
     "modules": {
       ".": {
         "inputs": [
@@ -137,6 +136,28 @@
               "en": "Registered callback URI"
             },
             "advanced": true
+          },
+          {
+            "name": "app_workspace_id",
+            "source": {
+              "kind": "workspace_id"
+            },
+            "type": "string",
+            "label": {
+              "ja": "現在のWorkspace",
+              "en": "Current Workspace"
+            }
+          },
+          {
+            "name": "app_capsule_id",
+            "source": {
+              "kind": "capsule_id"
+            },
+            "type": "string",
+            "label": {
+              "ja": "現在のアプリ",
+              "en": "Current app"
+            }
           }
         ],
         "requires": [
