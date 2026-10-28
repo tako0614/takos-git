@@ -150,6 +150,21 @@ variable "published_mcp_auth_token" {
   }
 }
 
+# Explicit receivers for the current app runtime's non-secret identity data.
+# An installer derives these from its authenticated Capsule ledger; the module
+# does not infer an identity, issue a credential, or grant Workspace access.
+variable "app_workspace_id" {
+  description = "Optional current app Workspace ID. Empty retains env.APP_WORKSPACE_ID."
+  type        = string
+  default     = ""
+}
+
+variable "app_capsule_id" {
+  description = "Optional current app Capsule ID. Empty retains env.APP_CAPSULE_ID."
+  type        = string
+  default     = ""
+}
+
 variable "env" {
   description = "Additional non-secret Worker environment variables projected as plain_text bindings. Secrets must use dedicated sensitive variables or Provider Connections."
   type        = map(string)
@@ -375,15 +390,24 @@ locals {
   accounts_client_id     = trimspace(var.takosumi_accounts_client_id)
   accounts_client_secret = trimspace(var.takosumi_accounts_client_secret)
   app_session_secret     = trimspace(var.app_session_secret)
-  app_workspace_id       = trimspace(lookup(var.env, "APP_WORKSPACE_ID", ""))
-  app_capsule_id         = trimspace(lookup(var.env, "APP_CAPSULE_ID", ""))
+  app_workspace_id       = trimspace(lookup(local.extra_worker_env, "APP_WORKSPACE_ID", ""))
+  app_capsule_id         = trimspace(lookup(local.extra_worker_env, "APP_CAPSULE_ID", ""))
   browser_auth_requested = local.accounts_client_id != "" || local.accounts_client_secret != "" || local.app_session_secret != ""
   browser_auth_ready     = local.accounts_issuer_url != "" && local.accounts_client_id != "" && local.app_session_secret != "" && local.app_workspace_id != ""
   provided_mcp_token     = trimspace(var.published_mcp_auth_token)
-  extra_worker_env       = { for name, value in var.env : name => value if trimspace(value) != "" }
-  actions_runner_secret  = trimspace(var.actions_runner_secret)
-  actions_secrets_key    = trimspace(var.actions_secrets_key)
-  webhook_secret_key     = trimspace(var.webhook_secret_key)
+  provided_app_context = {
+    for name, value in {
+      APP_WORKSPACE_ID = trimspace(var.app_workspace_id)
+      APP_CAPSULE_ID   = trimspace(var.app_capsule_id)
+    } : name => value if value != ""
+  }
+  extra_worker_env = merge(
+    { for name, value in var.env : name => value if trimspace(value) != "" },
+    local.provided_app_context,
+  )
+  actions_runner_secret = trimspace(var.actions_runner_secret)
+  actions_secrets_key   = trimspace(var.actions_secrets_key)
+  webhook_secret_key    = trimspace(var.webhook_secret_key)
   # Signing key actually available to the Worker: the dedicated secret, or the
   # browser-auth session secret that `webhookEncryptionKey()` falls back to.
   webhook_signing_ready = local.webhook_secret_key != "" || (local.browser_auth_ready && local.app_session_secret != "")
@@ -646,17 +670,24 @@ resource "cloudflare_workers_script" "worker" {
 
   lifecycle {
     precondition {
+      condition = alltrue([
+        for name, value in local.provided_app_context :
+        trimspace(lookup(var.env, name, "")) == "" || trimspace(lookup(var.env, name, "")) == value
+      ])
+      error_message = "Explicit app context IDs and legacy env context IDs must agree when both are supplied."
+    }
+    precondition {
       condition     = trimspace(var.takosumi_accounts_redirect_uri) == "" || var.takosumi_accounts_redirect_uri == "${trimsuffix(local.launch_url != null ? local.launch_url : "", "/")}/api/auth/callback"
       error_message = "The registered Accounts callback must match the canonical Git public URL."
     }
     precondition {
       condition     = local.accounts_issuer_url == "" || (local.app_workspace_id != "" && local.app_capsule_id != "")
-      error_message = "Interface OAuth requires env.APP_WORKSPACE_ID and env.APP_CAPSULE_ID whenever takosumi_accounts_issuer_url is configured."
+      error_message = "Interface OAuth requires app_workspace_id and app_capsule_id (or their legacy env.APP_WORKSPACE_ID and env.APP_CAPSULE_ID inputs) whenever takosumi_accounts_issuer_url is configured."
     }
 
     precondition {
       condition     = !local.browser_auth_requested || local.browser_auth_ready
-      error_message = "Browser auth requires takosumi_accounts_issuer_url, takosumi_accounts_client_id, app_session_secret, and env.APP_WORKSPACE_ID together."
+      error_message = "Browser auth requires takosumi_accounts_issuer_url, takosumi_accounts_client_id, app_session_secret, and app_workspace_id (or env.APP_WORKSPACE_ID) together."
     }
 
     precondition {
