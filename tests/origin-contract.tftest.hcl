@@ -72,3 +72,48 @@ run "rejects_issuer_userinfo" {
 
   expect_failures = [var.takosumi_accounts_issuer_url]
 }
+
+run "accepts_registered_callback_metadata" {
+  command = plan
+
+  variables {
+    public_url                     = "https://git.example/"
+    takosumi_accounts_url          = "https://accounts.example"
+    takosumi_accounts_redirect_uri = "https://git.example/api/auth/callback"
+  }
+
+  assert {
+    condition     = output.launch_url == "https://git.example"
+    error_message = "Public OIDC grant metadata must preserve the canonical app origin."
+  }
+}
+
+run "rejects_registered_callback_http" {
+  command = plan
+
+  variables {
+    takosumi_accounts_redirect_uri = "http://git.example/api/auth/callback"
+  }
+
+  expect_failures = [var.takosumi_accounts_redirect_uri]
+}
+
+run "rejects_registered_callback_path_drift" {
+  command = plan
+
+  variables {
+    takosumi_accounts_redirect_uri = "https://git.example/other"
+  }
+
+  expect_failures = [var.takosumi_accounts_redirect_uri]
+}
+
+run "rejects_registered_callback_query" {
+  command = plan
+
+  variables {
+    takosumi_accounts_redirect_uri = "https://git.example/api/auth/callback?extra=1"
+  }
+
+  expect_failures = [var.takosumi_accounts_redirect_uri]
+}
