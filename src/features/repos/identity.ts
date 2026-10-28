@@ -105,7 +105,7 @@ export async function resolveIdentity(
   }
 
   // 1. Browser OIDC session (carries the full human scope ceiling).
-  const session = await readBrowserSession(request, env);
+  const session = await readBrowserSession(request, env, ctx.interfaceUserInfoFetch);
   if (session) {
     const principal = await upsertPrincipal(db, {
       issuer: env.OIDC_ISSUER_URL ?? "",

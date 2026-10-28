@@ -4,7 +4,7 @@ English: [README.en.md](README.en.md)
 
 takos-git は、標準の `git clone` / `fetch` / `push` がそのまま使える、独立した
 collaborative Git hosting product です。R2 object store を Git data plane として使い、
-Workspace-bound な browser、hosting API、リポジトリ管理用 MCP server を公開します。
+アプリ単位の browser、hosting API、リポジトリ管理用 MCP server を公開します。
 
 実体は plain な OpenTofu module + ビルド済み Cloudflare Worker で、ほかの
 Capsule (Git URL から取り込む 1 つのアプリ/インフラ単位) と同じように Takosumi から
@@ -27,8 +27,9 @@ GitHub 的な共同作業機能へ広げる source-owner 境界と移行順は
   atomic な ref 差し替えを行い、通常ブランチの更新は fast-forward のみ受け付けます
 - 依存ライブラリなしの Streamable HTTP MCP endpoint を持ちます。ツールは
   `git_repo_list` / `git_repo_create` / `git_repo_info` / `git_repo_delete` のちょうど 4 つです
-- Takosumi Accounts の authorization-code + PKCE で browser session を作り、install 先
-  Workspace の membership を検証します
+- Takosumi Accounts の authorization-code + PKCE で browser session を作り、
+  どのアカウントでもログインできます。対象アプリの owner/member claims は管理シグナルとし、
+  repository の権限は Git 固有の ACL で判定します
 - `/api/v1` で repository list / overview / branch / commit / tree / blob を読み、`/` と `/ui`
   の browser console から確認できます
 

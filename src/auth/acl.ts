@@ -7,10 +7,9 @@
  * a single yes/no decision. Default is DENY: any path that cannot prove access
  * returns 401/403/404, never elevated access.
  *
- * It does NOT weaken the coarse gates that run before it: the browser
- * APP_WORKSPACE_ID membership check (`src/browser-auth.ts`) and the smart-HTTP
- * exact-scope check (`src/worker.ts`) still run first; per-repo ACL can only
- * NARROW an already-admitted principal.
+ * Browser OIDC identifies any account; app owner/member claims are management
+ * signals and do not grant repository roles. The smart-HTTP exact-scope check
+ * (`src/worker.ts`) still runs first; repository access is decided here.
  */
 
 import type { DbClient } from "../db/index.ts";
@@ -154,8 +153,7 @@ function visibilityFloor(
   kind: PrincipalKind,
 ): Role | null {
   if (visibility === "public") return "reader";
-  // internal → any authenticated workspace member (they passed the membership
-  // gate); never anonymous. private → no floor.
+  // internal → any authenticated account; never anonymous. private → no floor.
   if (visibility === "internal" && kind !== "anonymous") return "reader";
   return null;
 }

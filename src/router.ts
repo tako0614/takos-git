@@ -342,7 +342,7 @@ async function authenticate(
   }
 
   if (def.auth === "browser") {
-    const session = await readBrowserSession(request, env);
+    const session = await readBrowserSession(request, env, input.interfaceUserInfoFetch);
     if (!session) {
       return {
         ok: false,

@@ -33,7 +33,8 @@ a direct/self-host deploy.
 - A Takosumi Accounts **OIDC client** for this deployment: `client_id`, optional
   `client_secret` (confidential client), and the redirect URI
   `https://<public-host>/api/auth/callback` in its `redirectUris`.
-- The install-target **Workspace id** (`APP_WORKSPACE_ID`) — only its members can sign in.
+- The legacy install-target **Workspace id** (`APP_WORKSPACE_ID`) for Interface OAuth and session compatibility.
+  Any account can sign in; an exact `APP_CAPSULE_ID` match is required for app-scoped claims.
 - The install-target **Capsule id** (`APP_CAPSULE_ID`).
 - A random **`app_session_secret`** ≥ 32 chars (session cookie HMAC).
 - A random **`webhook_secret_key`** ≥ 32 chars — seals per-webhook secrets at rest and
@@ -163,7 +164,7 @@ next apply replaces the script's binding set and would drop an out-of-band secre
 
 - `GET /healthz` → 200.
 - `GET /` → the SPA home (repo list). `GET /icons/takos-git.svg` → the launcher tile.
-- Sign in via Takosumi Accounts (member of `APP_WORKSPACE_ID`) → avatar shows; a
+- Sign in via Takosumi Accounts (any account) → avatar shows; a
   non-member is rejected at `/api/auth/callback`.
 - Create a repo (SPA **New**, or `POST /api/v1/repos`, or MCP `git_repo_create`), then
   `git clone`/`push` with a short-lived Interface credential (username ignored, credential

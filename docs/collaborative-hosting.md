@@ -1,6 +1,6 @@
 # Takos Git collaborative hosting
 
-Takos Git は、単なる Git Smart HTTP endpoint ではなく、Workspace に install できる
+Takos Git は、単なる Git Smart HTTP endpoint ではなく、独立したアプリとして install できる
 standalone collaborative Git hosting product へ育てる。
 
 標準 Git protocol はそのまま data plane として使う。Takosumi 専用 Git protocol や
@@ -57,8 +57,14 @@ boundary として維持する。D1 はすでに利用できる metadata plane �
 
 認証経路を混ぜない。
 
-- Browser: Takosumi Accounts の authorization-code + PKCE。HttpOnly session cookie は
-  install 先 `APP_WORKSPACE_ID` の membership を必須にする。
+- Browser: Takosumi Accounts の authorization-code + PKCE。どのアカウントでもログインできる。
+  `takosumi.capsule_id` が `APP_CAPSULE_ID` と一致する `app_role: owner | member` のみを
+  アプリ管理シグナルとして `/api/auth/session` に返す。明示された不正な role や別アプリの claims は
+  互換 Workspace claims があっても拒否する。role のない利用者は通常の repository ACL に従う。
+  アプリ管理シグナルは repository の owner/maintainer 権限を付与しない。
+  新規セッションは access token を暗号化した HttpOnly cookie とし、毎回の session 読み取りで
+  Accounts UserInfo の subject・アプリ・現在の role を再検証する。失効・取得失敗時は認証を通さない。
+  旧 Workspace claims と署名済み Workspace session は互換として受け入れ、旧 cookie から管理権限は作らない。
 - Git CLI: `source.git.smart_http.read` / `source.git.smart_http.write` を持つ短命な
   Interface OAuth credential。
 - Hosting API automation: `source.git.hosting.read` から始め、write permission は
@@ -75,7 +81,7 @@ D1 が有効なとき、その認可済み Principal を repository ごとに ow
 ### M1: hosting shell
 
 - standard clone / fetch / push
-- Workspace-bound OIDC browser session
+- App-scoped OIDC browser session
 - authenticated repository list / overview
 - branch / recent commit / tree / blob read API
 - browser consoleから上記 read API を確認できる

@@ -3,7 +3,9 @@ import { describe, expect, test } from "bun:test";
 import {
   handleBrowserAuth,
   readBrowserSession,
+  browserAuthConfigured,
   type BrowserAuthEnv,
+  type OAuthFetch,
 } from "./browser-auth.ts";
 
 const ENV: BrowserAuthEnv = {
@@ -13,6 +15,7 @@ const ENV: BrowserAuthEnv = {
   OIDC_CLIENT_SECRET: "client-secret",
   APP_SESSION_SECRET: "session-secret-that-is-long-enough-for-tests",
   APP_WORKSPACE_ID: "workspace_a",
+  APP_CAPSULE_ID: "capsule_git",
 };
 
 function cookieValue(response: Response, name: string): string {
@@ -22,12 +25,12 @@ function cookieValue(response: Response, name: string): string {
   return match[1];
 }
 
-async function beginLogin(returnTo = "/repos") {
+async function beginLogin(returnTo = "/repos", env: BrowserAuthEnv = ENV) {
   const response = await handleBrowserAuth(
     new Request(
       `https://git.example/api/auth/login?return_to=${encodeURIComponent(returnTo)}`,
     ),
-    ENV,
+    env,
   );
   if (!response) throw new Error("login route was not handled");
   const location = new URL(response.headers.get("location") ?? "");
@@ -36,6 +39,42 @@ async function beginLogin(returnTo = "/repos") {
     state: location.searchParams.get("state") ?? "",
     stateCookie: cookieValue(response, "takos_git_oauth_state"),
   };
+}
+
+function sessionRequest(cookie: string): Request {
+  return new Request("https://git.example/api/auth/session", {
+    headers: { cookie: `takos_git_session=${cookie}` },
+  });
+}
+
+async function sessionInfo(cookie: string, fetchImpl: OAuthFetch, env: BrowserAuthEnv = ENV) {
+  const response = await handleBrowserAuth(sessionRequest(cookie), env, fetchImpl);
+  if (!response) throw new Error("session route was not handled");
+  return response.json();
+}
+
+async function completeLogin(claims: unknown, env: BrowserAuthEnv = ENV) {
+  const login = await beginLogin("/repos", env);
+  const fetchImpl: OAuthFetch = async (input) =>
+    new URL(input.toString()).pathname === "/oauth/token"
+      ? Response.json({ access_token: "oauth-access" })
+      : Response.json(claims);
+  const response = await handleBrowserAuth(new Request(
+    `https://git.example/api/auth/callback?code=code&state=${encodeURIComponent(login.state)}`,
+    { headers: { cookie: `takos_git_oauth_state=${login.stateCookie}` } },
+  ), env, fetchImpl);
+  if (!response) throw new Error("callback was not handled");
+  return { response, fetchImpl };
+}
+
+async function legacyCookie(session: unknown): Promise<string> {
+  const encode = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes))
+    .replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
+  const payload = encode(new TextEncoder().encode(JSON.stringify(session)));
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(ENV.APP_SESSION_SECRET),
+    { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`session.${payload}`));
+  return `${payload}.${encode(new Uint8Array(signature))}`;
 }
 
 describe("takos-git browser auth", () => {
@@ -56,7 +95,7 @@ describe("takos-git browser auth", () => {
     );
   });
 
-  test("exchanges the code and issues a Workspace-bound session", async () => {
+  test("exchanges the code and retains only the installed legacy Workspace", async () => {
     const login = await beginLogin();
     const fetchImpl = async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(input.toString());
@@ -104,6 +143,7 @@ describe("takos-git browser auth", () => {
         headers: { cookie: `takos_git_session=${sessionCookie}` },
       }),
       ENV,
+      fetchImpl,
     );
     expect(session).toMatchObject({
       subject: "principal_1",
@@ -113,32 +153,111 @@ describe("takos-git browser auth", () => {
     });
   });
 
-  test("rejects a user outside the installed Workspace", async () => {
-    const login = await beginLogin();
-    const response = await handleBrowserAuth(
-      new Request(
-        `https://git.example/api/auth/callback?code=code_1&state=${encodeURIComponent(login.state)}`,
-        {
-          headers: {
-            cookie: `takos_git_oauth_state=${login.stateCookie}`,
-          },
-        },
-      ),
-      ENV,
-      async (input) => {
-        const url = new URL(input.toString());
-        return url.pathname === "/oauth/token"
-          ? Response.json({ access_token: "oauth-access" })
-          : Response.json({
-              sub: "principal_other",
-              workspace_memberships: ["workspace_other"],
-            });
-      },
-    );
-    expect(response?.status).toBe(403);
-    expect(await response?.json()).toEqual({
-      error: "workspace_membership_required",
+  test("admits any account without Workspace membership or an app role", async () => {
+    const { response, fetchImpl } = await completeLogin({ sub: "ordinary_user" });
+    expect(response.status).toBe(302);
+    const cookie = cookieValue(response, "takos_git_session");
+    expect(await readBrowserSession(sessionRequest(cookie), ENV, fetchImpl)).toMatchObject({
+      subject: "ordinary_user", workspaceIds: [], appRole: null,
     });
+    expect(await sessionInfo(cookie, fetchImpl)).toMatchObject({
+      authenticated: true, capsuleId: "capsule_git", appRole: null, canManageApp: false,
+    });
+  });
+
+  test("supports Capsule-only configuration and the legacy Workspace configuration", () => {
+    expect(browserAuthConfigured({ ...ENV, APP_WORKSPACE_ID: undefined })).toBe(true);
+    expect(browserAuthConfigured({ ...ENV, APP_CAPSULE_ID: undefined })).toBe(true);
+    expect(browserAuthConfigured({ ...ENV, APP_WORKSPACE_ID: undefined, APP_CAPSULE_ID: undefined })).toBe(false);
+  });
+
+  for (const role of ["owner", "member"]) {
+    test(`reports current ${role} management access for the installed app`, async () => {
+      const env = { ...ENV, APP_WORKSPACE_ID: undefined };
+      const { response, fetchImpl } = await completeLogin({
+        sub: "app_manager", takosumi: { capsule_id: "capsule_git", app_role: role },
+      }, env);
+      expect(response.status).toBe(302);
+      const cookie = cookieValue(response, "takos_git_session");
+      expect(cookie.startsWith("v2.")).toBe(true);
+      expect(cookie).not.toContain("oauth-access");
+      expect(await sessionInfo(cookie, fetchImpl, env)).toMatchObject({
+        authenticated: true, appRole: role, canManageApp: true,
+      });
+    });
+  }
+
+  test("a matching capsule without a role remains an ordinary user", async () => {
+    const { response, fetchImpl } = await completeLogin({
+      sub: "ordinary_user", takosumi: { capsule_id: "capsule_git" },
+    });
+    expect(response.status).toBe(302);
+    expect(await sessionInfo(cookieValue(response, "takos_git_session"), fetchImpl)).toMatchObject({
+      authenticated: true, appRole: null, canManageApp: false,
+    });
+  });
+
+  for (const appClaims of [
+    { capsule_id: "foreign_capsule", app_role: "owner" },
+    { capsule_id: "foreign_capsule" },
+    { app_role: "owner" },
+    { capsule_id: "capsule_git", app_role: "admin" },
+    { capsule_id: "capsule_git", app_role: "" },
+    { capsule_id: "capsule_git", app_role: null },
+    { capsule_id: "capsule_git", app_role: {} },
+  ]) {
+    test(`rejects foreign or malformed app claims despite legacy membership: ${JSON.stringify(appClaims)}`, async () => {
+      const { response } = await completeLogin({
+        sub: "legacy_member", workspace_memberships: ["workspace_a"],
+        takosumi: { workspace_id: "workspace_a", role: "owner", ...appClaims },
+      });
+      expect(response.status).toBe(403);
+      expect(await response.json()).toEqual({ error: "invalid_userinfo" });
+    });
+  }
+
+  test("revalidates role removal, foreign capsule, subject change and revocation on session reads", async () => {
+    let claims: Record<string, unknown> = {
+      sub: "manager", takosumi: { capsule_id: "capsule_git", app_role: "owner" },
+    };
+    const { response } = await completeLogin(claims);
+    const cookie = cookieValue(response, "takos_git_session");
+    const live: OAuthFetch = async () => Response.json(claims);
+    expect(await sessionInfo(cookie, live)).toMatchObject({ canManageApp: true });
+    claims = { sub: "manager", takosumi: { capsule_id: "capsule_git" } };
+    expect(await sessionInfo(cookie, live)).toMatchObject({ authenticated: true, appRole: null, canManageApp: false });
+    claims = { sub: "manager", workspace_memberships: ["workspace_a"], takosumi: { capsule_id: "foreign", app_role: "owner" } };
+    expect(await sessionInfo(cookie, live)).toMatchObject({ authenticated: false });
+    claims = { sub: "other", takosumi: { capsule_id: "capsule_git", app_role: "owner" } };
+    expect(await sessionInfo(cookie, live)).toMatchObject({ authenticated: false });
+    expect(await sessionInfo(cookie, async () => new Response(null, { status: 401 }))).toMatchObject({ authenticated: false });
+    expect(await sessionInfo(cookie, async () => { throw new Error("unavailable"); })).toMatchObject({ authenticated: false });
+  });
+
+  test("encrypted sessions cannot be replayed across app, issuer or client context", async () => {
+    const { response, fetchImpl } = await completeLogin({ sub: "ordinary" });
+    const cookie = cookieValue(response, "takos_git_session");
+    for (const context of [
+      { APP_CAPSULE_ID: "other_capsule" },
+      { OIDC_CLIENT_ID: "other_client" },
+      { OIDC_ISSUER_URL: "https://other-accounts.example" },
+    ]) {
+      expect(await readBrowserSession(sessionRequest(cookie), { ...ENV, ...context }, fetchImpl)).toBeNull();
+    }
+    const tampered = `${cookie.slice(0, 10)}${cookie[10] === "a" ? "b" : "a"}${cookie.slice(11)}`;
+    expect(await readBrowserSession(sessionRequest(tampered), ENV, fetchImpl)).toBeNull();
+  });
+
+  test("legacy signed Workspace sessions retain ordinary access without management authority", async () => {
+    const cookie = await legacyCookie({
+      subject: "legacy", name: null, email: null, workspaceIds: ["workspace_a"],
+      expiresAt: Math.floor(Date.now() / 1000) + 60,
+      appRole: "owner",
+    });
+    expect(await sessionInfo(cookie, async () => { throw new Error("legacy has no token"); })).toMatchObject({
+      authenticated: true, appRole: null, canManageApp: false,
+    });
+    expect(await readBrowserSession(sessionRequest(cookie), { ...ENV, APP_WORKSPACE_ID: "other" })).toBeNull();
   });
 
   test("does not accept an OAuth state cookie as a session cookie", async () => {

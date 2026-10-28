@@ -78,8 +78,8 @@ type OwnerCreateOutcome =
 /**
  * Authorize creating a repo under `ownerLogin`. An existing user owner requires
  * the caller BE that principal; an existing org requires org-admin; an unclaimed
- * login is claimed as the caller's personal owner (first-use, bounded by the
- * install Workspace membership gate).
+ * login is claimed as the authenticated caller's personal owner on first use.
+ * App management roles never grant ownership of an existing namespace.
  */
 async function authorizeOwnerForCreate(
   db: DbClient,

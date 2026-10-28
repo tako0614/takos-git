@@ -4,7 +4,7 @@
 
 A standalone, installable **collaborative Git hosting product**. It serves
 standard `git clone`, `fetch`, and `push` from an R2 object store and publishes
-a Workspace-bound browser, hosting API, and repository-management MCP server.
+an app-scoped browser, hosting API, and repository-management MCP server.
 It is a plain OpenTofu module + prebuilt Cloudflare Worker, installed through
 Takosumi like any other Capsule.
 
@@ -26,8 +26,9 @@ and migration toward GitHub-like collaboration are defined in
   per-request ref replacement, and fast-forward-only normal branch updates.
 - A dependency-free Streamable HTTP MCP endpoint with exactly four tools:
   `git_repo_list`, `git_repo_create`, `git_repo_info`, and `git_repo_delete`.
-- A Takosumi Accounts authorization-code + PKCE browser session that requires
-  membership in the installed Workspace.
+- A Takosumi Accounts authorization-code + PKCE browser session for any account.
+  Exact-app owner/member claims signal app management access; repository roles
+  remain governed by Git's own ACLs.
 - An authenticated `/api/v1` read API for repositories, branches, recent
   commits, trees, and blobs, exposed through the browser console at `/` and
   `/ui`.

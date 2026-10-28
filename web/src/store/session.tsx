@@ -17,6 +17,7 @@ interface SessionContextValue {
   readonly state: () => SessionState | undefined;
   readonly loading: () => boolean;
   readonly authenticated: () => boolean;
+  readonly canManageApp: () => boolean;
   /** false only when OIDC is unconfigured on the worker. */
   readonly configured: () => boolean;
   readonly user: () => SessionUser | null;
@@ -35,6 +36,10 @@ export const SessionProvider: ParentComponent = (props) => {
     state: () => state.latest,
     loading: () => state.loading,
     authenticated: () => state.latest?.authenticated === true,
+    canManageApp: () => {
+      const s = state.latest;
+      return s?.authenticated === true && s.canManageApp;
+    },
     configured: () => {
       const s = state.latest;
       return !s || s.authenticated || s.configured;
