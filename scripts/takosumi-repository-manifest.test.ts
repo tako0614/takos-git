@@ -57,6 +57,23 @@ test("default portable install declares Git and agent MCP Interfaces", () => {
   ]);
 });
 
+test("advertised direct module delivers the complete public OIDC grant", () => {
+  const module = manifest.install.modules["."]!;
+  const oidc = module.requires?.find((entry) => entry.kind === "identity.oidc");
+  expect(oidc?.deliver.variables).toEqual({
+    accountsUrl: "takosumi_accounts_url",
+    issuerUrl: "takosumi_accounts_issuer_url",
+    clientId: "takosumi_accounts_client_id",
+    redirectUri: "takosumi_accounts_redirect_uri",
+  });
+  expect(oidc?.callbackPath).toBe("/api/auth/callback");
+  expect(new Set(Object.values(oidc?.deliver.variables ?? {})).size).toBe(4);
+  const endpoint = module.requires?.find((entry) =>
+    entry.kind === "http.endpoint"
+  );
+  expect(endpoint?.deliver.variables?.url).toBe("public_url");
+});
+
 test("declared modules reference real variables and no secret or host authority", () => {
   for (const [path, module] of Object.entries(manifest.install.modules)) {
     const source = moduleSources[path];
@@ -101,6 +118,11 @@ function variableBlock(source: string, name: string): string {
 
 function referencedVariables(module: RepositoryModule): Set<string> {
   const names = new Set(module.inputs.map((input) => input.name));
+  for (const requirement of module.requires ?? []) {
+    for (const name of Object.values(requirement.deliver.variables ?? {})) {
+      names.add(name);
+    }
+  }
   for (const projection of module.installExperience?.projections ?? []) {
     if (projection.variable) names.add(projection.variable);
     for (const value of Object.values(projection.variables ?? {})) {
@@ -120,6 +142,11 @@ interface RepositoryManifest {
 }
 
 interface RepositoryModule {
+  requires?: Array<{
+    kind: string;
+    callbackPath?: string;
+    deliver: { variables?: Record<string, string> };
+  }>;
   inputs: Array<{
     name: string;
     source: { kind: string };

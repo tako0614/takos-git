@@ -72,6 +72,24 @@ variable "public_url" {
   }
 }
 
+# Public metadata from the installer's reviewed four-slot OIDC grant.
+variable "takosumi_accounts_url" {
+  description = "Accounts URL allocated by the installer."
+  type        = string
+  default     = ""
+}
+
+variable "takosumi_accounts_redirect_uri" {
+  description = "Registered browser callback for the canonical public URL."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = trimspace(var.takosumi_accounts_redirect_uri) == "" || can(regex("^https://[^/?#@]+/api/auth/callback$", var.takosumi_accounts_redirect_uri))
+    error_message = "takosumi_accounts_redirect_uri must be empty or the registered HTTPS /api/auth/callback URI."
+  }
+}
+
 variable "takosumi_accounts_issuer_url" {
   description = "Bare HTTPS Takosumi Accounts issuer origin (an optional trailing slash is removed) used for browser sign-in and Interface OAuth UserInfo validation."
   type        = string
@@ -627,6 +645,10 @@ resource "cloudflare_workers_script" "worker" {
   )
 
   lifecycle {
+    precondition {
+      condition     = trimspace(var.takosumi_accounts_redirect_uri) == "" || var.takosumi_accounts_redirect_uri == "${trimsuffix(local.launch_url != null ? local.launch_url : "", "/")}/api/auth/callback"
+      error_message = "The registered Accounts callback must match the canonical Git public URL."
+    }
     precondition {
       condition     = local.accounts_issuer_url == "" || (local.app_workspace_id != "" && local.app_capsule_id != "")
       error_message = "Interface OAuth requires env.APP_WORKSPACE_ID and env.APP_CAPSULE_ID whenever takosumi_accounts_issuer_url is configured."

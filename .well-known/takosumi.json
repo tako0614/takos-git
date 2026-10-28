@@ -111,6 +111,32 @@
               "en": "Worker SHA-256"
             },
             "advanced": true
+          },
+          {
+            "name": "takosumi_accounts_url",
+            "source": {
+              "kind": "module_default"
+            },
+            "type": "string",
+            "format": "url",
+            "label": {
+              "ja": "Takosumi Accounts URL",
+              "en": "Takosumi Accounts URL"
+            },
+            "advanced": true
+          },
+          {
+            "name": "takosumi_accounts_redirect_uri",
+            "source": {
+              "kind": "module_default"
+            },
+            "type": "string",
+            "format": "url",
+            "label": {
+              "ja": "Registered callback URI",
+              "en": "Registered callback URI"
+            },
+            "advanced": true
           }
         ],
         "requires": [
@@ -133,8 +159,10 @@
             ],
             "deliver": {
               "variables": {
+                "accountsUrl": "takosumi_accounts_url",
                 "issuerUrl": "takosumi_accounts_issuer_url",
-                "clientId": "takosumi_accounts_client_id"
+                "clientId": "takosumi_accounts_client_id",
+                "redirectUri": "takosumi_accounts_redirect_uri"
               }
             }
           }
