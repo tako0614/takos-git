@@ -138,6 +138,13 @@ confidential client なら `takosumi_accounts_client_secret` も secret input �
 direct module は `env.APP_WORKSPACE_ID` / `env.APP_CAPSULE_ID` も明示します。secret は repo や
 Output に書きません。
 
+Takosumiでdirect Cloudflare module (`.`) を選ぶ場合は、任意の高度な設定にある
+「Cloudflareリソースを作成」と「Gitを起動」を有効にしてからPlanを確認します。
+HCLの既定値はどちらも `false` のままで、変更しない場合はWorkerを配置しません。
+作成資源0件のPlan成功を、Gitが稼働した証明として扱わないでください。
+これらの設定は、上記の正当なWorkspace / Capsule contextやprivateなruntime秘密値の
+供給を代替しません。portable moduleやActionsの設定は変更しません。
+
 ### 削除と後片付け
 
 リポジトリ削除 API は即座に namespace を tombstone 化し、ref と Actions pin を隠して

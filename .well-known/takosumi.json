@@ -158,6 +158,40 @@
               "ja": "現在のアプリ",
               "en": "Current app"
             }
+          },
+          {
+            "name": "enable_cloudflare_resources",
+            "source": {
+              "kind": "user"
+            },
+            "type": "boolean",
+            "required": false,
+            "label": {
+              "ja": "Cloudflareリソースを作成",
+              "en": "Create Cloudflare resources"
+            },
+            "helper": {
+              "ja": "Cloudflareへ配置するときは、この設定と「Gitを起動」を有効にします。適用前に作成内容を確認できます。",
+              "en": "Enable this and Deploy Git for a Cloudflare deployment. Review the resource plan before applying."
+            },
+            "advanced": true
+          },
+          {
+            "name": "enable_cloudflare_worker_script",
+            "source": {
+              "kind": "user"
+            },
+            "type": "boolean",
+            "required": false,
+            "label": {
+              "ja": "Gitを起動",
+              "en": "Deploy Git"
+            },
+            "helper": {
+              "ja": "GitのWorkerを配置します。「Cloudflareリソースを作成」も有効にしてください。",
+              "en": "Deploy the Git Worker. Also enable Create Cloudflare resources."
+            },
+            "advanced": true
           }
         ],
         "requires": [
