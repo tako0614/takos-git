@@ -1,5 +1,14 @@
 # Plan-only synthetic provider fixtures; no Host, credentials or network calls.
-mock_provider "takoform" {}
+mock_provider "takoform" {
+  # Computed names must follow the provider's portable Resource name grammar
+  # before downstream references can be validated in a plan-only test.
+  mock_resource "takoform_worker_bundle" {
+    defaults = { name = "fixture-worker-bundle" }
+  }
+  mock_resource "takoform_worker_version" {
+    defaults = { name = "fixture-worker-version" }
+  }
+}
 
 variables {
   takosumi_accounts_issuer_url = "https://accounts.example.test"
