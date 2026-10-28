@@ -82,8 +82,12 @@ URL は選べても integrity の根拠にはなりません。digest は releas
 
 [`install-options.json`](install-options.json) は、導入元を選ぶ任意の
 `CapsuleSourceOptions` 文書です。[`.well-known/takosumi.json`](.well-known/takosumi.json)
-は別の一般 `Repository` manifest で、`deploy/takoform` を既定 module とし、root の
-direct module も同じ Git commit から選択可能にします。
+は別の一般 `Repository` manifest です。Source options は Cloudflare の root (`.`) を
+明示的に選び、portable な `deploy/takoform` も同じ Git commit から選択できます。
+v2.5 manifest は旧 `defaultModule` hint を持ちません。direct module の
+`app_workspace_id` と `app_capsule_id` は現在のインストールから得る非編集のデータ入力として
+宣言し、Takosumi の対応consumerが現在の Workspace／アプリIDを既存の string 変数へ配送します。
+利用者がIDを入力したり、manifest が権限や認証情報を生成したりする契約ではありません。
 どちらも provider credential、secret、Cloudflare account、Interface grant、
 実行権限を持ちません。Takosumi は検証後に DB-owned InstallConfig へ compile し、
 通常の Plan / Apply を行います。

@@ -24,10 +24,11 @@ test("Takos Git publishes a closed Repository manifest", () => {
     "install",
     "kind",
   ]);
-  expect(manifest.apiVersion).toBe("takosumi.com/v2.3");
+  expect(manifest.apiVersion).toBe("takosumi.com/v2.5");
   expect(manifest.kind).toBe("Repository");
-  expect(Object.keys(manifest.install)).toEqual(["defaultModule", "modules"]);
-  expect(manifest.install.defaultModule).toBe("deploy/takoform");
+  expect(Object.keys(manifest.install)).toEqual(["modules"]);
+  expect(manifest.install.defaultModule).toBeUndefined();
+  expect(options.options.some((option) => option.source.path === ".")).toBe(true);
   expect(Object.keys(manifest.install.modules)).toEqual([
     ".",
     "deploy/takoform",
@@ -37,7 +38,31 @@ test("Takos Git publishes a closed Repository manifest", () => {
   }
 });
 
-test("default portable install declares Git and agent MCP Interfaces", () => {
+test("root context IDs use noneditable data declarations for the current install", () => {
+  const module = manifest.install.modules["."]!;
+  const contextInputs = module.inputs.filter((input) =>
+    input.source.kind === "workspace_id" || input.source.kind === "capsule_id"
+  );
+  expect(contextInputs.map((input) => [input.name, input.source.kind, input.type]))
+    .toEqual([
+      ["app_workspace_id", "workspace_id", "string"],
+      ["app_capsule_id", "capsule_id", "string"],
+    ]);
+  for (const input of contextInputs) {
+    expect(Object.keys(input).sort()).toEqual(["label", "name", "source", "type"]);
+    expect(Object.keys(input.source)).toEqual(["kind"]);
+    expect(variableBlock(moduleSources["."]!, input.name)).toMatch(
+      /\n\s+type\s+=\s+string\b/,
+    );
+    expect(module.inputs.filter((entry) => entry.source.kind === "user")
+      .map((entry) => entry.name)).not.toContain(input.name);
+  }
+  expect(manifest.install.modules["deploy/takoform"]!.inputs.filter((input) =>
+    input.source.kind === "workspace_id" || input.source.kind === "capsule_id"
+  )).toEqual([]);
+});
+
+test("portable install declares Git and agent MCP Interfaces", () => {
   const interfaces =
     manifest.install.modules["deploy/takoform"]?.interfaces ?? [];
   expect(interfaces.map((entry) => entry.spec.type)).toEqual([
@@ -136,7 +161,7 @@ interface RepositoryManifest {
   apiVersion: string;
   kind: string;
   install: {
-    defaultModule: string;
+    defaultModule?: string;
     modules: Record<string, RepositoryModule>;
   };
 }
@@ -150,6 +175,7 @@ interface RepositoryModule {
   inputs: Array<{
     name: string;
     source: { kind: string };
+    type?: string;
     secret?: boolean;
   }>;
   installExperience?: {
