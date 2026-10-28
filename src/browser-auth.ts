@@ -470,6 +470,10 @@ async function fetchUserInfo(
     return null;
   const workspaceIds = normalizeWorkspaceIds(claims.workspace_memberships);
   const takosumi = claims.takosumi;
+  if (takosumi !== undefined &&
+    (!takosumi || typeof takosumi !== "object" || Array.isArray(takosumi))) {
+    return null;
+  }
   let capsuleId: string | null = null;
   let appRole: AppRole | null = null;
   if (takosumi && typeof takosumi === "object" && !Array.isArray(takosumi)) {

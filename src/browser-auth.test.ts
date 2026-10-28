@@ -216,6 +216,15 @@ describe("takos-git browser auth", () => {
     });
   }
 
+  for (const takosumi of [null, false, "malformed", []]) {
+    test(`rejects malformed app claim envelope ${JSON.stringify(takosumi)}`, async () => {
+      const { response } = await completeLogin({
+        sub: "legacy_member", workspace_memberships: ["workspace_a"], takosumi,
+      });
+      expect(response.status).toBe(403);
+    });
+  }
+
   test("revalidates role removal, foreign capsule, subject change and revocation on session reads", async () => {
     let claims: Record<string, unknown> = {
       sub: "manager", takosumi: { capsule_id: "capsule_git", app_role: "owner" },

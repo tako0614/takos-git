@@ -22,6 +22,7 @@ describe("app sign-in preserves repository ACLs", () => {
       };
       await seedFullRepo(handle, { ownerLogin: "acme", name: "secret", visibility: "private" });
       await seedFullRepo(handle, { ownerLogin: "acme", name: "public", visibility: "public" });
+      await seedFullRepo(handle, { ownerLogin: "acme", name: "internal", visibility: "internal" });
       const fetchImpl: OAuthFetch = async (input) =>
         new URL(input.toString()).pathname === "/oauth/token"
           ? Response.json({ access_token: "oauth-access" })
@@ -54,6 +55,8 @@ describe("app sign-in preserves repository ACLs", () => {
       };
       expect((await dispatch("GET", "/api/v1/repos/acme/secret")).status).toBe(404);
       expect((await dispatch("GET", "/api/v1/repos/acme/public")).status).toBe(200);
+      // Internal keeps its existing any-authenticated-account visibility rule.
+      expect((await dispatch("GET", "/api/v1/repos/acme/internal")).status).toBe(200);
       expect((await dispatch("PATCH", "/api/v1/repos/acme/public", { description: "forbidden" })).status).toBe(403);
       expect((await dispatch("POST", "/api/v1/repos", { owner: "personal", name: "own", visibility: "private" })).status).toBe(201);
       expect((await dispatch("PATCH", "/api/v1/repos/personal/own", { description: "allowed" })).status).toBe(200);

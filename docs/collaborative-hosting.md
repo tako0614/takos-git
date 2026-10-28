@@ -62,6 +62,8 @@ boundary として維持する。D1 はすでに利用できる metadata plane �
   アプリ管理シグナルとして `/api/auth/session` に返す。明示された不正な role や別アプリの claims は
   互換 Workspace claims があっても拒否する。role のない利用者は通常の repository ACL に従う。
   アプリ管理シグナルは repository の owner/maintainer 権限を付与しない。
+  `internal` repository は既存の「認証済みアカウントは read 可」というルールを維持するため、
+  Workspace 外の利用者も読める。特定の利用者に限定する repository は `private` と明示的 ACL を使う。
   新規セッションは access token を暗号化した HttpOnly cookie とし、毎回の session 読み取りで
   Accounts UserInfo の subject・アプリ・現在の role を再検証する。失効・取得失敗時は認証を通さない。
   旧 Workspace claims と署名済み Workspace session は互換として受け入れ、旧 cookie から管理権限は作らない。
