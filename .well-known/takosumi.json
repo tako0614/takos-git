@@ -363,6 +363,28 @@
               "en": "Takosumi Accounts client"
             },
             "advanced": true
+          },
+          {
+            "name": "app_workspace_id",
+            "source": {
+              "kind": "workspace_id"
+            },
+            "type": "string",
+            "label": {
+              "ja": "互換Workspace",
+              "en": "Compatibility Workspace"
+            }
+          },
+          {
+            "name": "app_capsule_id",
+            "source": {
+              "kind": "capsule_id"
+            },
+            "type": "string",
+            "label": {
+              "ja": "現在のアプリ",
+              "en": "Current app"
+            }
           }
         ],
         "requires": [

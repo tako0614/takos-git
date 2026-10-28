@@ -127,7 +127,7 @@ export function hasValidInterfaceOAuthConfiguration(input: {
     userInfoEndpoint(input.issuerUrl) !== null &&
     canonicalResourceUri(input.audience ?? "") !== null &&
     (input.workspaceId === undefined || boundedId(input.workspaceId)) &&
-    (input.capsuleId === undefined || boundedId(input.capsuleId))
+    boundedId(input.capsuleId)
   );
 }
 
@@ -189,8 +189,9 @@ export type InterfaceCredential =
  *
  * Accounts revalidates the opaque token against current Core state before
  * UserInfo returns it active. The Capsule independently checks the exact
- * resource URI, permission, owning Workspace/Capsule, subject, and complete
- * InterfaceBinding evidence shape. It does not pin Interface ids or revisions
+ * resource URI, permission, independently configured owning Capsule, subject, and complete
+ * InterfaceBinding evidence shape. Optional Workspace evidence remains compatible
+ * and is checked against legacy configuration when supplied. It does not pin Interface ids or revisions
  * into static deployment configuration.
  */
 export async function verifyInterfaceOAuthCredential(
@@ -208,7 +209,7 @@ export async function verifyInterfaceOAuthCredential(
     !expectedAudience ||
     (options.expectedWorkspaceId !== undefined &&
       !boundedId(expectedWorkspaceId)) ||
-    (options.expectedCapsuleId !== undefined && !boundedId(expectedCapsuleId)) ||
+    !boundedId(expectedCapsuleId) ||
     !validPermission(expectedPermission) ||
     !requestTargetsResource(request, expectedAudience) ||
     !token.startsWith(INTERFACE_TOKEN_PREFIX) ||
@@ -239,12 +240,12 @@ export async function verifyInterfaceOAuthCredential(
       boundedId(claims.sub) &&
       claims.aud === expectedAudience &&
       claims.scope === expectedPermission &&
-      boundedId(evidence.workspace_id) &&
+      (evidence.workspace_id === undefined ||
+        (boundedId(evidence.workspace_id) &&
+          (expectedWorkspaceId === undefined ||
+            evidence.workspace_id === expectedWorkspaceId))) &&
       boundedId(evidence.capsule_id) &&
-      (expectedWorkspaceId === undefined ||
-        evidence.workspace_id === expectedWorkspaceId) &&
-      (expectedCapsuleId === undefined ||
-        evidence.capsule_id === expectedCapsuleId) &&
+      evidence.capsule_id === expectedCapsuleId &&
       boundedId(evidence.interface_id) &&
       boundedId(evidence.interface_binding_id) &&
       Number.isSafeInteger(evidence.interface_resolved_revision) &&

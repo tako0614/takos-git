@@ -33,9 +33,9 @@ a direct/self-host deploy.
 - A Takosumi Accounts **OIDC client** for this deployment: `client_id`, optional
   `client_secret` (confidential client), and the redirect URI
   `https://<public-host>/api/auth/callback` in its `redirectUris`.
-- The legacy install-target **Workspace id** (`APP_WORKSPACE_ID`) for Interface OAuth and session compatibility.
+- The optional legacy install-target **Workspace id** (`APP_WORKSPACE_ID`) for session and Interface compatibility.
   Any account can sign in; an exact `APP_CAPSULE_ID` match is required for app-scoped claims.
-- The install-target **Capsule id** (`APP_CAPSULE_ID`).
+- The install-target **Capsule id** (`APP_CAPSULE_ID`), required for Interface OAuth; an audience or returned claim never supplies the expected id.
 - A random **`app_session_secret`** ≥ 32 chars (session cookie HMAC).
 - A random **`webhook_secret_key`** ≥ 32 chars — seals per-webhook secrets at rest and
   signs every outbound delivery. Required whenever `enable_metadata=true`, including an

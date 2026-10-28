@@ -59,12 +59,14 @@ URIs. Their
 declarations list the permissions above, and InterfaceBindings grant only the
 needed permissions. Accounts revalidates current Core Interface/Binding state
 before UserInfo reports the token active. The Worker then verifies exact
-audience, scope, Workspace, Capsule, subject, and complete Interface/Binding
+audience, scope, configured Capsule, subject, and complete Interface/Binding
 evidence shape. Interface ids and resolved revisions are not static module
 inputs or Worker env, avoiding a first-apply dependency on Interfaces that
-materialize only after apply. The portable Worker validates the non-empty
-Workspace and Capsule identities in live evidence without copying those
-control-plane ids into the Resource graph. Declarations and credentials do not
+materialize only after apply. Both modules receive the noneditable install-context
+`app_capsule_id` and bind `APP_CAPSULE_ID` for an exact match against live evidence.
+Workspace context is optional compatibility data: a supplied claim must be valid
+and match legacy configuration when present. Machine capabilities require no
+human app_role. Declarations and credentials do not
 enter Outputs.
 
 An explicitly supplied `PUBLISHED_MCP_AUTH_TOKEN` is retained only as
@@ -86,7 +88,8 @@ enable browser sign-in through the direct/self-host module, provide
 `takosumi_accounts_client_id`, and an `app_session_secret` of at least 32
 characters together. Confidential clients also receive
 `takosumi_accounts_client_secret` as a secret input. The direct module also
-receives `env.APP_WORKSPACE_ID` and `env.APP_CAPSULE_ID`; secrets do not enter
+receives `app_capsule_id` and optional compatibility `app_workspace_id` (legacy
+`env.APP_CAPSULE_ID` / `env.APP_WORKSPACE_ID` remain accepted); secrets do not enter
 the repository or Outputs.
 
 ## Develop

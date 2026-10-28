@@ -52,3 +52,17 @@ absence of repository permission escalation. Related router/ACL tests and worker
 and web TypeScript checks run locally. Full `bun run check` runs in CI, per the
 coordinator's explicit local-validation limit. This ledger does not authorize a
 production mutation.
+
+# Workspace-less Interface follow-up
+
+Both direct and portable modules now project the expected app_capsule_id without
+requiring a Workspace. The v2.5 portable manifest declares noneditable install
+context inputs too. Interface OAuth requires independently configured Capsule
+identity, exact audience/scope and complete Interface/Binding/revision evidence.
+Workspace claims are optional even when compatibility configuration remains;
+when supplied, they must be bounded and match configured legacy identity. No
+human app_role is required for a machine capability. Missing expected Capsule
+fails closed. Direct and portable mock-provider plan tests plus Smart HTTP,
+hosting API and MCP route tests cover Capsule-only mode and foreign-Capsule
+rejection. The new verifier tests were RED (3 failures) before the fix; direct
+OpenTofu Capsule-only browser setup also reproduced the two old precondition failures.

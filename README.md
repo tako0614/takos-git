@@ -115,11 +115,12 @@ Takosumi-managed な Git/MCP 呼び出しは、通常の `api_url` / `mcp_url` O
 resource URI に明示 mapping した repository-owned Interface 宣言と、Takosumi が所有する
 InterfaceBinding を使います。Interface は上記
 permission を明示します。Accounts は UserInfo が token を active と返す前に current Core の
-Interface / Binding state を再検証し、Worker は audience、scope、Workspace、Capsule、subject と
+Interface / Binding state を再検証し、Worker は audience、scope、設定済み Capsule、subject と
 完全な Interface / Binding evidence shape を検証し、不備があれば安全側に停止します。Interface id / resolved revision
 は static module input や Worker env にせず、apply 後に生成される Interface を初回 apply 前に
-要求する循環を作りません。portable Worker は live evidence に含まれる non-empty Workspace / Capsule
-identity を検証し、Resource graph へそれらの control-plane id を複製しません。宣言・credential は
+要求する循環を作りません。両 module は install context の `app_capsule_id` を
+`APP_CAPSULE_ID` へ配送し、live evidence の Capsule と完全一致させます。Workspace は任意の互換 context で、
+claim があるときだけ形式と設定済みの ID との一致を検証します。machine credential に人間の app_role は要求しません。宣言・credential は
 Output に入れません。
 
 `PUBLISHED_MCP_AUTH_TOKEN` は直接/self-host deployment 用の standalone MCP bearer としてだけ残し、
@@ -136,7 +137,8 @@ portable 版は launcher / hosting API をまだ宣言しません。browser sig
 direct/self-host module の場合は `takosumi_accounts_issuer_url`、
 `takosumi_accounts_client_id`、32 文字以上の `app_session_secret` を一緒に渡します。
 confidential client なら `takosumi_accounts_client_secret` も secret input として渡します。
-direct module は `env.APP_WORKSPACE_ID` / `env.APP_CAPSULE_ID` も明示します。secret は repo や
+両 module は `app_capsule_id` を明示し、`app_workspace_id` は互換用の任意入力です。direct module は
+旧 `env.APP_CAPSULE_ID` / `env.APP_WORKSPACE_ID` も受け付けます。secret は repo や
 Output に書きません。
 
 Takosumiでdirect Cloudflare module (`.`) を選ぶ場合は、任意の高度な設定にある

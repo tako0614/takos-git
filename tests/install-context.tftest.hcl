@@ -125,3 +125,44 @@ run "missing_browser_secret_still_refused" {
   }
   expect_failures = [cloudflare_workers_script.worker]
 }
+
+run "capsule_only_browser_context" {
+  command = plan
+  variables {
+    app_capsule_id = "capsule-fixture"
+  }
+  assert {
+    condition = alltrue([
+      for name, value in {
+        APP_CAPSULE_ID = var.app_capsule_id
+        OIDC_CLIENT_ID = var.takosumi_accounts_client_id
+        } : length([
+          for binding in cloudflare_workers_script.worker[0].bindings : binding
+          if binding.name == name && binding.text == value
+      ]) == 1
+      ]) && length([
+      for binding in cloudflare_workers_script.worker[0].bindings : binding
+      if binding.name == "APP_WORKSPACE_ID"
+    ]) == 0
+    error_message = "Browser OIDC must receive the Capsule context and client without a Workspace binding."
+  }
+}
+
+run "capsule_only_interface_context" {
+  command = plan
+  variables {
+    app_capsule_id              = "capsule-fixture"
+    takosumi_accounts_client_id = ""
+    app_session_secret          = ""
+  }
+  assert {
+    condition = length([
+      for binding in cloudflare_workers_script.worker[0].bindings : binding
+      if binding.name == "APP_CAPSULE_ID" && binding.text == var.app_capsule_id
+      ]) == 1 && length([
+      for binding in cloudflare_workers_script.worker[0].bindings : binding
+      if binding.name == "OIDC_ISSUER_URL" && binding.text == var.takosumi_accounts_issuer_url
+    ]) == 1
+    error_message = "Machine Interface OAuth needs the issuer and expected Capsule, without a Workspace or browser session."
+  }
+}

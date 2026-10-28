@@ -38,28 +38,27 @@ test("Takos Git publishes a closed Repository manifest", () => {
   }
 });
 
-test("root context IDs use noneditable data declarations for the current install", () => {
-  const module = manifest.install.modules["."]!;
-  const contextInputs = module.inputs.filter((input) =>
-    input.source.kind === "workspace_id" || input.source.kind === "capsule_id"
-  );
-  expect(contextInputs.map((input) => [input.name, input.source.kind, input.type]))
-    .toEqual([
-      ["app_workspace_id", "workspace_id", "string"],
-      ["app_capsule_id", "capsule_id", "string"],
-    ]);
-  for (const input of contextInputs) {
-    expect(Object.keys(input).sort()).toEqual(["label", "name", "source", "type"]);
-    expect(Object.keys(input.source)).toEqual(["kind"]);
-    expect(variableBlock(moduleSources["."]!, input.name)).toMatch(
-      /\n\s+type\s+=\s+string\b/,
+test("both module paths declare noneditable current app context data", () => {
+  for (const path of [".", "deploy/takoform"]) {
+    const module = manifest.install.modules[path]!;
+    const contextInputs = module.inputs.filter((input) =>
+      input.source.kind === "workspace_id" || input.source.kind === "capsule_id"
     );
-    expect(module.inputs.filter((entry) => entry.source.kind === "user")
-      .map((entry) => entry.name)).not.toContain(input.name);
+    expect(contextInputs.map((input) => [input.name, input.source.kind, input.type]))
+      .toEqual([
+        ["app_workspace_id", "workspace_id", "string"],
+        ["app_capsule_id", "capsule_id", "string"],
+      ]);
+    for (const input of contextInputs) {
+      expect(Object.keys(input).sort()).toEqual(["label", "name", "source", "type"]);
+      expect(Object.keys(input.source)).toEqual(["kind"]);
+      expect(variableBlock(moduleSources[path]!, input.name)).toMatch(
+        /\n\s+type\s+=\s+string\b/,
+      );
+      expect(module.inputs.filter((entry) => entry.source.kind === "user")
+        .map((entry) => entry.name)).not.toContain(input.name);
+    }
   }
-  expect(manifest.install.modules["deploy/takoform"]!.inputs.filter((input) =>
-    input.source.kind === "workspace_id" || input.source.kind === "capsule_id"
-  )).toEqual([]);
 });
 
 test("portable install declares Git and agent MCP Interfaces", () => {
