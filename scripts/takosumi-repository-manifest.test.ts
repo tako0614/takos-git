@@ -74,6 +74,27 @@ test("advertised direct module delivers the complete public OIDC grant", () => {
   expect(endpoint?.deliver.variables?.url).toBe("public_url");
 });
 
+test("direct Cloudflare deployment exposes its existing opt-ins without enabling them by default", () => {
+  const module = manifest.install.modules["."]!;
+  for (const name of [
+    "enable_cloudflare_resources",
+    "enable_cloudflare_worker_script",
+  ]) {
+    const input = module.inputs.find((entry) => entry.name === name);
+    expect(input?.source.kind).toBe("user");
+    expect(input?.type).toBe("boolean");
+    expect(input?.advanced).toBe(true);
+    expect(input?.required).toBe(false);
+    expect(variableBlock(moduleSources["."]!, name)).toMatch(
+      /\n\s+type\s+=\s+bool(?:\s|$)/,
+    );
+    expect(variableBlock(moduleSources["."]!, name)).toMatch(
+      /\n\s+default\s+=\s+false(?:\s|$)/,
+    );
+    expect(manifest.install.modules["deploy/takoform"]!.inputs.some((entry) => entry.name === name)).toBe(false);
+  }
+});
+
 test("declared modules reference real variables and no secret or host authority", () => {
   for (const [path, module] of Object.entries(manifest.install.modules)) {
     const source = moduleSources[path];
@@ -96,8 +117,6 @@ test("declared modules reference real variables and no secret or host authority"
   }
   for (const forbidden of [
     "cloudflare_account_id",
-    "enable_cloudflare_resources",
-    "enable_cloudflare_worker_script",
     "app_session_secret",
     "webhook_secret_key",
     "published_mcp_auth_token",
@@ -151,6 +170,9 @@ interface RepositoryModule {
     name: string;
     source: { kind: string };
     secret?: boolean;
+    type?: string;
+    advanced?: boolean;
+    required?: boolean;
   }>;
   installExperience?: {
     projections: Array<{
