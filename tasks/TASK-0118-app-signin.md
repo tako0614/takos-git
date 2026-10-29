@@ -77,8 +77,10 @@ Capsule evidence is present but the install has not received `APP_CAPSULE_ID`.
 Configured Capsule/Workspace mismatches and malformed explicit roles fail closed.
 With an exact configured Capsule and no app_role, fallback requires a matching
 nested Workspace plus original membership or a validated legacy role.
-Legacy owner/admin/member signals map to owner/member; legacy viewer membership
-retains the old internal/create eligibility without a management-role signal.
+Legacy Workspace owner/admin/member roles map to app member; they do not prove
+Capsule ownership. Only explicit matching `app_role: owner` supplies the app
+owner signal. Legacy viewer membership retains the old internal/create
+eligibility without a management-role signal.
 Existing signed Workspace cookies retain only their previous membership floor
 until expiry. New cookies revalidate role and membership through live UserInfo.
 
@@ -90,8 +92,16 @@ fork-network filtering. Direct and portable plans permit Workspace-only context
 until the v2.5 install-context mapping is adopted.
 
 Accounts access tokens currently last 300 seconds while app cookies can last
-12 hours. On a rejected session, the server clears the cookie and returns
-`session_expired`; the SPA starts OAuth login with the current return path. No
+12 hours. An Accounts 401 clears the cookie and returns `session_expired`; an
+Accounts 5xx or transport failure returns 503 and preserves it. The SPA starts
+OAuth login after the 401 with the current return path. No
 provider refresh-token contract, live sign-in, deployment, database or provider
 mutation is introduced. Fifteen RED focused regressions preceded these fixes;
 focused tests, static gates and the full CI check verify the final revision.
+
+# Follow-up rollout order
+
+Deploy the updated consuming apps first. Apply the Takosumi Accounts open-sign-in
+writer B change from PR #657 last. Self-host installs that have not received the
+app update must keep their configured `APP_WORKSPACE_ID` membership requirement
+until they update.

@@ -35,6 +35,12 @@ export interface BrowserSession {
   readonly expiresAt: number;
 }
 
+export type BrowserSessionReadResult =
+  | { readonly kind: "session"; readonly session: BrowserSession }
+  | { readonly kind: "invalid" }
+  | { readonly kind: "accounts_unauthorized" }
+  | { readonly kind: "accounts_unavailable" };
+
 interface OAuthState {
   readonly state: string;
   readonly codeVerifier: string;
@@ -51,6 +57,12 @@ interface UserInfo {
   readonly appRole: AppRole | null;
   readonly legacyWorkspaceMember: boolean;
 }
+
+type UserInfoReadResult =
+  | { readonly kind: "user"; readonly user: UserInfo }
+  | { readonly kind: "invalid" }
+  | { readonly kind: "unauthorized" }
+  | { readonly kind: "unavailable" };
 
 interface StoredSession {
   readonly subject: string;
@@ -469,26 +481,32 @@ async function fetchUserInfo(
   env: BrowserAuthEnv,
   accessToken: string,
   fetchImpl: OAuthFetch,
-): Promise<UserInfo | null> {
+): Promise<UserInfoReadResult> {
   const issuer = issuerBase(env.OIDC_ISSUER_URL);
-  if (!issuer) return null;
-  const response = await fetchImpl(endpoint(issuer, "/oauth/userinfo"), {
-    method: "GET",
-    headers: {
-      accept: "application/json",
-      authorization: `Bearer ${accessToken}`,
-    },
-    redirect: "manual",
-  });
-  if (response.status !== 200) return null;
+  if (!issuer) return { kind: "invalid" };
+  let response: Response;
+  try {
+    response = await fetchImpl(endpoint(issuer, "/oauth/userinfo"), {
+      method: "GET",
+      headers: {
+        accept: "application/json",
+        authorization: `Bearer ${accessToken}`,
+      },
+      redirect: "manual",
+    });
+  } catch {
+    return { kind: "unavailable" };
+  }
+  if (response.status === 401) return { kind: "unauthorized" };
+  if (response.status !== 200) return { kind: "unavailable" };
   const payload = await readBoundedJson(response);
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-    return null;
+    return { kind: "invalid" };
   }
   const claims = payload as Record<string, unknown>;
   const subject = typeof claims.sub === "string" ? claims.sub.trim() : "";
   if (subject === "" || subject.length > 512 || /\s/u.test(subject))
-    return null;
+    return { kind: "invalid" };
   const workspaceIds = normalizeWorkspaceIds(claims.workspace_memberships);
   const originalWorkspaceIds = new Set(workspaceIds);
   const takosumi = claims.takosumi;
@@ -496,7 +514,7 @@ async function fetchUserInfo(
     takosumi !== undefined &&
     (!takosumi || typeof takosumi !== "object" || Array.isArray(takosumi))
   ) {
-    return null;
+    return { kind: "invalid" };
   }
   let capsuleId: string | null = null;
   let appRole: AppRole | null = null;
@@ -512,15 +530,15 @@ async function fetchUserInfo(
         !boundedClaimId(appClaims.capsule_id) ||
         (expectedCapsuleId && appClaims.capsule_id !== expectedCapsuleId)
       )
-        return null;
+        return { kind: "invalid" };
       // Older installs have only a Workspace binding. A returned Capsule is
       // evidence, never a substitute for independently configured identity.
       capsuleId = expectedCapsuleId;
     }
     if ("app_role" in appClaims) {
       if (appClaims.app_role !== "owner" && appClaims.app_role !== "member")
-        return null;
-      if (!boundedClaimId(appClaims.capsule_id)) return null;
+        return { kind: "invalid" };
+      if (!boundedClaimId(appClaims.capsule_id)) return { kind: "invalid" };
       if (expectedCapsuleId) appRole = appClaims.app_role;
     }
     if ("workspace_id" in appClaims) {
@@ -528,7 +546,7 @@ async function fetchUserInfo(
         !boundedClaimId(appClaims.workspace_id) ||
         (expectedWorkspaceId && appClaims.workspace_id !== expectedWorkspaceId)
       )
-        return null;
+        return { kind: "invalid" };
       if (
         !workspaceIds.includes(appClaims.workspace_id) &&
         workspaceIds.length < MAX_WORKSPACE_MEMBERSHIPS
@@ -542,7 +560,7 @@ async function fetchUserInfo(
           appClaims.role as string,
         )
       )
-        return null;
+        return { kind: "invalid" };
       // Current Accounts emits this Workspace role, not app_role. Only use it
       // under the installed Workspace; viewer keeps the old membership floor.
       if (
@@ -550,12 +568,9 @@ async function fetchUserInfo(
         appClaims.workspace_id === expectedWorkspaceId &&
         !("app_role" in appClaims)
       ) {
-        appRole =
-          appClaims.role === "owner" || appClaims.role === "admin"
-            ? "owner"
-            : appClaims.role === "member"
-              ? "member"
-              : null;
+        // Legacy Workspace roles do not identify Capsule ownership. The
+        // current Accounts UserInfo contract has no ownerUserId claim.
+        appRole = appClaims.role === "viewer" ? null : "member";
       }
     }
     legacyWorkspaceMember =
@@ -571,28 +586,31 @@ async function fetchUserInfo(
     }
   }
   return {
-    subject,
-    name: optionalProfileField(claims.name),
-    email: optionalProfileField(claims.email),
-    workspaceIds,
-    capsuleId,
-    appRole,
-    legacyWorkspaceMember,
+    kind: "user",
+    user: {
+      subject,
+      name: optionalProfileField(claims.name),
+      email: optionalProfileField(claims.email),
+      workspaceIds,
+      capsuleId,
+      appRole,
+      legacyWorkspaceMember,
+    },
   };
 }
 
-export async function readBrowserSession(
+export async function readBrowserSessionResult(
   request: Request,
   env: BrowserAuthEnv,
   fetchImpl: OAuthFetch = fetch,
-): Promise<BrowserSession | null> {
+): Promise<BrowserSessionReadResult> {
   const sessionSecret = configuredValue(env.APP_SESSION_SECRET);
   const expectedWorkspaceId = configuredValue(env.APP_WORKSPACE_ID);
   const expectedCapsuleId = configuredValue(env.APP_CAPSULE_ID);
   if (!sessionSecret || (!expectedWorkspaceId && !expectedCapsuleId))
-    return null;
+    return { kind: "invalid" };
   const raw = parseCookie(request.headers.get("cookie"), SESSION_COOKIE);
-  if (!raw || raw.length > MAX_COOKIE_VALUE_BYTES) return null;
+  if (!raw || raw.length > MAX_COOKIE_VALUE_BYTES) return { kind: "invalid" };
   const modern = raw.startsWith("v2.");
   const session = modern
     ? await openSession(raw, env)
@@ -606,7 +624,7 @@ export async function readBrowserSession(
     session.expiresAt <= now ||
     !Array.isArray(session.workspaceIds)
   )
-    return null;
+    return { kind: "invalid" };
 
   if (!modern) {
     // Pre-migration cookies prove only their former Workspace admission. They
@@ -615,38 +633,60 @@ export async function readBrowserSession(
       !expectedWorkspaceId ||
       !session.workspaceIds.includes(expectedWorkspaceId)
     ) {
-      return null;
+      return { kind: "invalid" };
     }
     return {
-      ...session,
-      capsuleId: null,
-      appRole: null,
-      legacyWorkspaceMember: true,
+      kind: "session",
+      session: {
+        ...session,
+        capsuleId: null,
+        appRole: null,
+        legacyWorkspaceMember: true,
+      },
     };
   }
 
   if (typeof session.accessToken !== "string" || !session.accessToken)
-    return null;
+    return { kind: "invalid" };
   try {
-    const user = await fetchUserInfo(env, session.accessToken, fetchImpl);
-    if (!user || user.subject !== session.subject) return null;
+    const userInfo = await fetchUserInfo(env, session.accessToken, fetchImpl);
+    if (userInfo.kind === "unauthorized")
+      return { kind: "accounts_unauthorized" };
+    if (userInfo.kind === "unavailable")
+      return { kind: "accounts_unavailable" };
+    if (userInfo.kind !== "user" || userInfo.user.subject !== session.subject)
+      return { kind: "invalid" };
+    const user = userInfo.user;
     return {
-      ...user,
-      capsuleId: expectedCapsuleId,
-      workspaceIds:
-        expectedWorkspaceId && user.workspaceIds.includes(expectedWorkspaceId)
-          ? [expectedWorkspaceId]
-          : [],
-      expiresAt: session.expiresAt,
+      kind: "session",
+      session: {
+        ...user,
+        capsuleId: expectedCapsuleId,
+        workspaceIds:
+          expectedWorkspaceId && user.workspaceIds.includes(expectedWorkspaceId)
+            ? [expectedWorkspaceId]
+            : [],
+        expiresAt: session.expiresAt,
+      },
     };
   } catch {
-    return null;
+    return { kind: "accounts_unavailable" };
   }
+}
+
+export async function readBrowserSession(
+  request: Request,
+  env: BrowserAuthEnv,
+  fetchImpl: OAuthFetch = fetch,
+): Promise<BrowserSession | null> {
+  const result = await readBrowserSessionResult(request, env, fetchImpl);
+  return result.kind === "session" ? result.session : null;
 }
 
 /** An invalid presented cookie must not silently become an anonymous request. */
 export function expiredBrowserSessionResponse(
   request: Request,
+  clear = false,
 ): Response | null {
   if (!parseCookie(request.headers.get("cookie"), SESSION_COOKIE)) return null;
   return json(
@@ -655,7 +695,20 @@ export function expiredBrowserSessionResponse(
       error: { code: "session_expired", message: "Sign in again to continue." },
     },
     401,
-    { "set-cookie": clearCookie(request, SESSION_COOKIE) },
+    clear ? { "set-cookie": clearCookie(request, SESSION_COOKIE) } : undefined,
+  );
+}
+
+export function unavailableBrowserSessionResponse(
+  request: Request,
+): Response | null {
+  if (!parseCookie(request.headers.get("cookie"), SESSION_COOKIE)) return null;
+  return json(
+    {
+      error: "accounts_unavailable",
+      message: "Accounts could not verify this session.",
+    },
+    503,
   );
 }
 
@@ -685,9 +738,15 @@ export async function handleBrowserAuth(
   if (!url.pathname.startsWith("/api/auth/")) return null;
 
   if (request.method === "GET" && url.pathname === "/api/auth/session") {
-    const session = await readBrowserSession(request, env, fetchImpl);
+    const sessionResult = await readBrowserSessionResult(request, env, fetchImpl);
+    const session = sessionResult.kind === "session" ? sessionResult.session : null;
     if (!session) {
-      const expired = expiredBrowserSessionResponse(request);
+      if (sessionResult.kind === "accounts_unavailable")
+        return unavailableBrowserSessionResponse(request);
+      const expired = expiredBrowserSessionResponse(
+        request,
+        sessionResult.kind === "accounts_unauthorized",
+      );
       if (expired) return expired;
     }
     return json(
@@ -780,10 +839,16 @@ export async function handleBrowserAuth(
       state.codeVerifier,
       fetchImpl,
     );
-    const user = accessToken
+    const userInfo = accessToken
       ? await fetchUserInfo(env, accessToken, fetchImpl)
       : null;
     const expectedWorkspaceId = configuredValue(env.APP_WORKSPACE_ID);
+    if (userInfo?.kind === "unavailable") {
+      return json({ error: "accounts_unavailable" }, 503, {
+        "set-cookie": clearCookie(request, STATE_COOKIE),
+      });
+    }
+    const user = userInfo?.kind === "user" ? userInfo.user : null;
     if (!user) {
       return json({ error: "invalid_userinfo" }, 403, {
         "set-cookie": clearCookie(request, STATE_COOKIE),

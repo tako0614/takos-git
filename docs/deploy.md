@@ -178,7 +178,9 @@ next apply replaces the script's binding set and would drop an out-of-band secre
 - Let the current 300-second access token expire, then read the browser session or
   call a hosting route: UserInfo 401 clears the app cookie and the SPA returns to
   OAuth login with the current path. The 12-hour cookie limit does not extend the
-  token lifetime; no refresh-token contract is assumed.
+  token lifetime; no refresh-token contract is assumed. Accounts 5xx or network
+  failures return 503 and preserve the cookie so a temporary outage does not
+  sign the user out.
 - Open an issue + PR, request review, merge (respecting branch protection).
 - Actions end-to-end execution is currently blocked: the Worker bundle still lacks
   `@cloudflare/containers` and the `[[containers]]` attachment is not applied, so
