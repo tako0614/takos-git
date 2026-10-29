@@ -2,11 +2,14 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { pathToFileURL } from "node:url";
 
 const roots: string[] = [];
 
+type FixtureFiles = Readonly<Record<string, string | Uint8Array>>;
+
 async function fixture(
-  files: Readonly<Record<string, string>>,
+  files: FixtureFiles,
 ): Promise<{ webDist: string; outDir: string }> {
   const root = await mkdtemp(join(tmpdir(), "takos-git-worker-build-"));
   roots.push(root);
@@ -21,7 +24,7 @@ async function fixture(
   return { webDist, outDir };
 }
 
-async function build(files: Readonly<Record<string, string>>) {
+async function build(files: FixtureFiles) {
   const { webDist, outDir } = await fixture(files);
   const child = Bun.spawn(
     [process.execPath, "run", "scripts/build-worker.ts"],
@@ -96,5 +99,50 @@ describe("Worker artifact build contract", () => {
     for (const asset of manifest.assets) {
       expect(asset.sha256).toMatch(/^[a-f0-9]{64}$/);
     }
+  }, 30_000);
+
+  test("serves the web app manifest and PNG icons anonymously from the built Worker", async () => {
+    const icon = new Uint8Array(
+      await Bun.file(
+        new URL("../web/public/icons/icon-192.png", import.meta.url),
+      ).arrayBuffer(),
+    );
+    const webManifest = await Bun.file(
+      new URL("../web/public/manifest.webmanifest", import.meta.url),
+    ).text();
+    const result = await build({
+      "index.html":
+        '<!doctype html><html><head><link rel="manifest" href="/manifest.webmanifest" /></head><body><script type="module" src="/assets/app.js"></script></body></html>',
+      "assets/app.js": "export {};",
+      "manifest.webmanifest": webManifest,
+      "icons/icon-192.png": icon,
+    });
+    expect(result.exitCode).toBe(0);
+    const built = await import(
+      `${pathToFileURL(join(result.outDir, "worker.js")).href}?manifest-probe=${Date.now()}`
+    );
+    const listener = built.default as {
+      fetch(request: Request, env: unknown): Promise<Response>;
+    };
+
+    // No cookie, no token: browsers fetch these without credentials, so the
+    // SPA fallback must not swallow them and no auth gate may sit in front.
+    const manifestResponse = await listener.fetch(
+      new Request("https://takos-git.invalid/manifest.webmanifest"),
+      {},
+    );
+    expect(manifestResponse.status).toBe(200);
+    expect(manifestResponse.headers.get("content-type")).toStartWith(
+      "application/manifest+json",
+    );
+    expect(await manifestResponse.json()).toEqual(JSON.parse(webManifest));
+
+    const iconResponse = await listener.fetch(
+      new Request("https://takos-git.invalid/icons/icon-192.png"),
+      {},
+    );
+    expect(iconResponse.status).toBe(200);
+    expect(iconResponse.headers.get("content-type")).toBe("image/png");
+    expect(new Uint8Array(await iconResponse.arrayBuffer())).toEqual(icon);
   }, 30_000);
 });
