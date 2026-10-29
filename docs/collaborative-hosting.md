@@ -58,15 +58,24 @@ boundary として維持する。D1 はすでに利用できる metadata plane �
 認証経路を混ぜない。
 
 - Browser: Takosumi Accounts の authorization-code + PKCE。どのアカウントでもログインできる。
-  `takosumi.capsule_id` が `APP_CAPSULE_ID` と一致する `app_role: owner | member` のみを
-  アプリ管理シグナルとして `/api/auth/session` に返す。明示された不正な role や別アプリの claims は
-  互換 Workspace claims があっても拒否する。role のない利用者は通常の repository ACL に従う。
-  アプリ管理シグナルは repository の owner/maintainer 権限を付与しない。
-  `internal` repository は既存の「認証済みアカウントは read 可」というルールを維持するため、
-  Workspace 外の利用者も読める。特定の利用者に限定する repository は `private` と明示的 ACL を使う。
+  設定済み `APP_CAPSULE_ID` と完全一致する `takosumi.capsule_id` の `app_role: owner | member` を受け付ける。
+  現在の Accounts は `app_role` をまだ返さず、`workspace_memberships` と
+  `takosumi: { capsule_id, workspace_id, role }` を返すため、設定済み `APP_WORKSPACE_ID` に一致する
+  参加証明を互換として維持する。設定済み Capsule に一致し `app_role` がない場合は、nested
+  `workspace_id` の完全一致と元の `workspace_memberships` または有効な Workspace role の両方を要求する。Workspace の `owner/admin` は owner、`member` は member の
+  管理シグナルとし、`viewer` も従来の Workspace 参加者として internal 閲覧・作成の資格を維持する。
+  明示された不正な role、設定済み Capsule または Workspace との実際の不一致は互換 claims があっても拒否する。
+  `APP_CAPSULE_ID` が未配送の旧 install は、claim に Capsule が含まれていても Workspace の互換経路を使う。
+  claim 自体から期待する Capsule を設定しない。
+  `internal` repository の閲覧と repo/fork/org 作成は、アプリ owner/member または旧 Workspace 参加者に限る。
+  public の匿名閲覧は維持し、private とその他の操作は namespace・collaborator・team の明示的 ACL で判定する。
+  アプリ管理シグナルは他人の repository の owner/maintainer 権限を付与しない。
   新規セッションは access token を暗号化した HttpOnly cookie とし、毎回の session 読み取りで
-  Accounts UserInfo の subject・アプリ・現在の role を再検証する。失効・取得失敗時は認証を通さない。
-  旧 Workspace claims と署名済み Workspace session は互換として受け入れ、旧 cookie から管理権限は作らない。
+  Accounts UserInfo の subject・アプリ・現在の role/参加状態を再検証する。権限を principal DB に保存しない。
+  cookie の最大寿命は12時間だが Accounts access token は現在300秒で失効する。
+  UserInfo が401になると cookie を消去し、SPA は現在のパスを return_to として OAuth login に進む。
+  refresh token 契約は導入しておらず、失効後は Accounts のセッションで再認証する。
+  無効な cookie を匿名へ降格させない。旧署名済み Workspace cookie は期限まで従来の参加資格を保持し、管理ロールは作らない。
 - Git CLI: `source.git.smart_http.read` / `source.git.smart_http.write` を持つ短命な
   Interface OAuth credential。
 - Hosting API automation: `source.git.hosting.read` から始め、write permission は

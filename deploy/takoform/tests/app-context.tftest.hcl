@@ -41,11 +41,17 @@ run "legacy_workspace_context" {
   }
 }
 
-run "missing_expected_capsule_refused" {
+run "legacy_workspace_without_capsule" {
   command = plan
   variables {
     app_capsule_id   = ""
     app_workspace_id = "workspace-fixture"
   }
-  expect_failures = [takoform_worker_version.worker]
+  assert {
+    condition = jsondecode(takoform_worker_version.worker.vars_json) == {
+      OIDC_ISSUER_URL  = var.takosumi_accounts_issuer_url
+      APP_WORKSPACE_ID = var.app_workspace_id
+    }
+    error_message = "Legacy Workspace-only installs must remain plannable until v2.5 context mapping is adopted."
+  }
 }

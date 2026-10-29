@@ -187,6 +187,110 @@ describe("takos-git browser auth", () => {
     });
   }
 
+  for (const capsuleConfigured of [true, false]) {
+    for (const role of ["owner", "admin", "member", "viewer"]) {
+      test(`current Accounts ${role} claims work with capsule configured=${capsuleConfigured}`, async () => {
+        const env = {
+          ...ENV,
+          APP_CAPSULE_ID: capsuleConfigured ? ENV.APP_CAPSULE_ID : undefined,
+        };
+        const { response, fetchImpl } = await completeLogin(
+          {
+            sub: "current_account",
+            workspace_memberships: ["workspace_a"],
+            takosumi: {
+              capsule_id: "capsule_git",
+              workspace_id: "workspace_a",
+              role,
+            },
+          },
+          env,
+        );
+        expect(response.status).toBe(302);
+        expect(
+          await sessionInfo(
+            cookieValue(response, "takos_git_session"),
+            fetchImpl,
+            env,
+          ),
+        ).toMatchObject({
+          authenticated: true,
+          appRole:
+            role === "viewer" ? null : role === "member" ? "member" : "owner",
+          canManageApp: role !== "viewer",
+        });
+      });
+    }
+  }
+
+  for (const role of [null, "", "manager", {}, 1]) {
+    test(`malformed legacy role cannot grant app membership: ${JSON.stringify(role)}`, async () => {
+      const { response } = await completeLogin({
+        sub: "legacy",
+        workspace_memberships: ["workspace_a"],
+        takosumi: {
+          capsule_id: "capsule_git",
+          workspace_id: "workspace_a",
+          role,
+        },
+      });
+      expect(response.status).toBe(403);
+    });
+  }
+
+  for (const claims of [
+    { sub: "flat_only", workspace_memberships: ["workspace_a"], takosumi: { capsule_id: "capsule_git" } },
+    { sub: "nested_only", takosumi: { capsule_id: "capsule_git", workspace_id: "workspace_a" } },
+  ]) {
+    test(`Capsule fallback needs nested Workspace plus original membership or role: ${claims.sub}`, async () => {
+      const { response, fetchImpl } = await completeLogin(claims);
+      expect(response.status).toBe(302);
+      expect(await readBrowserSession(sessionRequest(cookieValue(response, "takos_git_session")), ENV, fetchImpl)).toMatchObject({
+        appRole: null, legacyWorkspaceMember: false,
+      });
+    });
+  }
+
+  test("Capsule fallback accepts valid current role and preserves claim-absent legacy admission", async () => {
+    for (const claims of [
+      { sub: "role_only", takosumi: { capsule_id: "capsule_git", workspace_id: "workspace_a", role: "viewer" } },
+      { sub: "legacy_flat", workspace_memberships: ["workspace_a"] },
+      { sub: "legacy_nested", takosumi: { workspace_id: "workspace_a" } },
+    ]) {
+      const { response, fetchImpl } = await completeLogin(claims);
+      expect(response.status).toBe(302);
+      expect(await readBrowserSession(sessionRequest(cookieValue(response, "takos_git_session")), ENV, fetchImpl)).toMatchObject({ legacyWorkspaceMember: true });
+    }
+  });
+
+  test("foreign Workspace context fails closed even with matching memberships", async () => {
+    const { response } = await completeLogin({
+      sub: "legacy",
+      workspace_memberships: ["workspace_a"],
+      takosumi: {
+        capsule_id: "capsule_git",
+        workspace_id: "other",
+        role: "owner",
+      },
+    });
+    expect(response.status).toBe(403);
+  });
+
+  test("UserInfo token expiry clears the cookie and asks the browser to sign in again", async () => {
+    const { response } = await completeLogin({ sub: "expires" });
+    const expired = await handleBrowserAuth(
+      sessionRequest(cookieValue(response, "takos_git_session")),
+      ENV,
+      async () => new Response(null, { status: 401 }),
+    );
+    expect(expired?.status).toBe(401);
+    expect(expired?.headers.get("set-cookie")).toContain("takos_git_session=;");
+    expect(await expired?.json()).toMatchObject({
+      authenticated: false,
+      error: { code: "session_expired" },
+    });
+  });
+
   test("a matching capsule without a role remains an ordinary user", async () => {
     const { response, fetchImpl } = await completeLogin({
       sub: "ordinary_user", takosumi: { capsule_id: "capsule_git" },
@@ -266,6 +370,7 @@ describe("takos-git browser auth", () => {
     expect(await sessionInfo(cookie, async () => { throw new Error("legacy has no token"); })).toMatchObject({
       authenticated: true, appRole: null, canManageApp: false,
     });
+    expect((await readBrowserSession(sessionRequest(cookie), ENV))?.legacyWorkspaceMember).toBe(true);
     expect(await readBrowserSession(sessionRequest(cookie), { ...ENV, APP_WORKSPACE_ID: "other" })).toBeNull();
   });
 

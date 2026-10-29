@@ -680,14 +680,10 @@ resource "cloudflare_workers_script" "worker" {
       condition     = trimspace(var.takosumi_accounts_redirect_uri) == "" || var.takosumi_accounts_redirect_uri == "${trimsuffix(local.launch_url != null ? local.launch_url : "", "/")}/api/auth/callback"
       error_message = "The registered Accounts callback must match the canonical Git public URL."
     }
-    precondition {
-      condition     = local.accounts_issuer_url == "" || local.app_capsule_id != ""
-      error_message = "Interface OAuth requires app_capsule_id (or env.APP_CAPSULE_ID) whenever takosumi_accounts_issuer_url is configured; app_workspace_id is optional compatibility context."
-    }
 
     precondition {
       condition     = !local.browser_auth_requested || local.browser_auth_ready
-      error_message = "Browser auth requires takosumi_accounts_issuer_url, takosumi_accounts_client_id, app_session_secret, and app_capsule_id (or env.APP_CAPSULE_ID) together."
+      error_message = "Browser auth requires takosumi_accounts_issuer_url, takosumi_accounts_client_id, app_session_secret, and either app_capsule_id or legacy app_workspace_id together."
     }
 
     precondition {

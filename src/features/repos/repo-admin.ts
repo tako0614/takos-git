@@ -6,6 +6,7 @@
 
 import {
   SCOPES,
+  hasAppMembership,
   roleAtLeast,
   type AuthContext,
   type Visibility,
@@ -126,6 +127,9 @@ const createRepoHandler: Route["handler"] = async (ctx) => {
   if (identity.channel === "anonymous") {
     return errorResponse(401, "unauthenticated", "Sign-in required.");
   }
+  if (!hasAppMembership(identity.principal)) {
+    return errorResponse(403, "app_membership_required", "App membership required to create repositories or organizations.");
+  }
   const csrf = csrfGuard(ctx, identity);
   if (csrf) return csrf;
 
@@ -233,6 +237,9 @@ const createOrgHandler: Route["handler"] = async (ctx) => {
   if (identity instanceof Response) return identity;
   if (identity.channel === "anonymous") {
     return errorResponse(401, "unauthenticated", "Sign-in required.");
+  }
+  if (!hasAppMembership(identity.principal)) {
+    return errorResponse(403, "app_membership_required", "App membership required to create repositories or organizations.");
   }
   const csrf = csrfGuard(ctx, identity);
   if (csrf) return csrf;

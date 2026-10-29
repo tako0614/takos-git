@@ -45,6 +45,29 @@ describe("Interface app context across invocation channels", () => {
       expect(missingResponse.status).toBe(503);
       evidence.workspace_id = "workspace_a";
       expect((await invoke("workspace_a")).status).toBe(200);
+      // Pre-v2.5 installs independently pin Workspace identity while Accounts
+      // still supplies complete Capsule/InterfaceBinding evidence.
+      const legacyEnv = { ...handle.env, APP_CAPSULE_ID: undefined };
+      const legacyResponse = await worker.fetch(
+        new Request(`https://git.example${channel.path}`, {
+          method: channel.name === "MCP" ? "POST" : "GET",
+          headers: {
+            authorization: "Bearer taksrv_machine",
+            "content-type": "application/json",
+          },
+          ...(channel.name === "MCP"
+            ? {
+                body: JSON.stringify({
+                  jsonrpc: "2.0",
+                  id: 1,
+                  method: "tools/list",
+                }),
+              }
+            : {}),
+        }),
+        legacyEnv,
+      );
+      expect(legacyResponse.status).toBe(200);
       evidence.capsule_id = "foreign_capsule";
       expect((await invoke("workspace_a")).status).toBe(401);
       evidence.capsule_id = "capsule_git";

@@ -58,11 +58,40 @@ production mutation.
 Both direct and portable modules now project the expected app_capsule_id without
 requiring a Workspace. The v2.5 portable manifest declares noneditable install
 context inputs too. Interface OAuth requires independently configured Capsule
-identity, exact audience/scope and complete Interface/Binding/revision evidence.
+identity (or exact legacy Workspace identity), exact audience/scope and complete Interface/Binding/revision evidence.
 Workspace claims are optional even when compatibility configuration remains;
 when supplied, they must be bounded and match configured legacy identity. No
-human app_role is required for a machine capability. Missing expected Capsule
+human app_role is required for a machine capability. Missing both expected Capsule and legacy Workspace
 fails closed. Direct and portable mock-provider plan tests plus Smart HTTP,
 hosting API and MCP route tests cover Capsule-only mode and foreign-Capsule
 rejection. The new verifier tests were RED (3 failures) before the fix; direct
 OpenTofu Capsule-only browser setup also reproduced the two old precondition failures.
+
+
+# Current Accounts compatibility and browser eligibility follow-up
+
+Current Accounts emits `workspace_memberships` and nested `capsule_id`,
+`workspace_id`, `role` (`owner/admin/member/viewer`), without `app_role`.
+A matching configured Workspace retains its previous membership floor even when
+Capsule evidence is present but the install has not received `APP_CAPSULE_ID`.
+Configured Capsule/Workspace mismatches and malformed explicit roles fail closed.
+With an exact configured Capsule and no app_role, fallback requires a matching
+nested Workspace plus original membership or a validated legacy role.
+Legacy owner/admin/member signals map to owner/member; legacy viewer membership
+retains the old internal/create eligibility without a management-role signal.
+Existing signed Workspace cookies retain only their previous membership floor
+until expiry. New cookies revalidate role and membership through live UserInfo.
+
+Internal reads and repository/fork/org creation now require app owner/member or
+compatible Workspace membership. Public/private explicit ACL semantics and exact
+scoped machine capabilities remain intact. Runtime evidence is threaded through
+principals without persisted role columns, covering listings, code reads and
+fork-network filtering. Direct and portable plans permit Workspace-only context
+until the v2.5 install-context mapping is adopted.
+
+Accounts access tokens currently last 300 seconds while app cookies can last
+12 hours. On a rejected session, the server clears the cookie and returns
+`session_expired`; the SPA starts OAuth login with the current return path. No
+provider refresh-token contract, live sign-in, deployment, database or provider
+mutation is introduced. Fifteen RED focused regressions preceded these fixes;
+focused tests, static gates and the full CI check verify the final revision.

@@ -50,7 +50,7 @@ variable "app_workspace_id" {
 }
 
 variable "app_capsule_id" {
-  description = "Expected app Capsule ID from the current install context, required for Interface OAuth."
+  description = "Expected app Capsule ID from the current install context; legacy installs may use app_workspace_id."
   type        = string
   default     = ""
 }
@@ -115,10 +115,6 @@ resource "takoform_worker_version" "worker" {
 
   lifecycle {
     create_before_destroy = true
-    precondition {
-      condition     = trimspace(var.takosumi_accounts_issuer_url) == "" || trimspace(var.app_capsule_id) != ""
-      error_message = "Interface OAuth requires app_capsule_id from the current install context; app_workspace_id is optional compatibility context."
-    }
   }
 }
 

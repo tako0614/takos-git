@@ -28,7 +28,9 @@ and migration toward GitHub-like collaboration are defined in
   `git_repo_list`, `git_repo_create`, `git_repo_info`, and `git_repo_delete`.
 - A Takosumi Accounts authorization-code + PKCE browser session for any account.
   Exact-app owner/member claims signal app management access; repository roles
-  remain governed by Git's own ACLs.
+  remain governed by Git's own ACLs. Internal reads and repository/fork/org
+  creation require app owner/member or compatible legacy Workspace membership,
+  including current Accounts `workspace_memberships` and `takosumi.workspace_id/role`.
 - An authenticated `/api/v1` read API for repositories, branches, recent
   commits, trees, and blobs, exposed through the browser console at `/` and
   `/ui`.
@@ -63,10 +65,11 @@ audience, scope, configured Capsule, subject, and complete Interface/Binding
 evidence shape. Interface ids and resolved revisions are not static module
 inputs or Worker env, avoiding a first-apply dependency on Interfaces that
 materialize only after apply. Both modules receive the noneditable install-context
-`app_capsule_id` and bind `APP_CAPSULE_ID` for an exact match against live evidence.
-Workspace context is optional compatibility data: a supplied claim must be valid
-and match legacy configuration when present. Machine capabilities require no
-human app_role. Declarations and credentials do not
+`app_capsule_id` and bind `APP_CAPSULE_ID` for an exact match when configured.
+Older installs without v2.5 context mapping remain plannable and use an exact
+`APP_WORKSPACE_ID` match, still requiring complete Capsule/Interface/Binding/revision
+evidence. With neither expected context configured, authentication fails closed.
+Machine capabilities require no human app_role. Declarations and credentials do not
 enter Outputs.
 
 An explicitly supplied `PUBLISHED_MCP_AUTH_TOKEN` is retained only as
@@ -88,7 +91,7 @@ enable browser sign-in through the direct/self-host module, provide
 `takosumi_accounts_client_id`, and an `app_session_secret` of at least 32
 characters together. Confidential clients also receive
 `takosumi_accounts_client_secret` as a secret input. The direct module also
-receives `app_capsule_id` and optional compatibility `app_workspace_id` (legacy
+receives `app_capsule_id` or compatibility `app_workspace_id` for older installs (legacy
 `env.APP_CAPSULE_ID` / `env.APP_WORKSPACE_ID` remain accepted); secrets do not enter
 the repository or Outputs.
 

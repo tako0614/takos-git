@@ -31,6 +31,7 @@ export interface BrowserSession {
   readonly workspaceIds: readonly string[];
   readonly capsuleId: string | null;
   readonly appRole: AppRole | null;
+  readonly legacyWorkspaceMember: boolean;
   readonly expiresAt: number;
 }
 
@@ -48,6 +49,7 @@ interface UserInfo {
   readonly workspaceIds: readonly string[];
   readonly capsuleId: string | null;
   readonly appRole: AppRole | null;
+  readonly legacyWorkspaceMember: boolean;
 }
 
 interface StoredSession {
@@ -225,13 +227,15 @@ async function unseal<T>(
 // Encrypt the access token needed for live management-role validation. The
 // context AAD also prevents a shared session secret from crossing installations.
 function sessionContext(env: BrowserAuthEnv): ArrayBuffer {
-  return new TextEncoder().encode(JSON.stringify([
-    "takos-git-session-v2",
-    configuredValue(env.OIDC_ISSUER_URL),
-    configuredValue(env.OIDC_CLIENT_ID),
-    configuredValue(env.APP_CAPSULE_ID),
-    configuredValue(env.APP_WORKSPACE_ID),
-  ])).buffer;
+  return new TextEncoder().encode(
+    JSON.stringify([
+      "takos-git-session-v2",
+      configuredValue(env.OIDC_ISSUER_URL),
+      configuredValue(env.OIDC_CLIENT_ID),
+      configuredValue(env.APP_CAPSULE_ID),
+      configuredValue(env.APP_WORKSPACE_ID),
+    ]),
+  ).buffer;
 }
 
 async function sessionKey(secret: string): Promise<CryptoKey> {
@@ -240,7 +244,8 @@ async function sessionKey(secret: string): Promise<CryptoKey> {
     new TextEncoder().encode(`takos-git-session-v2:${secret}`),
   );
   return crypto.subtle.importKey("raw", digest, "AES-GCM", false, [
-    "encrypt", "decrypt",
+    "encrypt",
+    "decrypt",
   ]);
 }
 
@@ -267,9 +272,15 @@ async function openSession(
   try {
     const encoded = raw.slice(3).replaceAll("-", "+").replaceAll("_", "/");
     const binary = atob(encoded.padEnd(Math.ceil(encoded.length / 4) * 4, "="));
-    const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+    const bytes = Uint8Array.from(binary, (character) =>
+      character.charCodeAt(0),
+    );
     const plaintext = await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv: bytes.slice(0, 12), additionalData: sessionContext(env) },
+      {
+        name: "AES-GCM",
+        iv: bytes.slice(0, 12),
+        additionalData: sessionContext(env),
+      },
       await sessionKey(configuredValue(env.APP_SESSION_SECRET) as string),
       bytes.slice(12),
     );
@@ -399,6 +410,16 @@ function normalizeWorkspaceIds(value: unknown): string[] {
   return [...workspaceIds];
 }
 
+function boundedClaimId(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= MAX_PROFILE_FIELD_LENGTH &&
+    value === value.trim() &&
+    !/\s/u.test(value)
+  );
+}
+
 function optionalProfileField(value: unknown): string | null {
   return typeof value === "string" && value.length <= MAX_PROFILE_FIELD_LENGTH
     ? value
@@ -469,38 +490,84 @@ async function fetchUserInfo(
   if (subject === "" || subject.length > 512 || /\s/u.test(subject))
     return null;
   const workspaceIds = normalizeWorkspaceIds(claims.workspace_memberships);
+  const originalWorkspaceIds = new Set(workspaceIds);
   const takosumi = claims.takosumi;
-  if (takosumi !== undefined &&
-    (!takosumi || typeof takosumi !== "object" || Array.isArray(takosumi))) {
+  if (
+    takosumi !== undefined &&
+    (!takosumi || typeof takosumi !== "object" || Array.isArray(takosumi))
+  ) {
     return null;
   }
   let capsuleId: string | null = null;
   let appRole: AppRole | null = null;
+  const expectedWorkspaceId = configuredValue(env.APP_WORKSPACE_ID);
+  const expectedCapsuleId = configuredValue(env.APP_CAPSULE_ID);
+  let legacyWorkspaceMember =
+    expectedWorkspaceId !== null &&
+    originalWorkspaceIds.has(expectedWorkspaceId);
   if (takosumi && typeof takosumi === "object" && !Array.isArray(takosumi)) {
     const appClaims = takosumi as Record<string, unknown>;
-    if ("capsule_id" in appClaims || "app_role" in appClaims) {
-      const expectedCapsuleId = configuredValue(env.APP_CAPSULE_ID);
-      if (!expectedCapsuleId || appClaims.capsule_id !== expectedCapsuleId) {
+    if ("capsule_id" in appClaims) {
+      if (
+        !boundedClaimId(appClaims.capsule_id) ||
+        (expectedCapsuleId && appClaims.capsule_id !== expectedCapsuleId)
+      )
         return null;
-      }
+      // Older installs have only a Workspace binding. A returned Capsule is
+      // evidence, never a substitute for independently configured identity.
       capsuleId = expectedCapsuleId;
-      if ("app_role" in appClaims) {
-        if (appClaims.app_role !== "owner" && appClaims.app_role !== "member") {
-          return null;
-        }
-        appRole = appClaims.app_role;
+    }
+    if ("app_role" in appClaims) {
+      if (appClaims.app_role !== "owner" && appClaims.app_role !== "member")
+        return null;
+      if (!boundedClaimId(appClaims.capsule_id)) return null;
+      if (expectedCapsuleId) appRole = appClaims.app_role;
+    }
+    if ("workspace_id" in appClaims) {
+      if (
+        !boundedClaimId(appClaims.workspace_id) ||
+        (expectedWorkspaceId && appClaims.workspace_id !== expectedWorkspaceId)
+      )
+        return null;
+      if (
+        !workspaceIds.includes(appClaims.workspace_id) &&
+        workspaceIds.length < MAX_WORKSPACE_MEMBERSHIPS
+      ) {
+        workspaceIds.push(appClaims.workspace_id);
       }
     }
-    const workspaceId = appClaims.workspace_id;
-    if (
-      typeof workspaceId === "string" &&
-      workspaceId.length <= MAX_PROFILE_FIELD_LENGTH &&
-      workspaceId.trim() !== "" &&
-      !/\s/u.test(workspaceId) &&
-      !workspaceIds.includes(workspaceId) &&
-      workspaceIds.length < MAX_WORKSPACE_MEMBERSHIPS
-    ) {
-      workspaceIds.push(workspaceId);
+    if ("role" in appClaims) {
+      if (
+        !["owner", "admin", "member", "viewer"].includes(
+          appClaims.role as string,
+        )
+      )
+        return null;
+      // Current Accounts emits this Workspace role, not app_role. Only use it
+      // under the installed Workspace; viewer keeps the old membership floor.
+      if (
+        expectedWorkspaceId &&
+        appClaims.workspace_id === expectedWorkspaceId &&
+        !("app_role" in appClaims)
+      ) {
+        appRole =
+          appClaims.role === "owner" || appClaims.role === "admin"
+            ? "owner"
+            : appClaims.role === "member"
+              ? "member"
+              : null;
+      }
+    }
+    legacyWorkspaceMember =
+      expectedWorkspaceId !== null &&
+      workspaceIds.includes(expectedWorkspaceId);
+    if (expectedCapsuleId && capsuleId && !("app_role" in appClaims)) {
+      // Capsule-scoped fallback needs both the exact nested Workspace and
+      // independent membership or a validated current Workspace role.
+      legacyWorkspaceMember =
+        expectedWorkspaceId !== null &&
+        appClaims.workspace_id === expectedWorkspaceId &&
+        (originalWorkspaceIds.has(expectedWorkspaceId) || "role" in appClaims);
     }
   }
   return {
@@ -510,6 +577,7 @@ async function fetchUserInfo(
     workspaceIds,
     capsuleId,
     appRole,
+    legacyWorkspaceMember,
   };
 }
 
@@ -521,7 +589,8 @@ export async function readBrowserSession(
   const sessionSecret = configuredValue(env.APP_SESSION_SECRET);
   const expectedWorkspaceId = configuredValue(env.APP_WORKSPACE_ID);
   const expectedCapsuleId = configuredValue(env.APP_CAPSULE_ID);
-  if (!sessionSecret || (!expectedWorkspaceId && !expectedCapsuleId)) return null;
+  if (!sessionSecret || (!expectedWorkspaceId && !expectedCapsuleId))
+    return null;
   const raw = parseCookie(request.headers.get("cookie"), SESSION_COOKIE);
   if (!raw || raw.length > MAX_COOKIE_VALUE_BYTES) return null;
   const modern = raw.startsWith("v2.");
@@ -536,31 +605,58 @@ export async function readBrowserSession(
     !Number.isSafeInteger(session.expiresAt) ||
     session.expiresAt <= now ||
     !Array.isArray(session.workspaceIds)
-  ) return null;
+  )
+    return null;
 
   if (!modern) {
     // Pre-migration cookies prove only their former Workspace admission. They
     // remain ordinary-user identities; cached or invented app roles are ignored.
-    if (!expectedWorkspaceId || !session.workspaceIds.includes(expectedWorkspaceId)) {
+    if (
+      !expectedWorkspaceId ||
+      !session.workspaceIds.includes(expectedWorkspaceId)
+    ) {
       return null;
     }
-    return { ...session, capsuleId: null, appRole: null };
+    return {
+      ...session,
+      capsuleId: null,
+      appRole: null,
+      legacyWorkspaceMember: true,
+    };
   }
 
-  if (typeof session.accessToken !== "string" || !session.accessToken) return null;
+  if (typeof session.accessToken !== "string" || !session.accessToken)
+    return null;
   try {
     const user = await fetchUserInfo(env, session.accessToken, fetchImpl);
     if (!user || user.subject !== session.subject) return null;
     return {
       ...user,
       capsuleId: expectedCapsuleId,
-      workspaceIds: expectedWorkspaceId && user.workspaceIds.includes(expectedWorkspaceId)
-        ? [expectedWorkspaceId] : [],
+      workspaceIds:
+        expectedWorkspaceId && user.workspaceIds.includes(expectedWorkspaceId)
+          ? [expectedWorkspaceId]
+          : [],
       expiresAt: session.expiresAt,
     };
   } catch {
     return null;
   }
+}
+
+/** An invalid presented cookie must not silently become an anonymous request. */
+export function expiredBrowserSessionResponse(
+  request: Request,
+): Response | null {
+  if (!parseCookie(request.headers.get("cookie"), SESSION_COOKIE)) return null;
+  return json(
+    {
+      authenticated: false,
+      error: { code: "session_expired", message: "Sign in again to continue." },
+    },
+    401,
+    { "set-cookie": clearCookie(request, SESSION_COOKIE) },
+  );
 }
 
 function json(body: unknown, status = 200, headers?: HeadersInit): Response {
@@ -590,6 +686,10 @@ export async function handleBrowserAuth(
 
   if (request.method === "GET" && url.pathname === "/api/auth/session") {
     const session = await readBrowserSession(request, env, fetchImpl);
+    if (!session) {
+      const expired = expiredBrowserSessionResponse(request);
+      if (expired) return expired;
+    }
     return json(
       session
         ? {
@@ -695,8 +795,10 @@ export async function handleBrowserAuth(
         name: user.name,
         email: user.email,
         // Retain only this install's legacy context, never unrelated memberships.
-        workspaceIds: expectedWorkspaceId && user.workspaceIds.includes(expectedWorkspaceId)
-          ? [expectedWorkspaceId] : [],
+        workspaceIds:
+          expectedWorkspaceId && user.workspaceIds.includes(expectedWorkspaceId)
+            ? [expectedWorkspaceId]
+            : [],
         accessToken: accessToken as string,
         expiresAt: Math.floor(Date.now() / 1000) + SESSION_MAX_AGE_SECONDS,
       } satisfies StoredSession,

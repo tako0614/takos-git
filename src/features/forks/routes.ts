@@ -18,6 +18,7 @@
 
 import {
   SCOPES,
+  hasAppMembership,
   type AuthContext,
   type RepositoryDto,
 } from "../../contract/v1.ts";
@@ -203,6 +204,10 @@ const createForkHandler: Route["handler"] = async (ctx) => {
   if (csrf) return csrf;
   if (access.auth.channel === "anonymous") {
     return errorResponse(401, "unauthenticated", "Sign-in required.");
+  }
+
+  if (!hasAppMembership(access.auth.principal)) {
+    return errorResponse(403, "app_membership_required", "App membership required to create repositories or organizations.");
   }
 
   const body = await readJson(ctx.request);

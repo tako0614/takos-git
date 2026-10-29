@@ -19,8 +19,12 @@ short-lived Interface credential. The manifest's noneditable `capsule_id`
 input supplies `app_capsule_id`, which becomes the expected `APP_CAPSULE_ID`
 runtime variable; optional legacy `app_workspace_id` supplies `APP_WORKSPACE_ID`.
 Both module paths use the v2.5 install-context data contract. Capsule-only
-configuration is supported. With an issuer configured, an expected Capsule id
-is required; the Worker never derives it from returned claims or the audience.
+configuration is supported. Older installs awaiting v2.5 input mapping may omit
+`app_capsule_id` and retain `app_workspace_id`; plans do not force a migration.
+The runtime then requires exact legacy Workspace evidence, alongside complete
+Capsule/Interface/Binding/revision evidence. A configured Capsule must match
+exactly; neither claims nor audience supplies an expected id. Missing both
+expected contexts fails closed at runtime.
 No Interface/Binding id, resolved revision, credential, or provider authority is
 copied into the Resource graph.
 

@@ -108,12 +108,18 @@ run "conflicting_capsule_routes_refused" {
   expect_failures = [cloudflare_workers_script.worker]
 }
 
-run "missing_capsule_still_refused" {
+run "legacy_workspace_without_capsule" {
   command = plan
   variables {
     app_workspace_id = "workspace-fixture"
   }
-  expect_failures = [cloudflare_workers_script.worker]
+  assert {
+    condition = length([
+      for binding in cloudflare_workers_script.worker[0].bindings : binding
+      if binding.name == "APP_WORKSPACE_ID" && binding.text == var.app_workspace_id
+    ]) == 1
+    error_message = "Legacy Workspace-only installs must remain plannable until v2.5 context mapping is adopted."
+  }
 }
 
 run "missing_browser_secret_still_refused" {

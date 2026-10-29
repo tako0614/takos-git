@@ -29,7 +29,9 @@ GitHub 的な共同作業機能へ広げる source-owner 境界と移行順は
   `git_repo_list` / `git_repo_create` / `git_repo_info` / `git_repo_delete` のちょうど 4 つです
 - Takosumi Accounts の authorization-code + PKCE で browser session を作り、
   どのアカウントでもログインできます。対象アプリの owner/member claims は管理シグナルとし、
-  repository の権限は Git 固有の ACL で判定します
+  internal の閲覧・repo/fork/org 作成はアプリ owner/member または旧 Workspace 参加者に限ります。
+  現在の Accounts の `workspace_memberships` と `takosumi.workspace_id/role` も互換として受け付け、
+  その他の repository 権限は Git 固有の ACL で判定します
 - `/api/v1` で repository list / overview / branch / commit / tree / blob を読み、`/` と `/ui`
   の browser console から確認できます
 
@@ -119,8 +121,10 @@ Interface / Binding state を再検証し、Worker は audience、scope、設定
 完全な Interface / Binding evidence shape を検証し、不備があれば安全側に停止します。Interface id / resolved revision
 は static module input や Worker env にせず、apply 後に生成される Interface を初回 apply 前に
 要求する循環を作りません。両 module は install context の `app_capsule_id` を
-`APP_CAPSULE_ID` へ配送し、live evidence の Capsule と完全一致させます。Workspace は任意の互換 context で、
-claim があるときだけ形式と設定済みの ID との一致を検証します。machine credential に人間の app_role は要求しません。宣言・credential は
+`APP_CAPSULE_ID` へ配送し、設定済みなら live evidence の Capsule と完全一致させます。
+v2.5 context mapping をまだ採用していない install は `APP_WORKSPACE_ID` のみでも Plan・実行でき、
+Interface OAuth は Workspace の完全一致と Capsule / Interface / Binding / revision evidence を要求します。
+どちらの期待値も未設定なら認証しません。machine credential に人間の app_role は要求しません。宣言・credential は
 Output に入れません。
 
 `PUBLISHED_MCP_AUTH_TOKEN` は直接/self-host deployment 用の standalone MCP bearer としてだけ残し、
@@ -137,7 +141,7 @@ portable 版は launcher / hosting API をまだ宣言しません。browser sig
 direct/self-host module の場合は `takosumi_accounts_issuer_url`、
 `takosumi_accounts_client_id`、32 文字以上の `app_session_secret` を一緒に渡します。
 confidential client なら `takosumi_accounts_client_secret` も secret input として渡します。
-両 module は `app_capsule_id` を明示し、`app_workspace_id` は互換用の任意入力です。direct module は
+両 module は `app_capsule_id` を受け取り、未配送の旧 install は `app_workspace_id` で互換動作します。direct module は
 旧 `env.APP_CAPSULE_ID` / `env.APP_WORKSPACE_ID` も受け付けます。secret は repo や
 Output に書きません。
 

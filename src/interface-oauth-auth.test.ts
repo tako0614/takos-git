@@ -29,7 +29,7 @@ function verify(
     permission?: string;
     requestUrl?: string;
     workspaceId?: string | null;
-    capsuleId?: string;
+    capsuleId?: string | null;
     status?: number;
   } = {},
 ): Promise<boolean> {
@@ -43,8 +43,14 @@ function verify(
     {
       issuerUrl: "https://accounts.example/",
       expectedAudience: "https://git.example/git",
-      expectedWorkspaceId: overrides.workspaceId === null ? undefined : overrides.workspaceId ?? "workspace_a",
-      expectedCapsuleId: overrides.capsuleId ?? "capsule_git",
+      expectedWorkspaceId:
+        overrides.workspaceId === null
+          ? undefined
+          : (overrides.workspaceId ?? "workspace_a"),
+      expectedCapsuleId:
+        overrides.capsuleId === null
+          ? undefined
+          : (overrides.capsuleId ?? "capsule_git"),
       fetchImpl: async (input, init) => {
         expect(String(input)).toBe("https://accounts.example/oauth/userinfo");
         expect(init?.redirect).toBe("manual");
@@ -94,11 +100,41 @@ describe("Interface OAuth verifier", () => {
     ).toBe(false);
   });
 
-  test("Capsule-only configuration is valid while an absent expected Capsule fails closed", () => {
-    const base = { issuerUrl: "https://accounts.example", audience: "https://git.example/git" };
-    expect(hasValidInterfaceOAuthConfiguration({ ...base, capsuleId: "capsule_git" })).toBe(true);
+  test("Capsule-only and legacy Workspace configuration are valid, with no context failing closed", () => {
+    const base = {
+      issuerUrl: "https://accounts.example",
+      audience: "https://git.example/git",
+    };
+    expect(
+      hasValidInterfaceOAuthConfiguration({
+        ...base,
+        capsuleId: "capsule_git",
+      }),
+    ).toBe(true);
     expect(hasValidInterfaceOAuthConfiguration(base)).toBe(false);
-    expect(hasValidInterfaceOAuthConfiguration({ ...base, workspaceId: "workspace_a" })).toBe(false);
+    expect(
+      hasValidInterfaceOAuthConfiguration({
+        ...base,
+        workspaceId: "workspace_a",
+      }),
+    ).toBe(true);
+  });
+
+  test("legacy Workspace-only configuration retains exact owner and complete capability checks", async () => {
+    expect(await verify(validClaims, { capsuleId: null })).toBe(true);
+    for (const takosumi of [
+      { ...validClaims.takosumi, workspace_id: "other" },
+      { ...validClaims.takosumi, workspace_id: undefined },
+      { ...validClaims.takosumi, capsule_id: undefined },
+      { ...validClaims.takosumi, interface_binding_id: "" },
+      { ...validClaims.takosumi, interface_resolved_revision: 0 },
+    ])
+      expect(
+        await verify({ ...validClaims, takosumi }, { capsuleId: null }),
+      ).toBe(false);
+    expect(
+      await verify(validClaims, { capsuleId: null, workspaceId: null }),
+    ).toBe(false);
   });
 
   test("workspace-less machine evidence works with both new and compatibility config without an app role", async () => {
@@ -106,13 +142,26 @@ describe("Interface OAuth verifier", () => {
     const claims = { ...validClaims, takosumi: capsuleEvidence };
     expect(await verify(claims, { workspaceId: null })).toBe(true);
     expect(await verify(claims)).toBe(true);
-    expect(await verify({ ...claims, takosumi: { ...capsuleEvidence, capsule_id: "foreign_capsule" } })).toBe(false);
+    expect(
+      await verify({
+        ...claims,
+        takosumi: { ...capsuleEvidence, capsule_id: "foreign_capsule" },
+      }),
+    ).toBe(false);
     expect(await verify(validClaims, { workspaceId: null })).toBe(true);
   });
 
   for (const workspace_id of [null, "", "has space", 1]) {
     test(`rejects malformed optional legacy workspace claim ${JSON.stringify(workspace_id)}`, async () => {
-      expect(await verify({ ...validClaims, takosumi: { ...validClaims.takosumi, workspace_id } }, { workspaceId: null })).toBe(false);
+      expect(
+        await verify(
+          {
+            ...validClaims,
+            takosumi: { ...validClaims.takosumi, workspace_id },
+          },
+          { workspaceId: null },
+        ),
+      ).toBe(false);
     });
   }
 

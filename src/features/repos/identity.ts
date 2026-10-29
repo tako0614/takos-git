@@ -19,7 +19,7 @@ import {
   upsertPrincipal,
   type RepoAclRow,
 } from "../../auth/acl.ts";
-import { readBrowserSession } from "../../browser-auth.ts";
+import { expiredBrowserSessionResponse, readBrowserSession } from "../../browser-auth.ts";
 import {
   ANONYMOUS_PRINCIPAL,
   SCOPES,
@@ -113,9 +113,14 @@ export async function resolveIdentity(
       kind: "user",
       displayName: session.name,
       email: session.email,
+      appRole: session.appRole,
+      legacyWorkspaceMember: session.legacyWorkspaceMember,
     });
     return { principal, channel: "browser", scopes: BROWSER_SCOPES };
   }
+
+  const expired = expiredBrowserSessionResponse(request);
+  if (expired) return expired;
 
   // 2. Interface OAuth bearer (automation; scope-capped).
   const token = bearerToken(request);

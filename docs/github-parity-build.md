@@ -869,14 +869,14 @@ async function effectiveRole(db, principal: Principal, repo: RepoRow): Promise<R
   // visibility floor
   const floor: Role | null =
       repo.visibility === "public"   ? "reader"
-    : repo.visibility === "internal" && principal.kind !== "anonymous" ? "reader"  // any workspace member
+    : repo.visibility === "internal" && hasAppMembership(principal) ? "reader"  // app or legacy membership
     : null;                          // private ⇒ no floor
   return maxRole(org, grant, floor); // null if all null
 }
 ```
 
 - **public** → `reader` for everyone incl. `anonymous` (read-only clone/fetch and read API without a session).
-- **internal** → `reader` for any authenticated Workspace member (they already passed the `:406-417` membership gate), never for anonymous.
+- **internal** → `reader` only for current app owner/member or compatible legacy Workspace members. Sign-in alone supplies no internal floor; verified machine capabilities keep their existing scope/ACL checks.
 - **private** → access only via explicit grant or org membership. A private repo returns **404, not 403**, to a principal with `null` role (existence non-disclosure, GitHub parity).
 
 ### 4. One authorization function, called at every enforcement point
@@ -1300,7 +1300,7 @@ The SPA authenticates **only** through the browser OIDC cookie session — it ne
 - All API calls use `credentials: "same-origin"` (cookie only); **the SPA carries no token‑paste field** — the console's `taksrv_…` password input (`worker.ts:147-155`, `token` header at `worker.ts:170-173`) is deleted. Interface credentials are a CLI concern, surfaced only as a copyable `git clone` hint, not a browser auth input.
 - Unauthenticated → render a public shell with a **Sign in** link to `/api/auth/login?return_to=<current path>` (`worker.ts:121`). `configured === false` (OIDC unset) → "sign‑in unavailable" state, matching `worker.ts:196`.
 - Sign out → `POST /api/auth/logout` then reload (`worker.ts:203-206`).
-- **Authorization is per repository**: sign-in alone never grants write or admin access. `appRole`/`canManageApp` report current app management claims; namespace ownership, org membership, collaborators, teams and visibility decide Git operations. UI access checks must follow the relevant repository permission.
+- **Authorization is per repository**: sign-in alone never grants internal access or repository/fork/org creation; those require app owner/member or compatible legacy Workspace membership. Other writes still require repository ACLs. `appRole`/`canManageApp` report current app management claims; namespace ownership, org membership, collaborators, teams and visibility decide Git operations. UI access checks must follow the relevant repository permission.
 
 ### 5. Component inventory + port/rewrite verdict
 

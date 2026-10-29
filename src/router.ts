@@ -22,7 +22,7 @@ import {
   authorizeRepo,
   upsertPrincipal,
 } from "./auth/acl.ts";
-import { readBrowserSession, type OAuthFetch } from "./browser-auth.ts";
+import { expiredBrowserSessionResponse, readBrowserSession, type OAuthFetch } from "./browser-auth.ts";
 import {
   ACTION_REQUIRED_SCOPE,
   errorBody,
@@ -346,7 +346,7 @@ async function authenticate(
     if (!session) {
       return {
         ok: false,
-        response: errorResponse(401, "unauthenticated", "Sign-in required."),
+        response: expiredBrowserSessionResponse(request) ?? errorResponse(401, "unauthenticated", "Sign-in required."),
       };
     }
     if (!db) {
@@ -365,6 +365,8 @@ async function authenticate(
       kind: "user",
       displayName: session.name,
       email: session.email,
+      appRole: session.appRole,
+      legacyWorkspaceMember: session.legacyWorkspaceMember,
     });
     return {
       ok: true,
