@@ -140,6 +140,7 @@ describe("takos-git MCP", () => {
     const target: Env = {
       BUCKET: new MemoryBucket(),
       OIDC_ISSUER_URL: "https://accounts.example",
+      APP_CAPSULE_ID: "capsule_git",
     };
     const response = await interfaceWorker.fetch(
       mcpRequest("taksrv_git_mcp", "tools/list"),

@@ -4,7 +4,7 @@
 
 A standalone, installable **collaborative Git hosting product**. It serves
 standard `git clone`, `fetch`, and `push` from an R2 object store and publishes
-a Workspace-bound browser, hosting API, and repository-management MCP server.
+an app-scoped browser, hosting API, and repository-management MCP server.
 It is a plain OpenTofu module + prebuilt Cloudflare Worker, installed through
 Takosumi like any other Capsule.
 
@@ -26,8 +26,11 @@ and migration toward GitHub-like collaboration are defined in
   per-request ref replacement, and fast-forward-only normal branch updates.
 - A dependency-free Streamable HTTP MCP endpoint with exactly four tools:
   `git_repo_list`, `git_repo_create`, `git_repo_info`, and `git_repo_delete`.
-- A Takosumi Accounts authorization-code + PKCE browser session that requires
-  membership in the installed Workspace.
+- A Takosumi Accounts authorization-code + PKCE browser session for any account.
+  Exact-app owner/member claims signal app management access; repository roles
+  remain governed by Git's own ACLs. Internal reads and repository/fork/org
+  creation require app owner/member or compatible legacy Workspace membership,
+  including current Accounts `workspace_memberships` and `takosumi.workspace_id/role`.
 - An authenticated `/api/v1` read API for repositories, branches, recent
   commits, trees, and blobs, exposed through the browser console at `/` and
   `/ui`.
@@ -58,12 +61,15 @@ URIs. Their
 declarations list the permissions above, and InterfaceBindings grant only the
 needed permissions. Accounts revalidates current Core Interface/Binding state
 before UserInfo reports the token active. The Worker then verifies exact
-audience, scope, Workspace, Capsule, subject, and complete Interface/Binding
+audience, scope, configured Capsule, subject, and complete Interface/Binding
 evidence shape. Interface ids and resolved revisions are not static module
 inputs or Worker env, avoiding a first-apply dependency on Interfaces that
-materialize only after apply. The portable Worker validates the non-empty
-Workspace and Capsule identities in live evidence without copying those
-control-plane ids into the Resource graph. Declarations and credentials do not
+materialize only after apply. Both modules receive the noneditable install-context
+`app_capsule_id` and bind `APP_CAPSULE_ID` for an exact match when configured.
+Older installs without v2.5 context mapping remain plannable and use an exact
+`APP_WORKSPACE_ID` match, still requiring complete Capsule/Interface/Binding/revision
+evidence. With neither expected context configured, authentication fails closed.
+Machine capabilities require no human app_role. Declarations and credentials do not
 enter Outputs.
 
 An explicitly supplied `PUBLISHED_MCP_AUTH_TOKEN` is retained only as
@@ -85,7 +91,8 @@ enable browser sign-in through the direct/self-host module, provide
 `takosumi_accounts_client_id`, and an `app_session_secret` of at least 32
 characters together. Confidential clients also receive
 `takosumi_accounts_client_secret` as a secret input. The direct module also
-receives `env.APP_WORKSPACE_ID` and `env.APP_CAPSULE_ID`; secrets do not enter
+receives `app_capsule_id` or compatibility `app_workspace_id` for older installs (legacy
+`env.APP_CAPSULE_ID` / `env.APP_WORKSPACE_ID` remain accepted); secrets do not enter
 the repository or Outputs.
 
 ## Develop

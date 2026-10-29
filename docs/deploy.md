@@ -33,9 +33,13 @@ a direct/self-host deploy.
 - A Takosumi Accounts **OIDC client** for this deployment: `client_id`, optional
   `client_secret` (confidential client), and the redirect URI
   `https://<public-host>/api/auth/callback` in its `redirectUris`.
-- The install-target **Workspace id** (`APP_WORKSPACE_ID`) — only its members can sign in.
-- The install-target **Capsule id** (`APP_CAPSULE_ID`).
-- A random **`app_session_secret`** ≥ 32 chars (session cookie HMAC).
+- The optional legacy install-target **Workspace id** (`APP_WORKSPACE_ID`) for session and Interface compatibility.
+  Any account can sign in; an exact `APP_CAPSULE_ID` match is required for app-scoped claims.
+- The install-target **Capsule id** (`APP_CAPSULE_ID`) for exact app matching. Older
+  installs without v2.5 context mapping can use only `APP_WORKSPACE_ID`; Interface
+  OAuth then requires an exact Workspace match plus complete Capsule/Binding evidence.
+  Missing both configured contexts fails closed; neither claims nor audience sets an expected id.
+- A random **`app_session_secret`** ≥ 32 chars (OAuth-state HMAC and encrypted session cookies).
 - A random **`webhook_secret_key`** ≥ 32 chars — seals per-webhook secrets at rest and
   signs every outbound delivery. Required whenever `enable_metadata=true`, including an
   automation-only install with no browser sign-in; `app_session_secret` is accepted as
@@ -163,12 +167,18 @@ next apply replaces the script's binding set and would drop an out-of-band secre
 
 - `GET /healthz` → 200.
 - `GET /` → the SPA home (repo list). `GET /icons/takos-git.svg` → the launcher tile.
-- Sign in via Takosumi Accounts (member of `APP_WORKSPACE_ID`) → avatar shows; a
-  non-member is rejected at `/api/auth/callback`.
+- Sign in via Takosumi Accounts (any account) → avatar shows; a
+  user without app/legacy Workspace membership can read public repositories but cannot
+  read internal repositories or create repos/forks/orgs. Current Accounts Workspace
+  members retain their existing compatibility eligibility.
 - Create a repo (SPA **New**, or `POST /api/v1/repos`, or MCP `git_repo_create`), then
   `git clone`/`push` with a short-lived Interface credential (username ignored, credential
   as the HTTP-Basic password).
 - Private repo → 404 to a non-collaborator; public repo → anonymous read.
+- Let the current 300-second access token expire, then read the browser session or
+  call a hosting route: UserInfo 401 clears the app cookie and the SPA returns to
+  OAuth login with the current path. The 12-hour cookie limit does not extend the
+  token lifetime; no refresh-token contract is assumed.
 - Open an issue + PR, request review, merge (respecting branch protection).
 - Actions end-to-end execution is currently blocked: the Worker bundle still lacks
   `@cloudflare/containers` and the `[[containers]]` attachment is not applied, so

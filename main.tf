@@ -154,7 +154,7 @@ variable "published_mcp_auth_token" {
 # An installer derives these from its authenticated Capsule ledger; the module
 # does not infer an identity, issue a credential, or grant Workspace access.
 variable "app_workspace_id" {
-  description = "Optional current app Workspace ID. Empty retains env.APP_WORKSPACE_ID."
+  description = "Optional compatibility Workspace ID. Empty retains env.APP_WORKSPACE_ID; Capsule-only installs do not require it."
   type        = string
   default     = ""
 }
@@ -393,7 +393,7 @@ locals {
   app_workspace_id       = trimspace(lookup(local.extra_worker_env, "APP_WORKSPACE_ID", ""))
   app_capsule_id         = trimspace(lookup(local.extra_worker_env, "APP_CAPSULE_ID", ""))
   browser_auth_requested = local.accounts_client_id != "" || local.accounts_client_secret != "" || local.app_session_secret != ""
-  browser_auth_ready     = local.accounts_issuer_url != "" && local.accounts_client_id != "" && local.app_session_secret != "" && local.app_workspace_id != ""
+  browser_auth_ready     = local.accounts_issuer_url != "" && local.accounts_client_id != "" && local.app_session_secret != "" && (local.app_capsule_id != "" || local.app_workspace_id != "")
   provided_mcp_token     = trimspace(var.published_mcp_auth_token)
   provided_app_context = {
     for name, value in {
@@ -680,14 +680,10 @@ resource "cloudflare_workers_script" "worker" {
       condition     = trimspace(var.takosumi_accounts_redirect_uri) == "" || var.takosumi_accounts_redirect_uri == "${trimsuffix(local.launch_url != null ? local.launch_url : "", "/")}/api/auth/callback"
       error_message = "The registered Accounts callback must match the canonical Git public URL."
     }
-    precondition {
-      condition     = local.accounts_issuer_url == "" || (local.app_workspace_id != "" && local.app_capsule_id != "")
-      error_message = "Interface OAuth requires app_workspace_id and app_capsule_id (or their legacy env.APP_WORKSPACE_ID and env.APP_CAPSULE_ID inputs) whenever takosumi_accounts_issuer_url is configured."
-    }
 
     precondition {
       condition     = !local.browser_auth_requested || local.browser_auth_ready
-      error_message = "Browser auth requires takosumi_accounts_issuer_url, takosumi_accounts_client_id, app_session_secret, and app_workspace_id (or env.APP_WORKSPACE_ID) together."
+      error_message = "Browser auth requires takosumi_accounts_issuer_url, takosumi_accounts_client_id, app_session_secret, and either app_capsule_id or legacy app_workspace_id together."
     }
 
     precondition {

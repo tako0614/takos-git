@@ -89,6 +89,21 @@ describe("upsertPrincipal", () => {
     });
     expect(second.id).toBe(first.id); // identity is the subject, stable id
     expect(second.email).toBe("a@example.test");
+    const withRole = await upsertPrincipal(db, {
+      issuer: ISSUER,
+      subject: "sub-a",
+      kind: "user",
+      appRole: "owner",
+      legacyWorkspaceMember: true,
+    });
+    expect(withRole.appRole).toBe("owner");
+    const withoutRole = await upsertPrincipal(db, {
+      issuer: ISSUER,
+      subject: "sub-a",
+      kind: "user",
+    });
+    expect(withoutRole.appRole).toBeNull();
+    expect(withoutRole.legacyWorkspaceMember).toBe(false);
   });
 });
 
@@ -104,7 +119,7 @@ describe("effectiveRole", () => {
     expect(await effectiveRole(db, anon, priv)).toBeNull();
   });
 
-  test("internal repo grants reader to any authenticated principal, not anon", async () => {
+  test("internal repo requires app or compatible Workspace membership", async () => {
     const ownerId = await seedOwner("acme", "org", null);
     await seedRepo(ownerId, "acme", "internal", "internal");
     const repo = (await resolveRepoRow(db, "acme", "internal"))!;
@@ -113,8 +128,16 @@ describe("effectiveRole", () => {
       subject: "sub-m",
       kind: "user",
     });
-    expect(await effectiveRole(db, member, repo)).toBe("reader");
-    expect(await effectiveRole(db, anonymousContext().principal, repo)).toBeNull();
+    expect(await effectiveRole(db, member, repo)).toBeNull();
+    expect(
+      await effectiveRole(db, { ...member, appRole: "member" }, repo),
+    ).toBe("reader");
+    expect(
+      await effectiveRole(db, { ...member, legacyWorkspaceMember: true }, repo),
+    ).toBe("reader");
+    expect(
+      await effectiveRole(db, anonymousContext().principal, repo),
+    ).toBeNull();
   });
 
   test("user-owner principal is owner of its repo", async () => {
@@ -199,7 +222,11 @@ describe("authorizeRepo (fail-closed)", () => {
       "ghost",
       "contents.read",
     );
-    expect(decision).toEqual({ allow: false, status: 404, reason: "not_found" });
+    expect(decision).toEqual({
+      allow: false,
+      status: 404,
+      reason: "not_found",
+    });
   });
 
   test("private repo, no access → 404 (non-disclosure)", async () => {

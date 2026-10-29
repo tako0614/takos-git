@@ -43,6 +43,18 @@ variable "takosumi_accounts_client_id" {
   default     = ""
 }
 
+variable "app_workspace_id" {
+  description = "Optional compatibility Workspace ID from the current install context."
+  type        = string
+  default     = ""
+}
+
+variable "app_capsule_id" {
+  description = "Expected app Capsule ID from the current install context; legacy installs may use app_workspace_id."
+  type        = string
+  default     = ""
+}
+
 locals {
   runtime_vars = merge(
     trimspace(var.takosumi_accounts_issuer_url) == "" ? {} : {
@@ -50,6 +62,12 @@ locals {
     },
     trimspace(var.takosumi_accounts_client_id) == "" ? {} : {
       OIDC_CLIENT_ID = trimspace(var.takosumi_accounts_client_id)
+    },
+    trimspace(var.app_workspace_id) == "" ? {} : {
+      APP_WORKSPACE_ID = trimspace(var.app_workspace_id)
+    },
+    trimspace(var.app_capsule_id) == "" ? {} : {
+      APP_CAPSULE_ID = trimspace(var.app_capsule_id)
     },
   )
 }

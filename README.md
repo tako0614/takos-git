@@ -4,7 +4,7 @@ English: [README.en.md](README.en.md)
 
 takos-git は、標準の `git clone` / `fetch` / `push` がそのまま使える、独立した
 collaborative Git hosting product です。R2 object store を Git data plane として使い、
-Workspace-bound な browser、hosting API、リポジトリ管理用 MCP server を公開します。
+アプリ単位の browser、hosting API、リポジトリ管理用 MCP server を公開します。
 
 実体は plain な OpenTofu module + ビルド済み Cloudflare Worker で、ほかの
 Capsule (Git URL から取り込む 1 つのアプリ/インフラ単位) と同じように Takosumi から
@@ -27,8 +27,11 @@ GitHub 的な共同作業機能へ広げる source-owner 境界と移行順は
   atomic な ref 差し替えを行い、通常ブランチの更新は fast-forward のみ受け付けます
 - 依存ライブラリなしの Streamable HTTP MCP endpoint を持ちます。ツールは
   `git_repo_list` / `git_repo_create` / `git_repo_info` / `git_repo_delete` のちょうど 4 つです
-- Takosumi Accounts の authorization-code + PKCE で browser session を作り、install 先
-  Workspace の membership を検証します
+- Takosumi Accounts の authorization-code + PKCE で browser session を作り、
+  どのアカウントでもログインできます。対象アプリの owner/member claims は管理シグナルとし、
+  internal の閲覧・repo/fork/org 作成はアプリ owner/member または旧 Workspace 参加者に限ります。
+  現在の Accounts の `workspace_memberships` と `takosumi.workspace_id/role` も互換として受け付け、
+  その他の repository 権限は Git 固有の ACL で判定します
 - `/api/v1` で repository list / overview / branch / commit / tree / blob を読み、`/` と `/ui`
   の browser console から確認できます
 
@@ -114,11 +117,14 @@ Takosumi-managed な Git/MCP 呼び出しは、通常の `api_url` / `mcp_url` O
 resource URI に明示 mapping した repository-owned Interface 宣言と、Takosumi が所有する
 InterfaceBinding を使います。Interface は上記
 permission を明示します。Accounts は UserInfo が token を active と返す前に current Core の
-Interface / Binding state を再検証し、Worker は audience、scope、Workspace、Capsule、subject と
+Interface / Binding state を再検証し、Worker は audience、scope、設定済み Capsule、subject と
 完全な Interface / Binding evidence shape を検証し、不備があれば安全側に停止します。Interface id / resolved revision
 は static module input や Worker env にせず、apply 後に生成される Interface を初回 apply 前に
-要求する循環を作りません。portable Worker は live evidence に含まれる non-empty Workspace / Capsule
-identity を検証し、Resource graph へそれらの control-plane id を複製しません。宣言・credential は
+要求する循環を作りません。両 module は install context の `app_capsule_id` を
+`APP_CAPSULE_ID` へ配送し、設定済みなら live evidence の Capsule と完全一致させます。
+v2.5 context mapping をまだ採用していない install は `APP_WORKSPACE_ID` のみでも Plan・実行でき、
+Interface OAuth は Workspace の完全一致と Capsule / Interface / Binding / revision evidence を要求します。
+どちらの期待値も未設定なら認証しません。machine credential に人間の app_role は要求しません。宣言・credential は
 Output に入れません。
 
 `PUBLISHED_MCP_AUTH_TOKEN` は直接/self-host deployment 用の standalone MCP bearer としてだけ残し、
@@ -135,7 +141,8 @@ portable 版は launcher / hosting API をまだ宣言しません。browser sig
 direct/self-host module の場合は `takosumi_accounts_issuer_url`、
 `takosumi_accounts_client_id`、32 文字以上の `app_session_secret` を一緒に渡します。
 confidential client なら `takosumi_accounts_client_secret` も secret input として渡します。
-direct module は `env.APP_WORKSPACE_ID` / `env.APP_CAPSULE_ID` も明示します。secret は repo や
+両 module は `app_capsule_id` を受け取り、未配送の旧 install は `app_workspace_id` で互換動作します。direct module は
+旧 `env.APP_CAPSULE_ID` / `env.APP_WORKSPACE_ID` も受け付けます。secret は repo や
 Output に書きません。
 
 Takosumiでdirect Cloudflare module (`.`) を選ぶ場合は、任意の高度な設定にある

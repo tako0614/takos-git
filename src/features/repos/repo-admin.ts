@@ -6,6 +6,7 @@
 
 import {
   SCOPES,
+  hasAppMembership,
   roleAtLeast,
   type AuthContext,
   type Visibility,
@@ -78,8 +79,8 @@ type OwnerCreateOutcome =
 /**
  * Authorize creating a repo under `ownerLogin`. An existing user owner requires
  * the caller BE that principal; an existing org requires org-admin; an unclaimed
- * login is claimed as the caller's personal owner (first-use, bounded by the
- * install Workspace membership gate).
+ * login is claimed as the authenticated caller's personal owner on first use.
+ * App management roles never grant ownership of an existing namespace.
  */
 async function authorizeOwnerForCreate(
   db: DbClient,
@@ -125,6 +126,9 @@ const createRepoHandler: Route["handler"] = async (ctx) => {
   if (identity instanceof Response) return identity;
   if (identity.channel === "anonymous") {
     return errorResponse(401, "unauthenticated", "Sign-in required.");
+  }
+  if (!hasAppMembership(identity.principal)) {
+    return errorResponse(403, "app_membership_required", "App membership required to create repositories or organizations.");
   }
   const csrf = csrfGuard(ctx, identity);
   if (csrf) return csrf;
@@ -233,6 +237,9 @@ const createOrgHandler: Route["handler"] = async (ctx) => {
   if (identity instanceof Response) return identity;
   if (identity.channel === "anonymous") {
     return errorResponse(401, "unauthenticated", "Sign-in required.");
+  }
+  if (!hasAppMembership(identity.principal)) {
+    return errorResponse(403, "app_membership_required", "App membership required to create repositories or organizations.");
   }
   const csrf = csrfGuard(ctx, identity);
   if (csrf) return csrf;

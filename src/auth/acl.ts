@@ -7,10 +7,10 @@
  * a single yes/no decision. Default is DENY: any path that cannot prove access
  * returns 401/403/404, never elevated access.
  *
- * It does NOT weaken the coarse gates that run before it: the browser
- * APP_WORKSPACE_ID membership check (`src/browser-auth.ts`) and the smart-HTTP
- * exact-scope check (`src/worker.ts`) still run first; per-repo ACL can only
- * NARROW an already-admitted principal.
+ * Browser OIDC identifies any account. App or legacy Workspace membership
+ * permits internal reads and creation, while other repository roles stay local.
+ * The smart-HTTP exact-scope check
+ * (`src/worker.ts`) still runs first; repository access is decided here.
  */
 
 import type { DbClient } from "../db/index.ts";
@@ -20,13 +20,13 @@ import {
   ACTION_REQUIRED_SCOPE,
   ANONYMOUS_PRINCIPAL,
   maxRole,
+  hasAppMembership,
   roleAtLeast,
   type AuthContext,
   type AuthzDecision,
   type AuthzReason,
   type OwnerType,
   type Principal,
-  type PrincipalKind,
   type RepoAction,
   type Role,
   type Visibility,
@@ -151,12 +151,10 @@ function asRole(value: string): Role | null {
 /** Visibility floor: the lowest role a repo grants without an explicit grant. */
 function visibilityFloor(
   visibility: Visibility,
-  kind: PrincipalKind,
+  principal: Principal,
 ): Role | null {
   if (visibility === "public") return "reader";
-  // internal → any authenticated workspace member (they passed the membership
-  // gate); never anonymous. private → no floor.
-  if (visibility === "internal" && kind !== "anonymous") return "reader";
+  if (visibility === "internal" && hasAppMembership(principal)) return "reader";
   return null;
 }
 
@@ -169,7 +167,9 @@ export async function effectiveRole(
   principal: Principal,
   repo: RepoAclRow,
 ): Promise<Role | null> {
-  const floor = visibilityFloor(repo.visibility, principal.kind);
+  if (repo.visibility === "internal" && !hasAppMembership(principal))
+    return null;
+  const floor = visibilityFloor(repo.visibility, principal);
   if (principal.kind === "anonymous") return floor;
 
   if (repo.ownerType === "user" && repo.ownerPrincipalId === principal.id) {
@@ -385,9 +385,7 @@ export async function authorizeRepo(
     return {
       allow: true,
       role,
-      ...(protection.allowNonFastForward
-        ? { allowNonFastForward: true }
-        : {}),
+      ...(protection.allowNonFastForward ? { allowNonFastForward: true } : {}),
     };
   }
 
@@ -431,6 +429,8 @@ export interface PrincipalClaims {
   readonly email?: string | null;
   /** Interface OAuth binding id, carried at runtime (not a persisted column). */
   readonly bindingId?: string | null;
+  readonly appRole?: "owner" | "member" | null;
+  readonly legacyWorkspaceMember?: boolean;
 }
 
 function canonicalIssuer(value: string): string {
@@ -461,9 +461,11 @@ export async function upsertPrincipal(
   const subject = claims.subject.trim();
   if (subject === "") throw new Error("principal subject is required");
   const bindingId =
-    claims.kind === "service_account" ? claims.bindingId?.trim() ?? "" : "";
+    claims.kind === "service_account" ? (claims.bindingId?.trim() ?? "") : "";
   if (claims.kind === "service_account" && bindingId === "") {
-    throw new Error("service-account principal requires an InterfaceBinding id");
+    throw new Error(
+      "service-account principal requires an InterfaceBinding id",
+    );
   }
   const now = db.now();
 
@@ -535,6 +537,8 @@ export async function upsertPrincipal(
     bindingId: row.binding_id || null,
     displayName: row.display_name,
     email: row.email,
+    appRole: claims.appRole ?? null,
+    legacyWorkspaceMember: claims.legacyWorkspaceMember === true,
   };
 }
 

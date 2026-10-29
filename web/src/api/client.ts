@@ -69,7 +69,11 @@ async function toError(response: Response): Promise<ApiError> {
   let details: Record<string, unknown> | undefined;
   try {
     const body = (await response.json()) as {
-      error?: { code?: string; message?: string; details?: Record<string, unknown> };
+      error?: {
+        code?: string;
+        message?: string;
+        details?: Record<string, unknown>;
+      };
     };
     if (body?.error) {
       if (body.error.code) code = body.error.code;
@@ -119,7 +123,19 @@ async function request<T>(
       ...(body !== undefined ? { body } : {}),
       signal,
     });
-    if (!response.ok) throw await toError(response);
+    if (!response.ok) {
+      const error = await toError(response);
+      if (
+        error.status === 401 &&
+        error.code === "session_expired" &&
+        typeof location !== "undefined"
+      ) {
+        location.assign(
+          `/api/auth/login?return_to=${encodeURIComponent(location.pathname + location.search)}`,
+        );
+      }
+      throw error;
+    }
     if (response.status === 204) return undefined as T;
     const text = await response.text();
     return (text ? JSON.parse(text) : undefined) as T;

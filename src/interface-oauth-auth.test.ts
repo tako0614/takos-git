@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  hasValidInterfaceOAuthConfiguration,
   interfaceAudience,
   verifyInterfaceOAuthBearer,
 } from "./interface-oauth-auth.ts";
@@ -27,8 +28,8 @@ function verify(
     token?: string;
     permission?: string;
     requestUrl?: string;
-    workspaceId?: string;
-    capsuleId?: string;
+    workspaceId?: string | null;
+    capsuleId?: string | null;
     status?: number;
   } = {},
 ): Promise<boolean> {
@@ -42,8 +43,14 @@ function verify(
     {
       issuerUrl: "https://accounts.example/",
       expectedAudience: "https://git.example/git",
-      expectedWorkspaceId: overrides.workspaceId ?? "workspace_a",
-      expectedCapsuleId: overrides.capsuleId ?? "capsule_git",
+      expectedWorkspaceId:
+        overrides.workspaceId === null
+          ? undefined
+          : (overrides.workspaceId ?? "workspace_a"),
+      expectedCapsuleId:
+        overrides.capsuleId === null
+          ? undefined
+          : (overrides.capsuleId ?? "capsule_git"),
       fetchImpl: async (input, init) => {
         expect(String(input)).toBe("https://accounts.example/oauth/userinfo");
         expect(init?.redirect).toBe("manual");
@@ -78,7 +85,7 @@ describe("Interface OAuth verifier", () => {
     expect(await verify(validClaims)).toBe(true);
   });
 
-  test("accepts complete live owner evidence when deployment config does not duplicate authority ids", async () => {
+  test("rejects owner evidence without an independently configured expected Capsule", async () => {
     expect(
       await verifyInterfaceOAuthBearer(
         new Request("https://git.example/git/acme/widgets.git/info/refs"),
@@ -90,8 +97,73 @@ describe("Interface OAuth verifier", () => {
           fetchImpl: async () => Response.json(validClaims),
         },
       ),
+    ).toBe(false);
+  });
+
+  test("Capsule-only and legacy Workspace configuration are valid, with no context failing closed", () => {
+    const base = {
+      issuerUrl: "https://accounts.example",
+      audience: "https://git.example/git",
+    };
+    expect(
+      hasValidInterfaceOAuthConfiguration({
+        ...base,
+        capsuleId: "capsule_git",
+      }),
+    ).toBe(true);
+    expect(hasValidInterfaceOAuthConfiguration(base)).toBe(false);
+    expect(
+      hasValidInterfaceOAuthConfiguration({
+        ...base,
+        workspaceId: "workspace_a",
+      }),
     ).toBe(true);
   });
+
+  test("legacy Workspace-only configuration retains exact owner and complete capability checks", async () => {
+    expect(await verify(validClaims, { capsuleId: null })).toBe(true);
+    for (const takosumi of [
+      { ...validClaims.takosumi, workspace_id: "other" },
+      { ...validClaims.takosumi, workspace_id: undefined },
+      { ...validClaims.takosumi, capsule_id: undefined },
+      { ...validClaims.takosumi, interface_binding_id: "" },
+      { ...validClaims.takosumi, interface_resolved_revision: 0 },
+    ])
+      expect(
+        await verify({ ...validClaims, takosumi }, { capsuleId: null }),
+      ).toBe(false);
+    expect(
+      await verify(validClaims, { capsuleId: null, workspaceId: null }),
+    ).toBe(false);
+  });
+
+  test("workspace-less machine evidence works with both new and compatibility config without an app role", async () => {
+    const { workspace_id, ...capsuleEvidence } = validClaims.takosumi;
+    const claims = { ...validClaims, takosumi: capsuleEvidence };
+    expect(await verify(claims, { workspaceId: null })).toBe(true);
+    expect(await verify(claims)).toBe(true);
+    expect(
+      await verify({
+        ...claims,
+        takosumi: { ...capsuleEvidence, capsule_id: "foreign_capsule" },
+      }),
+    ).toBe(false);
+    expect(await verify(validClaims, { workspaceId: null })).toBe(true);
+  });
+
+  for (const workspace_id of [null, "", "has space", 1]) {
+    test(`rejects malformed optional legacy workspace claim ${JSON.stringify(workspace_id)}`, async () => {
+      expect(
+        await verify(
+          {
+            ...validClaims,
+            takosumi: { ...validClaims.takosumi, workspace_id },
+          },
+          { workspaceId: null },
+        ),
+      ).toBe(false);
+    });
+  }
 
   test("rejects mismatched or incomplete authorization evidence", async () => {
     expect(await verify({ ...validClaims, sub: "" })).toBe(false);

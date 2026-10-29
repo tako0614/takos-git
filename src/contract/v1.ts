@@ -81,6 +81,20 @@ export interface Principal {
   readonly bindingId?: string | null;
   readonly displayName?: string | null;
   readonly email?: string | null;
+  /** Current request evidence only; never persisted in the principal profile. */
+  readonly appRole?: "owner" | "member" | null;
+  readonly legacyWorkspaceMember?: boolean;
+}
+
+/** Human membership floor; exact verified machine capabilities keep their ACL semantics. */
+export function hasAppMembership(principal: Principal): boolean {
+  return (
+    principal.kind === "service_account" ||
+    (principal.kind === "user" &&
+      (principal.appRole === "owner" ||
+        principal.appRole === "member" ||
+        principal.legacyWorkspaceMember === true))
+  );
 }
 
 export const ANONYMOUS_PRINCIPAL: Principal = {
@@ -245,13 +259,7 @@ export function errorBody(
 // Route declaration (the append-only registration surface)
 // ============================================================================
 
-export type HttpMethod =
-  | "GET"
-  | "HEAD"
-  | "POST"
-  | "PUT"
-  | "PATCH"
-  | "DELETE";
+export type HttpMethod = "GET" | "HEAD" | "POST" | "PUT" | "PATCH" | "DELETE";
 
 /**
  * How a route authenticates. Exactly one mechanism per route — browser-session

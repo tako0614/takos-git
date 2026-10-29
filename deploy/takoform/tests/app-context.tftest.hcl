@@ -1,0 +1,57 @@
+# Plan-only synthetic provider fixtures; no Host, credentials or network calls.
+mock_provider "takoform" {
+  # Computed names must follow the provider's portable Resource name grammar
+  # before downstream references can be validated in a plan-only test.
+  mock_resource "takoform_worker_bundle" {
+    defaults = { name = "fixture-worker-bundle" }
+  }
+  mock_resource "takoform_worker_version" {
+    defaults = { name = "fixture-worker-version" }
+  }
+}
+
+variables {
+  takosumi_accounts_issuer_url = "https://accounts.example.test"
+  app_capsule_id               = "capsule-fixture"
+}
+
+run "capsule_only_context" {
+  command = plan
+  assert {
+    condition = jsondecode(takoform_worker_version.worker.vars_json) == {
+      OIDC_ISSUER_URL = var.takosumi_accounts_issuer_url
+      APP_CAPSULE_ID  = var.app_capsule_id
+    }
+    error_message = "The portable version must bind the expected Capsule without requiring a Workspace."
+  }
+}
+
+run "legacy_workspace_context" {
+  command = plan
+  variables {
+    app_workspace_id = "workspace-fixture"
+  }
+  assert {
+    condition = jsondecode(takoform_worker_version.worker.vars_json) == {
+      OIDC_ISSUER_URL  = var.takosumi_accounts_issuer_url
+      APP_CAPSULE_ID   = var.app_capsule_id
+      APP_WORKSPACE_ID = var.app_workspace_id
+    }
+    error_message = "Legacy Workspace context remains an additional binding, not a Capsule substitute."
+  }
+}
+
+run "legacy_workspace_without_capsule" {
+  command = plan
+  variables {
+    app_capsule_id   = ""
+    app_workspace_id = "workspace-fixture"
+  }
+  assert {
+    condition = jsondecode(takoform_worker_version.worker.vars_json) == {
+      OIDC_ISSUER_URL  = var.takosumi_accounts_issuer_url
+      APP_WORKSPACE_ID = var.app_workspace_id
+    }
+    error_message = "Legacy Workspace-only installs must remain plannable until v2.5 context mapping is adopted."
+  }
+}

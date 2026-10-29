@@ -27,7 +27,7 @@ disagree, this document's Decision record wins for the parity build and
    rebuildable projection. The receive-pack per-repo refs-doc ETag CAS stays the atomic
    push boundary.
 5. **Ownership re-rooted off Takos.** The `accountId -> accounts` (Takos Space/account)
-   coupling is removed. Ownership is a Workspace-scoped Principal + Owner namespace +
+   coupling is removed. Ownership is an app-scoped Principal + Owner namespace +
    per-repo role (owner/maintainer/writer/reader) model. Auth mechanisms stay unmixed:
    Takosumi Accounts OIDC for humans, Interface OAuth for automation.
 6. **Docs-driven, no-legacy.** Reusable Takos code is migrated (not re-invented) into
@@ -192,7 +192,7 @@ CREATE TABLE org_memberships (
 CREATE INDEX idx_org_memberships_principal ON org_memberships(principal_id);
 ```
 
-The single-`APP_WORKSPACE_ID` membership check (`browser-auth.ts:412-413`) stays the coarse gate: no principal exists in D1 unless it is a member of the install workspace. The tables above only *refine* an already-authorized principal into per-repo roles, exactly as `docs/collaborative-hosting.md:68-71` mandates. We do **not** mint a Takosumi Interface per repo.
+TASK-0118 admits any Accounts identity. Exact-app owner/member claims signal app management access, while the tables above determine repository roles independently. A signed-in account without a role receives only normal visibility and explicit app-local grants. We do **not** mint a Takosumi Interface per repo.
 
 ### 2. Repositories
 
@@ -764,23 +764,23 @@ D1 DDL ships as numbered, forward-only SQL under `migrations/` and is embedded i
 
 ## Identity, namespace & authorization
 
-This section specifies how `takos-git` moves from the current binary "member of THE Workspace" check to a GitHub-like per-repo authorization model, **without adding a second identity provider**. Takosumi Accounts stays the sole human IdP (browser OIDC) and Interface OAuth stays the sole automation credential authority. Everything below — owners, orgs, principals, roles, grants, branch protection — is **app-local product state that lives in the new D1 binding**, keyed off identifiers Accounts already issues (`sub`, `interface_binding_id`). No git object or ref is duplicated into D1; the per-repo refs-doc ETag CAS in R2 remains the atomic ref boundary.
+This section specifies the GitHub-like per-repo authorization model, **without adding a second identity provider**. Takosumi Accounts stays the sole human IdP (browser OIDC) and Interface OAuth stays the sole automation credential authority. Everything below — owners, orgs, principals, roles, grants, branch protection — is **app-local product state that lives in the new D1 binding**, keyed off identifiers Accounts already issues (`sub`, `interface_binding_id`). No git object or ref is duplicated into D1; the per-repo refs-doc ETag CAS in R2 remains the atomic ref boundary.
 
 ### Design invariants carried in from today
 
-- The browser session is admitted **only** if the Accounts `sub` is present and the install `APP_WORKSPACE_ID` is in `workspace_memberships` (`src/browser-auth.ts:406-417`, callback gate `:539`). This gate is a **precondition**, never a target of ACL widening. Per-repo ACL can only *narrow* what an admitted principal may do.
+- Any Accounts identity with a valid `sub` may sign in. App-scoped claims must match `APP_CAPSULE_ID`; only explicit `owner`/`member` roles become management signals. Every new session read revalidates UserInfo. Missing roles use repository ACLs without an administrative default; legacy Workspace claims/signed cookies remain compatible ordinary identities.
 - The smart-HTTP path already verifies an exact Interface scope before touching the repo (`src/worker.ts:390-418`): `git-receive-pack → source.git.smart_http.write`, else `source.git.smart_http.read`. Per-repo ACL is layered **after** that scope check, never instead of it.
 - `verifyInterfaceOAuthBearer` (`src/interface-oauth-auth.ts:146-201`) proves `scope === expectedPermission` (`:190`), `sub` (`:188`), `workspace_id`/`capsule_id`, and full `interface_binding_id`/revision evidence (`:193-196`) — but currently discards all of it, returning `boolean`. To resolve an automation identity we surface that evidence (below) rather than inventing a new token type.
 - Repo keys are already `owner/name` two-segment strings (`src/git/refs-store.ts:38-42`). We keep that R2 layout verbatim; the owner segment gains a first-class D1 identity but the on-disk key does not move, so no object migration is required.
 
-### 1. Namespace: app-local user/org owners inside the single install Workspace
+### 1. Namespace: app-local user/org owners inside one app
 
-**Decision: the install Workspace is the tenancy root ("the instance"); repos live under app-local `Owner` entities of kind `user` or `org` created *inside* that Workspace. We do NOT map Takosumi teams/groups to orgs.**
+**Decision: the installed app is the tenancy root ("the instance"); repos live under app-local `Owner` entities of kind `user` or `org`. We do NOT map Takosumi teams/groups or app management memberships to orgs.**
 
 Rationale — this is forced by the "no second IdP" constraint:
 
-- Accounts only tells the Capsule two things about a human: the `sub` and the set of `workspace_memberships` (`src/browser-auth.ts:278-300`, `:372-386`). It exposes **no team/group structure** to a Capsule. Mapping Workspace-teams→orgs would require an org-membership authority we do not have and cannot query, and would couple repo ACL to an Accounts group lifecycle Takosumi does not surface. That violates the AGENTS boundary that Accounts owns identity while the Capsule owns product ACL (`docs/collaborative-hosting.md:19-20,68-70`).
-- The single Workspace is the correct analogue of a GitHub *enterprise/instance*, not of a single *org*. Modeling orgs as app-local owners lets one installation host many orgs and many personal namespaces, matching GitHub parity, while every human in all of them still authenticates through the one Workspace membership gate.
+- Accounts supplies human identity and optional app owner/member management claims, not Git team/group grants. Mapping management membership to orgs would couple repository ACLs to a separate authority. Accounts owns identity while the Capsule owns product ACLs (`docs/collaborative-hosting.md`).
+- One app is the analogue of a GitHub *instance*. Modeling orgs as app-local owners lets one installation host many orgs and many personal namespaces; each human authenticates through Accounts and receives repository grants within this app.
 
 Owner model (D1):
 
@@ -869,14 +869,14 @@ async function effectiveRole(db, principal: Principal, repo: RepoRow): Promise<R
   // visibility floor
   const floor: Role | null =
       repo.visibility === "public"   ? "reader"
-    : repo.visibility === "internal" && principal.kind !== "anonymous" ? "reader"  // any workspace member
+    : repo.visibility === "internal" && hasAppMembership(principal) ? "reader"  // app or legacy membership
     : null;                          // private ⇒ no floor
   return maxRole(org, grant, floor); // null if all null
 }
 ```
 
 - **public** → `reader` for everyone incl. `anonymous` (read-only clone/fetch and read API without a session).
-- **internal** → `reader` for any authenticated Workspace member (they already passed the `:406-417` membership gate), never for anonymous.
+- **internal** → `reader` only for current app owner/member or compatible legacy Workspace members. Sign-in alone supplies no internal floor; verified machine capabilities keep their existing scope/ACL checks.
 - **private** → access only via explicit grant or org membership. A private repo returns **404, not 403**, to a principal with `null` role (existence non-disclosure, GitHub parity).
 
 ### 4. One authorization function, called at every enforcement point
@@ -941,7 +941,7 @@ branch_protection(repo_id, pattern, require_pr, required_approvals,
 
 ### 6. Fail-closed properties (does not weaken the existing gates)
 
-- The browser Workspace-membership gate (`src/browser-auth.ts:406-417`, `:539`) is untouched and runs **before** any ACL; ACL can only subtract. No ACL path can admit a session that failed membership.
+- Browser identity and app management claims do not bypass repository ACLs. A foreign capsule or malformed explicit role fails session validation even when legacy Workspace membership matches.
 - The smart_http exact-scope check (`src/worker.ts:408-418`) stays first; the new repo-role check is strictly additional. A push still needs `source.git.smart_http.write` **and** writer **and** protected-ref clearance — three independent AND gates.
 - Missing configuration stays `503` (as `src/forge-api.ts:104-106`, `src/worker.ts:406`); a failed principal resolution degrades to `anonymous` (public-read only), **never** to elevated access.
 - Private-repo non-members receive `404`, not `403` — no existence disclosure.
@@ -1279,7 +1279,7 @@ GitHub‑parity URL scheme so links are shareable and deep‑linkable. `NavLink`
 | `/:owner/:repo/actions` `/actions/runs/:runId` | `ActionsTab` / `RunDetail` | M3 |
 | `/:owner/:repo/settings` | repo settings / ACL / branch rules | M2 |
 
-`:owner/:repo` are flat‑string path segments today (one owner, one name inside `APP_WORKSPACE_ID`), so the current tab‑switch state in `RepoDetail.tsx:120` (`activeTab` signal) is lifted to route segments; the tab bar (`RepoDetail.tsx:452-480`) becomes `<A>` links. Entry point `web/src/index.tsx` mounts `<Router>` with an `<AppShell>` root layout (top bar with repo breadcrumb + session widget) wrapping lazy‑loaded route views — mirroring `takosumi/dashboard/src/index.tsx:44-64`'s `lazy(() => import(...))` pattern, so the diff/PR/Actions view code is not in the initial bundle.
+`:owner/:repo` are flat‑string path segments today (one owner, one name inside the installed app), so the current tab‑switch state in `RepoDetail.tsx:120` (`activeTab` signal) is lifted to route segments; the tab bar (`RepoDetail.tsx:452-480`) becomes `<A>` links. Entry point `web/src/index.tsx` mounts `<Router>` with an `<AppShell>` root layout (top bar with repo breadcrumb + session widget) wrapping lazy‑loaded route views — mirroring `takosumi/dashboard/src/index.tsx:44-64`'s `lazy(() => import(...))` pattern, so the diff/PR/Actions view code is not in the initial bundle.
 
 ### 3. Store / i18n / toast / confirm‑dialog shims to reprovide locally
 
@@ -1296,11 +1296,11 @@ These are pure UI primitives; none reach into the Takos global store, navigation
 
 The SPA authenticates **only** through the browser OIDC cookie session — it never sees Interface OAuth `taksrv_` bearers (those stay unmixed on the Git‑CLI / automation path per `docs/collaborative-hosting.md:57-66`). Concretely:
 
-- An `AuthProvider` context (`web/src/store/session.ts`) calls `GET /api/auth/session` on mount with `credentials: "same-origin"` and exposes `{ authenticated, configured, user }` — the exact shape the current console reads at `worker.ts:190-198`.
+- An `AuthProvider` context (`web/src/store/session.tsx`) calls `GET /api/auth/session` on mount with `credentials: "same-origin"` and exposes sign-in state, user identity and explicit `canManageApp` — the exact shape the current console reads at `worker.ts:190-198`.
 - All API calls use `credentials: "same-origin"` (cookie only); **the SPA carries no token‑paste field** — the console's `taksrv_…` password input (`worker.ts:147-155`, `token` header at `worker.ts:170-173`) is deleted. Interface credentials are a CLI concern, surfaced only as a copyable `git clone` hint, not a browser auth input.
 - Unauthenticated → render a public shell with a **Sign in** link to `/api/auth/login?return_to=<current path>` (`worker.ts:121`). `configured === false` (OIDC unset) → "sign‑in unavailable" state, matching `worker.ts:196`.
 - Sign out → `POST /api/auth/logout` then reload (`worker.ts:203-206`).
-- **Authorization is binary in M1**: session membership in the single `APP_WORKSPACE_ID` is the only gate; there is no per‑repo role yet. `RepoDetail`'s `isAuthenticated`/`onRequireLogin` props (`RepoDetail.tsx:151`, `:242-245`) map to "signed‑in member vs not". Write‑capable chrome (star, fork, delete, PR merge) renders only when authenticated **and** the corresponding write API exists (M2); until then those buttons are hidden, not shown‑then‑403. When per‑repo ACL lands (M2, `collaborative-hosting.md:68-70`), the session response gains a per‑repo `permission` field and the same props switch on it.
+- **Authorization is per repository**: sign-in alone never grants internal access or repository/fork/org creation; those require app owner/member or compatible legacy Workspace membership. Other writes still require repository ACLs. `appRole`/`canManageApp` report current app management claims; namespace ownership, org membership, collaborators, teams and visibility decide Git operations. UI access checks must follow the relevant repository permission.
 
 ### 5. Component inventory + port/rewrite verdict
 

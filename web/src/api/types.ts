@@ -22,7 +22,13 @@ export interface SessionUser {
 }
 
 export type SessionState =
-  | { readonly authenticated: true; readonly user: SessionUser }
+  | {
+      readonly authenticated: true;
+      readonly user: SessionUser;
+      readonly capsuleId: string | null;
+      readonly appRole: "owner" | "member" | null;
+      readonly canManageApp: boolean;
+    }
   | { readonly authenticated: false; readonly configured: boolean };
 
 // ============================================================================
