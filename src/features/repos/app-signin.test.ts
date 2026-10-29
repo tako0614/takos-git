@@ -60,13 +60,13 @@ describe("app sign-in preserves repository ACLs", () => {
               : {}),
         },
       };
-      let active = true;
+      let userInfoFailure: 401 | 503 | null = null;
       const fetchImpl: OAuthFetch = async (input) =>
         new URL(input.toString()).pathname === "/oauth/token"
           ? Response.json({ access_token: "oauth-access", expires_in: 300 })
-          : active
+          : userInfoFailure === null
             ? Response.json(claims)
-            : new Response(null, { status: 401 });
+            : new Response(null, { status: userInfoFailure });
       const login = await handleBrowserAuth(
         new Request("https://git.example/api/auth/login"),
         env,
@@ -179,7 +179,15 @@ describe("app sign-in preserves repository ACLs", () => {
           })
         ).status,
       ).toBe(403);
-      active = false;
+      userInfoFailure = 503;
+      const unavailable = await dispatch(
+        "GET",
+        "/api/v1/repos/acme/public",
+      );
+      expect(unavailable.status).toBe(503);
+      expect(unavailable.headers.get("set-cookie")).toBeNull();
+
+      userInfoFailure = 401;
       const expired = await dispatch("GET", "/api/v1/repos/acme/public");
       expect(expired.status).toBe(401);
       expect(expired.headers.get("set-cookie")).toContain(

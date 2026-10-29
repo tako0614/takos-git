@@ -22,7 +22,12 @@ import {
   authorizeRepo,
   upsertPrincipal,
 } from "./auth/acl.ts";
-import { expiredBrowserSessionResponse, readBrowserSession, type OAuthFetch } from "./browser-auth.ts";
+import {
+  expiredBrowserSessionResponse,
+  readBrowserSessionResult,
+  unavailableBrowserSessionResponse,
+  type OAuthFetch,
+} from "./browser-auth.ts";
 import {
   ACTION_REQUIRED_SCOPE,
   errorBody,
@@ -342,13 +347,30 @@ async function authenticate(
   }
 
   if (def.auth === "browser") {
-    const session = await readBrowserSession(request, env, input.interfaceUserInfoFetch);
-    if (!session) {
+    const sessionResult = await readBrowserSessionResult(
+      request,
+      env,
+      input.interfaceUserInfoFetch,
+    );
+    if (sessionResult.kind !== "session") {
+      if (sessionResult.kind === "accounts_unavailable") {
+        return {
+          ok: false,
+          response:
+            unavailableBrowserSessionResponse(request) ??
+            errorResponse(503, "accounts_unavailable", "Accounts is unavailable."),
+        };
+      }
       return {
         ok: false,
-        response: expiredBrowserSessionResponse(request) ?? errorResponse(401, "unauthenticated", "Sign-in required."),
+        response:
+          expiredBrowserSessionResponse(
+            request,
+            sessionResult.kind === "accounts_unauthorized",
+          ) ?? errorResponse(401, "unauthenticated", "Sign-in required."),
       };
     }
+    const session = sessionResult.session;
     if (!db) {
       return {
         ok: false,

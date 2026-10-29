@@ -19,7 +19,11 @@ import {
   upsertPrincipal,
   type RepoAclRow,
 } from "../../auth/acl.ts";
-import { expiredBrowserSessionResponse, readBrowserSession } from "../../browser-auth.ts";
+import {
+  expiredBrowserSessionResponse,
+  readBrowserSessionResult,
+  unavailableBrowserSessionResponse,
+} from "../../browser-auth.ts";
 import {
   ANONYMOUS_PRINCIPAL,
   SCOPES,
@@ -105,8 +109,13 @@ export async function resolveIdentity(
   }
 
   // 1. Browser OIDC session (carries the full human scope ceiling).
-  const session = await readBrowserSession(request, env, ctx.interfaceUserInfoFetch);
-  if (session) {
+  const sessionResult = await readBrowserSessionResult(
+    request,
+    env,
+    ctx.interfaceUserInfoFetch,
+  );
+  if (sessionResult.kind === "session") {
+    const session = sessionResult.session;
     const principal = await upsertPrincipal(db, {
       issuer: env.OIDC_ISSUER_URL ?? "",
       subject: session.subject,
@@ -119,7 +128,19 @@ export async function resolveIdentity(
     return { principal, channel: "browser", scopes: BROWSER_SCOPES };
   }
 
-  const expired = expiredBrowserSessionResponse(request);
+  if (sessionResult.kind === "accounts_unavailable") {
+    return (
+      unavailableBrowserSessionResponse(request) ??
+      new Response(JSON.stringify({ error: "accounts_unavailable" }), {
+        status: 503,
+        headers: { "content-type": "application/json; charset=utf-8" },
+      })
+    );
+  }
+  const expired = expiredBrowserSessionResponse(
+    request,
+    sessionResult.kind === "accounts_unauthorized",
+  );
   if (expired) return expired;
 
   // 2. Interface OAuth bearer (automation; scope-capped).

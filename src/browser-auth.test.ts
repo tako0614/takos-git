@@ -215,13 +215,29 @@ describe("takos-git browser auth", () => {
           ),
         ).toMatchObject({
           authenticated: true,
-          appRole:
-            role === "viewer" ? null : role === "member" ? "member" : "owner",
+          appRole: role === "viewer" ? null : "member",
           canManageApp: role !== "viewer",
         });
       });
     }
   }
+
+  test("legacy owner role and uncontracted ownerUserId do not promote to app owner", async () => {
+    const { response, fetchImpl } = await completeLogin({
+      sub: "current_account",
+      workspace_memberships: ["workspace_a"],
+      takosumi: {
+        capsule_id: "capsule_git",
+        workspace_id: "workspace_a",
+        role: "owner",
+        ownerUserId: "current_account",
+      },
+    });
+    expect(response.status).toBe(302);
+    expect(
+      await sessionInfo(cookieValue(response, "takos_git_session"), fetchImpl),
+    ).toMatchObject({ appRole: "member", canManageApp: true });
+  });
 
   for (const role of [null, "", "manager", {}, 1]) {
     test(`malformed legacy role cannot grant app membership: ${JSON.stringify(role)}`, async () => {
@@ -291,6 +307,27 @@ describe("takos-git browser auth", () => {
     });
   });
 
+  test("Accounts 5xx and transport failures preserve the session cookie", async () => {
+    const { response } = await completeLogin({ sub: "temporary_accounts_failure" });
+    const cookie = cookieValue(response, "takos_git_session");
+    for (const fetchImpl of [
+      async () => new Response(null, { status: 503 }),
+      async () => new Response(null, { status: 502 }),
+      async () => { throw new Error("Accounts network unavailable"); },
+    ] satisfies OAuthFetch[]) {
+      const failed = await handleBrowserAuth(
+        sessionRequest(cookie),
+        ENV,
+        fetchImpl,
+      );
+      expect(failed?.status).toBe(503);
+      expect(failed?.headers.get("set-cookie")).toBeNull();
+      expect(await failed?.json()).toMatchObject({
+        error: "accounts_unavailable",
+      });
+    }
+  });
+
   test("a matching capsule without a role remains an ordinary user", async () => {
     const { response, fetchImpl } = await completeLogin({
       sub: "ordinary_user", takosumi: { capsule_id: "capsule_git" },
@@ -344,7 +381,13 @@ describe("takos-git browser auth", () => {
     claims = { sub: "other", takosumi: { capsule_id: "capsule_git", app_role: "owner" } };
     expect(await sessionInfo(cookie, live)).toMatchObject({ authenticated: false });
     expect(await sessionInfo(cookie, async () => new Response(null, { status: 401 }))).toMatchObject({ authenticated: false });
-    expect(await sessionInfo(cookie, async () => { throw new Error("unavailable"); })).toMatchObject({ authenticated: false });
+    const unavailable = await handleBrowserAuth(
+      sessionRequest(cookie),
+      ENV,
+      async () => { throw new Error("unavailable"); },
+    );
+    expect(unavailable?.status).toBe(503);
+    expect(unavailable?.headers.get("set-cookie")).toBeNull();
   });
 
   test("encrypted sessions cannot be replayed across app, issuer or client context", async () => {

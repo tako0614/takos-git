@@ -62,14 +62,18 @@ boundary として維持する。D1 はすでに利用できる metadata plane �
   現在の Accounts は `app_role` をまだ返さず、`workspace_memberships` と
   `takosumi: { capsule_id, workspace_id, role }` を返すため、設定済み `APP_WORKSPACE_ID` に一致する
   参加証明を互換として維持する。設定済み Capsule に一致し `app_role` がない場合は、nested
-  `workspace_id` の完全一致と元の `workspace_memberships` または有効な Workspace role の両方を要求する。Workspace の `owner/admin` は owner、`member` は member の
-  管理シグナルとし、`viewer` も従来の Workspace 参加者として internal 閲覧・作成の資格を維持する。
+  `workspace_id` の完全一致と元の `workspace_memberships` または有効な Workspace role の両方を要求する。Legacy Workspace の `owner/admin/member` は app `member` に対応し、Workspace role だけでは app owner に昇格しない。明示的な `app_role: owner` は引き続き app owner とする。`viewer` も従来の Workspace 参加者として internal 閲覧・作成の資格を維持する。
   明示された不正な role、設定済み Capsule または Workspace との実際の不一致は互換 claims があっても拒否する。
   `APP_CAPSULE_ID` が未配送の旧 install は、claim に Capsule が含まれていても Workspace の互換経路を使う。
   claim 自体から期待する Capsule を設定しない。
   `internal` repository の閲覧と repo/fork/org 作成は、アプリ owner/member または旧 Workspace 参加者に限る。
   public の匿名閲覧は維持し、private とその他の操作は namespace・collaborator・team の明示的 ACL で判定する。
   アプリ管理シグナルは他人の repository の owner/maintainer 権限を付与しない。
+
+- TASK-0118 claim rollout: deploy the consuming apps first, then apply the
+  Takosumi Accounts open-sign-in writer B change from PR #657 last. Self-host
+  installs that have not received the app update must keep the configured
+  `APP_WORKSPACE_ID` membership requirement until they update.
   新規セッションは access token を暗号化した HttpOnly cookie とし、毎回の session 読み取りで
   Accounts UserInfo の subject・アプリ・現在の role/参加状態を再検証する。権限を principal DB に保存しない。
   cookie の最大寿命は12時間だが Accounts access token は現在300秒で失効する。
