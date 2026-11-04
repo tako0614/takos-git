@@ -62,21 +62,44 @@ function canonicalWorkerRequest(request: Request): Request {
   );
 }
 
+const NULL_FILE = process.platform === "win32" ? "NUL" : "/dev/null";
+
+function gitCommand(args: string[]): string[] {
+  return [
+    "git", "-c", "credential.helper=", "-c", "http.proxy=",
+    "-c", `core.hooksPath=${NULL_FILE}`, "-c", "core.fsmonitor=false",
+    "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false", ...args,
+  ];
+}
+
+function gitEnvironment(): Record<string, string> {
+  const environment: Record<string, string> = {
+    GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_SYSTEM: NULL_FILE,
+    GIT_CONFIG_GLOBAL: NULL_FILE, GIT_TERMINAL_PROMPT: "0",
+    LANG: "C", LC_ALL: "C",
+  };
+  // Deliberate allowlist: do not inherit credentials, injected Git config,
+  // askpass, proxies, signing commands or the developer's global profile.
+  for (const key of ["PATH", "PATHEXT", "SystemRoot", "SYSTEMROOT", "WINDIR", "COMSPEC", "TMPDIR", "TMP", "TEMP"]) {
+    if (process.env[key] !== undefined) environment[key] = process.env[key]!;
+  }
+  return environment;
+}
+
 function gitAvailable(): boolean {
   try {
-    return Bun.spawnSync(["git", "--version"]).exitCode === 0;
-  } catch {
-    return false;
-  }
+    return Bun.spawnSync(gitCommand(["--version"]), { env: gitEnvironment() }).exitCode === 0;
+  } catch { return false; }
 }
 
 async function runGit(
   args: string[],
   options: { cwd?: string } = {},
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
-  const process = Bun.spawn(["git", ...args], {
+  const process = Bun.spawn(gitCommand(args), {
     ...(options.cwd ? { cwd: options.cwd } : {}),
-    env: { ...globalThis.process.env, GIT_TERMINAL_PROMPT: "0" },
+    env: gitEnvironment(),
+    stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -103,6 +126,7 @@ test("real `git clone` works end-to-end against the standalone worker", async ()
 
   const env = runtimeEnv(bucket);
   const server = Bun.serve({
+    hostname: "127.0.0.1",
     port: 0,
     fetch: (request) => worker.fetch(canonicalWorkerRequest(request), env),
   });
@@ -111,24 +135,16 @@ test("real `git clone` works end-to-end against the standalone worker", async ()
   try {
     // git sends the token as the HTTP Basic password (username ignored).
     const cloneUrl = `http://x:${READ_TOKEN}@127.0.0.1:${server.port}/git/${REPO}.git`;
-    const clone = Bun.spawn(
-      ["git", "-c", "protocol.version=1", "clone", "-q", cloneUrl, dir],
-      {
-        env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
-        stdout: "pipe",
-        stderr: "pipe",
-      },
-    );
-    const exitCode = await clone.exited;
-    const stderr = await new Response(clone.stderr).text();
-    expect(exitCode, `git clone failed: ${stderr}`).toBe(0);
+    const clone = await runGit(["-c", "protocol.version=1", "clone", "-q", cloneUrl, dir]);
+    expect(clone.exitCode, `git clone failed: ${clone.stderr}`).toBe(0);
 
     // The working tree came through intact...
     expect(readFileSync(join(dir, "README.md"), "utf8")).toBe(FILE_CONTENT);
 
     // ...and points at the exact commit we seeded.
-    const revParse = Bun.spawnSync(["git", "-C", dir, "rev-parse", "HEAD"]);
-    expect(new TextDecoder().decode(revParse.stdout).trim()).toBe(
+    const revParse = await runGit(["-C", dir, "rev-parse", "HEAD"]);
+    expect(revParse.exitCode, revParse.stderr).toBe(0);
+    expect(revParse.stdout.trim()).toBe(
       seeded.commitSha,
     );
   } finally {
@@ -143,28 +159,17 @@ test("git clone is refused without a valid token", async () => {
   await seedRepo(bucket, { repo: REPO, content: FILE_CONTENT });
   const env = runtimeEnv(bucket);
   const server = Bun.serve({
+    hostname: "127.0.0.1",
     port: 0,
     fetch: (request) => worker.fetch(canonicalWorkerRequest(request), env),
   });
   const dir = mkdtempSync(join(tmpdir(), "takos-git-noauth-"));
   try {
-    const clone = Bun.spawn(
-      [
-        "git",
-        "-c",
-        "protocol.version=1",
-        "clone",
-        "-q",
-        `http://x:bad@127.0.0.1:${server.port}/git/${REPO}.git`,
-        dir,
-      ],
-      {
-        env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
-        stdout: "pipe",
-        stderr: "pipe",
-      },
-    );
-    expect(await clone.exited).not.toBe(0);
+    const clone = await runGit([
+      "-c", "protocol.version=1", "clone", "-q",
+      `http://x:bad@127.0.0.1:${server.port}/git/${REPO}.git`, dir,
+    ]);
+    expect(clone.exitCode).not.toBe(0);
   } finally {
     server.stop(true);
     rmSync(dir, { recursive: true, force: true });
@@ -199,6 +204,7 @@ test("real Git CLI can push, fast-forward, and reclone while force-push is rejec
   expect(await created.text()).not.toContain('"error"');
 
   const server = Bun.serve({
+    hostname: "127.0.0.1",
     port: 0,
     fetch: (request) => worker.fetch(canonicalWorkerRequest(request), env),
   });
