@@ -98,6 +98,19 @@ DELETEは`?principalId=<一覧のprincipalId>`で一つのgrantへ限定でき�
 selectorを省いた既存API呼出しは、指定subjectの全grantを削除する従来動作を維持する。
 Webの削除は常に対象行のPrincipalを指定する。repo owner・scope・CSRFの判定は共通である。
 
+Organization membershipもアプリ内で管理する。`GET /api/v1/orgs/:org/members`は現在のorg memberと
+`source.git.hosting.read`を要求し、`limit`（1–100、既定100）・opaque `cursor`で一覧を返す。
+`PUT /api/v1/orgs/:org/members/:subject`は現在のorg adminと`source.git.hosting.admin`を要求し、
+bodyの`role: admin | member`と、automationの場合はexact `bindingId`を保存する。
+`DELETE /api/v1/orgs/:org/members/:principalId`は一覧・PUTが返すPrincipal IDのmembershipだけを取り消す。
+Browserは同じhandlerの既存session/CSRF検証を使い、他bindingのmembershipを推測しない。
+書込みstatement内でcallerの現在のadmin資格と最後のadminを保護し、guardで拒否した既存rowを成功扱いしない。
+
+通常のautomation導入は、org作成者がMCP bindingへ明示的なorg admin membershipを付与し、
+MCPでorg内repoを作成後、Git bindingへそのrepoのwriter等を明示的に付与する。
+API・MCP・Gitのbindingを同subjectだけで同一視しない。取り消しもそれぞれのmembership/grantを選択する。
+Accounts roleやWorkspace参加をorg adminの代わりにしない。DBなしのscope-only Git/MCP互換は変更しない。
+
 ## Product milestones
 
 ### M1: hosting shell
