@@ -12,6 +12,15 @@ import { join } from "node:path";
 import { createGitWorker, type Env } from "./worker.ts";
 import { MemoryBucket } from "./test-bucket.ts";
 import { seedRepo } from "./seed.ts";
+import { upsertPrincipal } from "./auth/acl.ts";
+import { getRepoRow } from "./features/repos/repositories.ts";
+import {
+  makeEnv,
+  TEST_APP_URL,
+  TEST_CAPSULE,
+  TEST_ISSUER,
+  TEST_WORKSPACE,
+} from "./features/repos/testkit.ts";
 
 const REPO = "acme/widgets";
 const FILE_CONTENT = "hello from the standalone takos-git service\n";
@@ -110,6 +119,161 @@ async function runGit(
   ]);
   return { exitCode, stdout, stderr };
 }
+
+// Synthetic UserInfo only: MCP and Git remain distinct Interface identities.
+const METADATA_MCP_TOKEN = "taksrv_git_metadata_mcp";
+
+function metadataFixture() {
+  const handle = makeEnv();
+  const worker = createGitWorker(async (_input, init) => {
+    const token = new Headers(init?.headers).get("authorization")?.replace(/^Bearer\s+/u, "");
+    if (token !== METADATA_MCP_TOKEN && token !== READ_TOKEN && token !== WRITE_TOKEN) {
+      return new Response(null, { status: 401 });
+    }
+    const mcp = token === METADATA_MCP_TOKEN;
+    return Response.json({
+      token_use: "interface_oauth",
+      sub: "principal_git_cli",
+      aud: `${TEST_APP_URL}/${mcp ? "mcp" : "git"}`,
+      scope: mcp ? "mcp.invoke" : token === WRITE_TOKEN
+        ? "source.git.smart_http.write" : "source.git.smart_http.read",
+      takosumi: {
+        workspace_id: TEST_WORKSPACE,
+        capsule_id: TEST_CAPSULE,
+        interface_id: mcp ? "interface_mcp" : "interface_git",
+        interface_binding_id: mcp ? "binding_creator_mcp" : "binding_writer_git",
+        interface_resolved_revision: 1,
+      },
+    });
+  });
+  const call = async (name: string, repo: string, token = METADATA_MCP_TOKEN) => {
+    const response = await worker.fetch(new Request(`${TEST_APP_URL}/mcp`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: { repo } } }),
+    }), handle.env);
+    expect(response.status).toBe(200);
+    return response.json() as Promise<{
+      result?: { structuredContent: { repo: string; url: string; refs?: { name: string; sha: string }[] } };
+      error?: { message: string };
+    }>;
+  };
+  return { ...handle, worker, call };
+}
+
+test("metadata MCP clone URL supports real Git with canonical owner and distinct binding", async () => {
+  expect(gitAvailable()).toBe(true);
+  const handle = metadataFixture();
+  await handle.call("git_repo_create", "Alice/bootstrap");
+  const created = await handle.call("git_repo_create", "aLICE/Widgets");
+  expect(created.error).toBeUndefined();
+  const row = await getRepoRow(handle.db, "alice", "widgets");
+  expect(row?.storageKey).toBe("Alice/Widgets");
+  const principal = await upsertPrincipal(handle.db, {
+    issuer: TEST_ISSUER, subject: "principal_git_cli", kind: "service_account",
+    bindingId: "binding_writer_git",
+  });
+  const server = Bun.serve({
+    hostname: "127.0.0.1", port: 0,
+    fetch: (request) => handle.worker.fetch(canonicalWorkerRequest(request), handle.env),
+  });
+  const root = mkdtempSync(join(tmpdir(), "takos-git-metadata-cli-"));
+  const source = join(root, "source");
+  const clone = join(root, "clone");
+  // Preserve the returned path exactly; only map the canonical origin to loopback.
+  const remote = new URL(created.result!.structuredContent.url);
+  remote.protocol = "http:";
+  remote.host = `127.0.0.1:${server.port}`;
+  const canonicalRemote = new URL(remote);
+  canonicalRemote.pathname = `/git/${row!.storageKey}.git`;
+  const auth = (token: string) => ["-c", `http.extraHeader=Authorization: Bearer ${token}`];
+  try {
+    // Same subject does not inherit the creator's distinct binding authority.
+    expect((await runGit([...auth(READ_TOKEN), "ls-remote", canonicalRemote.href])).exitCode).not.toBe(0);
+    await handle.db.run(
+      `INSERT INTO repo_collaborators (repo_id, principal_id, role, created_at) VALUES (?, ?, 'writer', ?)`,
+      [row!.id, principal.id, handle.db.now()],
+    );
+    const control = await runGit([...auth(READ_TOKEN), "ls-remote", canonicalRemote.href]);
+    expect(control.exitCode, control.stderr).toBe(0);
+    const accessible = await runGit([...auth(READ_TOKEN), "ls-remote", remote.href]);
+    expect(accessible.exitCode, accessible.stderr).toBe(0);
+    expect(created.result!.structuredContent.repo).toBe("Alice/Widgets");
+    expect(created.result!.structuredContent.url).toBe(`${TEST_APP_URL}/git/Alice/Widgets.git`);
+
+    const initialClone = await runGit([...auth(READ_TOKEN), "-c", "protocol.version=1", "clone", "-q", remote.href, source]);
+    expect(initialClone.exitCode, initialClone.stderr).toBe(0);
+    expect((await runGit(["symbolic-ref", "HEAD", "refs/heads/main"], { cwd: source })).exitCode).toBe(0);
+    const commit = async (content: string) => {
+      writeFileSync(join(source, "README.md"), content);
+      expect((await runGit(["add", "README.md"], { cwd: source })).exitCode).toBe(0);
+      const result = await runGit(["-c", "user.name=Git Fixture", "-c", "user.email=git-fixture@example.test", "commit", "-q", "-m", "fixture"], { cwd: source });
+      expect(result.exitCode, result.stderr).toBe(0);
+    };
+    await commit("first\n");
+    const push = await runGit([...auth(WRITE_TOKEN), "push", "-q", "origin", "main"], { cwd: source });
+    expect(push.exitCode, push.stderr).toBe(0);
+    const firstInfo = await handle.call("git_repo_info", "ALICE/widgets");
+    expect(firstInfo.error).toBeUndefined();
+    expect(firstInfo.result!.structuredContent.repo).toBe("Alice/Widgets");
+    expect(firstInfo.result!.structuredContent.url).toBe(created.result!.structuredContent.url);
+    const reclone = await runGit([...auth(READ_TOKEN), "-c", "protocol.version=1", "clone", "-q", remote.href, clone]);
+    expect(reclone.exitCode, reclone.stderr).toBe(0);
+    expect(readFileSync(join(clone, "README.md"), "utf8")).toBe("first\n");
+    await commit("second\n");
+    const secondPush = await runGit([...auth(WRITE_TOKEN), "push", "-q", "origin", "main"], { cwd: source });
+    expect(secondPush.exitCode, secondPush.stderr).toBe(0);
+    const fetch = await runGit([...auth(READ_TOKEN), "pull", "--ff-only", "-q"], { cwd: clone });
+    expect(fetch.exitCode, fetch.stderr).toBe(0);
+    expect(readFileSync(join(clone, "README.md"), "utf8")).toBe("second\n");
+    const head = await runGit(["rev-parse", "HEAD"], { cwd: source });
+    expect(head.exitCode).toBe(0);
+    expect((await runGit(["rev-parse", "HEAD"], { cwd: clone })).stdout).toBe(head.stdout);
+    const info = await handle.call("git_repo_info", "alice/WIDGETS");
+    expect(info.error).toBeUndefined();
+    expect(info.result!.structuredContent.refs).toContainEqual({ name: "refs/heads/main", sha: head.stdout.trim() });
+  } finally {
+    server.stop(true);
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 30_000);
+
+test("metadata MCP info resolves the persisted owner and repository spelling", async () => {
+  const handle = metadataFixture();
+  const created = await handle.call("git_repo_create", "Alice/Widgets");
+  expect(created.error).toBeUndefined();
+  const info = await handle.call("git_repo_info", "aLICE/wIDGETS");
+  expect(info.error).toBeUndefined();
+  expect(info.result?.structuredContent).toEqual({
+    repo: "Alice/Widgets", url: `${TEST_APP_URL}/git/Alice/Widgets.git`,
+    defaultBranch: null, refs: [],
+  });
+});
+
+test("standalone MCP retains R2-only repositories and canonical metadata URLs", async () => {
+  const handle = metadataFixture();
+  handle.env.PUBLISHED_MCP_AUTH_TOKEN = MCP_TOKEN;
+  await handle.call("git_repo_create", "Alice/bootstrap", MCP_TOKEN);
+  const created = await handle.call("git_repo_create", "aLICE/Widgets", MCP_TOKEN);
+  expect(created.error).toBeUndefined();
+  expect(created.result?.structuredContent.repo).toBe("Alice/Widgets");
+  const info = await handle.call("git_repo_info", "ALICE/widgets", MCP_TOKEN);
+  expect(info.error).toBeUndefined();
+  expect(info.result?.structuredContent.url).toBe(`${TEST_APP_URL}/git/Alice/Widgets.git`);
+  // Legacy trusted lookup does not acquire a new metadata-row requirement.
+  await seedRepo(handle.bucket, { repo: "Legacy/Unindexed", content: "legacy\n" });
+  const legacy = await handle.call("git_repo_info", "Legacy/Unindexed", MCP_TOKEN);
+  expect(legacy.error).toBeUndefined();
+  expect(legacy.result?.structuredContent.repo).toBe("Legacy/Unindexed");
+
+  handle.env.DB = undefined;
+  const direct = await handle.call("git_repo_create", "MiXeD/Case");
+  expect(direct.error).toBeUndefined();
+  expect(direct.result?.structuredContent.repo).toBe("MiXeD/Case");
+  const directInfo = await handle.call("git_repo_info", "MiXeD/Case");
+  expect(directInfo.error).toBeUndefined();
+  expect(directInfo.result?.structuredContent.url).toBe(`${TEST_APP_URL}/git/MiXeD/Case.git`);
+});
 
 test("real `git clone` works end-to-end against the standalone worker", async () => {
   if (!gitAvailable()) {

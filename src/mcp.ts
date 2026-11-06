@@ -31,6 +31,7 @@ import {
   type OwnerRow,
 } from "./features/repos/owners.ts";
 import {
+  cloneUrlFor,
   deleteRepository,
   getRepoRow,
   listReadableRepos,
@@ -299,7 +300,7 @@ const TOOLS: readonly ToolDefinition[] = [
       openWorldHint: false,
     },
     async call(args, { env, origin, auth, db }) {
-      const repo = requireRepo(args);
+      let repo = requireRepo(args);
       const interfaceAuth = await interfacePrincipal(auth, env, db);
       if (db) {
         // D1 configured → create the metadata row (via the same repos service)
@@ -338,13 +339,14 @@ const TOOLS: readonly ToolDefinition[] = [
           name: name as string,
         });
         if (!result.ok) throw new Error("repository already exists");
+        repo = result.repo.storageKey;
       } else {
         const created = await createRepo(env.BUCKET, repo);
         if (!created) throw new Error("repository already exists");
       }
       return {
         repo,
-        url: `${origin}/git/${repo.split("/").map(encodeURIComponent).join("/")}.git`,
+        url: cloneUrlFor(origin, repo),
       };
     },
   },
@@ -359,7 +361,7 @@ const TOOLS: readonly ToolDefinition[] = [
       openWorldHint: false,
     },
     async call(args, { env, origin, auth, db }) {
-      const repo = requireRepo(args);
+      let repo = requireRepo(args);
       const interfaceAuth = await interfacePrincipal(auth, env, db);
       if (interfaceAuth) {
         const [owner, name] = repo.split("/");
@@ -372,12 +374,17 @@ const TOOLS: readonly ToolDefinition[] = [
         );
         if (!decision.allow) throw new Error(decision.reason);
       }
+      if (db) {
+        const [owner, name] = repo.split("/");
+        const row = await getRepoRow(db, owner as string, name as string);
+        if (row) repo = row.storageKey;
+      }
       if (!(await repoExists(env.BUCKET, repo)))
         throw new Error("repository not found");
       const refs = await readRepoRefs(env.BUCKET, repo);
       return {
         repo,
-        url: `${origin}/git/${repo.split("/").map(encodeURIComponent).join("/")}.git`,
+        url: cloneUrlFor(origin, repo),
         defaultBranch: refs.defaultBranch,
         refs: refs.refs,
       };
