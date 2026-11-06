@@ -153,10 +153,12 @@ HCLの既定値はどちらも `false` のままで、変更しない場合はWo
 
 新規のdirect導入では「ログイン用の鍵をこのインストールで管理」
 (`manage_browser_session = true`) を明示的に選べます。既定は `false` で、既存の手動
-`app_session_secret` と同時には使えません。Workerを配置する場合だけ、公開URL・OIDC・
-Capsule/Workspace・callbackの既存条件を確認してから、アプリ所有の鍵を生成します。
+`app_session_secret` と同時には使えません（空白だけの手動設定も拒否します）。
+管理flagで専用の鍵を一つ保持し、Workerを配置するときは公開URL・OIDC・
+Capsule/Workspace・callbackの既存条件を確認します。
 鍵はprivateなOpenTofu stateに保存し、Workerへは `secret_text` で渡します。
-画面の公開設定やOutputへは渡しません。通常のWorker更新で鍵を再生成しません。
+画面の公開設定やOutputへは渡しません。通常のWorker更新や一時停止・再開でも、
+管理flagとprivate stateを維持して同じ鍵を保持します。Workerを停止するだけでは鍵を削除しません。
 
 このmodeは新規導入用です。既存installの鍵・mode・stateを変更/再作成すると、
 ブラウザsessionと、同じ鍵へfallbackしていたwebhookの暗号化/署名にも影響します。

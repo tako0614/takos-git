@@ -174,9 +174,10 @@ run "mismatched_callback_refused" {
   expect_failures = [random_password.browser_session]
 }
 
-run "disabled_worker_has_no_key_resource" {
+run "default_inactive_deployment_has_no_key_resource" {
   command = plan
   variables {
+    manage_browser_session          = false
     enable_cloudflare_resources     = false
     enable_cloudflare_worker_script = false
   }
@@ -200,4 +201,52 @@ run "disabling_management_without_replacement_refused" {
     manage_browser_session = false
   }
   expect_failures = [cloudflare_workers_script.worker]
+}
+
+run "managed_worker_pause_retains_private_key" {
+  command = apply
+  variables {
+    enable_cloudflare_worker_script = false
+  }
+  assert {
+    condition     = length(cloudflare_workers_script.worker) == 0 && length(random_password.browser_session) == 1
+    error_message = "Worker pause must retain the key that protects sessions and stored secrets."
+  }
+}
+
+run "managed_worker_resume_reuses_private_key" {
+  command = plan
+  assert {
+    condition     = random_password.browser_session[0].id == "fixture-only-browser-key-resource"
+    error_message = "Worker resume must retain the same managed key resource."
+  }
+  assert {
+    condition     = nonsensitive(random_password.browser_session[0].result) == "fixture-only-browser-session-key-never-issued-00000000000000000000"
+    error_message = "Worker resume must reuse the retained private key."
+  }
+}
+
+run "paused_worker_context_changes_do_not_discard_key" {
+  command = plan
+  variables {
+    enable_cloudflare_resources     = false
+    enable_cloudflare_worker_script = false
+    public_url                      = ""
+    takosumi_accounts_issuer_url    = ""
+    takosumi_accounts_client_id     = ""
+    takosumi_accounts_redirect_uri  = ""
+    app_capsule_id                  = ""
+  }
+  assert {
+    condition     = random_password.browser_session[0].id == "fixture-only-browser-key-resource"
+    error_message = "Paused runtime inputs must not discard the managed key."
+  }
+}
+
+run "managed_whitespace_manual_value_is_refused" {
+  command = plan
+  variables {
+    app_session_secret = " \n\t "
+  }
+  expect_failures = [random_password.browser_session]
 }

@@ -104,10 +104,12 @@ default to false.
 
 For a **new** direct installation, `manage_browser_session = true` lets the app
 manage its browser sign-in key in private OpenTofu state. It cannot be combined
-with a manually supplied `app_session_secret`. The key is generated only for an
-enabled Worker after checking its public URL, OIDC/context and callback
-prerequisites. It reaches the Worker as `secret_text`, never as a public setting
-or Output, and ordinary Worker updates retain the same key. This does not enable
+with a manually supplied `app_session_secret`, including whitespace-only input.
+The explicit management flag retains a dedicated key independently of Worker
+lifetime. An enabled Worker still requires valid public URL, OIDC/context and
+callback prerequisites. The key reaches it as `secret_text`, never as a public
+setting or Output. Ordinary updates and Worker pause/resume retain the same key
+while the management flag and private state are kept. This does not enable
 the portable module's browser launcher or runtime delivery.
 
 Keep the installation's private state and source pin. Changing or losing the key

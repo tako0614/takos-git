@@ -430,21 +430,23 @@ locals {
 # unknown OIDC/context values out of count: check them before provider Create.
 # The Worker consumes this sensitive result only after these checks succeed.
 resource "random_password" "browser_session" {
-  count   = var.manage_browser_session && local.cloudflare_worker_enabled ? 1 : 0
+  # The private key also protects stored webhook/Actions secrets. Retain it
+  # while management is selected, including across Worker pause and resume.
+  count   = var.manage_browser_session ? 1 : 0
   length  = 64
   special = false
 
   lifecycle {
     precondition {
-      condition     = trimspace(var.app_session_secret) == ""
+      condition     = var.app_session_secret == ""
       error_message = "Choose either manage_browser_session or an operator-provided app_session_secret, never both."
     }
     precondition {
-      condition     = local.browser_auth_context_ready && local.launch_url != null
+      condition     = !local.cloudflare_worker_enabled || (local.browser_auth_context_ready && local.launch_url != null)
       error_message = "Managed browser sessions require a public URL, OIDC issuer/client, and Capsule or legacy Workspace context."
     }
     precondition {
-      condition     = trimspace(var.takosumi_accounts_redirect_uri) == "" || var.takosumi_accounts_redirect_uri == "${trimsuffix(local.launch_url != null ? local.launch_url : "", "/")}/api/auth/callback"
+      condition     = !local.cloudflare_worker_enabled || trimspace(var.takosumi_accounts_redirect_uri) == "" || var.takosumi_accounts_redirect_uri == "${trimsuffix(local.launch_url != null ? local.launch_url : "", "/")}/api/auth/callback"
       error_message = "The registered Accounts callback must match the canonical Git public URL."
     }
   }
@@ -701,7 +703,7 @@ resource "cloudflare_workers_script" "worker" {
 
   lifecycle {
     precondition {
-      condition     = !var.manage_browser_session || trimspace(var.app_session_secret) == ""
+      condition     = !var.manage_browser_session || var.app_session_secret == ""
       error_message = "Choose either manage_browser_session or an operator-provided app_session_secret, never both."
     }
     precondition {
