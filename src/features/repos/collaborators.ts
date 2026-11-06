@@ -73,10 +73,11 @@ const listCollaborators: Route["handler"] = async (ctx) => {
   const rows = await ctx.db!.query<{
     principal_id: string;
     subject: string;
+    binding_id: string;
     display_name: string | null;
     role: string;
   }>(
-    `SELECT rc.principal_id, rc.role, p.subject, p.display_name
+    `SELECT rc.principal_id, rc.role, p.subject, p.binding_id, p.display_name
        FROM repo_collaborators rc
        JOIN principals p ON p.id = rc.principal_id
       WHERE rc.repo_id = ?
@@ -86,6 +87,8 @@ const listCollaborators: Route["handler"] = async (ctx) => {
   return json({
     collaborators: rows.map((row) => ({
       principalId: row.principal_id,
+      principal: { id: row.principal_id, subject: row.subject, displayName: row.display_name },
+      bindingId: row.binding_id || null,
       subject: row.subject,
       displayName: row.display_name,
       role: row.role,
@@ -136,13 +139,20 @@ const deleteCollaborator: Route["handler"] = async (ctx) => {
     return errorResponse(403, "forbidden", "Owner role required.");
   }
   const subject = ctx.params.principal;
+  const principalId = ctx.url.searchParams.get("principalId");
+  if (ctx.url.searchParams.getAll("principalId").length > 1 || (principalId !== null && (
+    !principalId || principalId.length > 512 || /[\x00-\x20\x7f]/u.test(principalId)
+  ))) {
+    return errorResponse(400, "invalid_principal", "Invalid collaborator Principal id.");
+  }
   await ctx.db!.run(
     `DELETE FROM repo_collaborators
       WHERE repo_id = ?
         AND principal_id IN (
-          SELECT id FROM principals WHERE issuer = ? AND subject = ?
+          SELECT id FROM principals WHERE issuer = ? AND subject = ?${principalId === null ? "" : " AND id = ?"}
         )`,
-    [access.repo.id, new URL(ctx.env.OIDC_ISSUER_URL ?? "").origin, subject],
+    [access.repo.id, new URL(ctx.env.OIDC_ISSUER_URL ?? "").origin, subject,
+      ...(principalId === null ? [] : [principalId])],
   );
   return json({ removed: true });
 };

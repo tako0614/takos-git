@@ -15,11 +15,14 @@ export const collaboratorsApi = {
   list(owner: string, repo: string, signal?: AbortSignal): Promise<Page<CollaboratorDto>> {
     return getPage<CollaboratorDto>(`${repoPath(owner, repo)}/collaborators`, "collaborators", {}, signal);
   },
-  set(owner: string, repo: string, principal: string, role: Role): Promise<void> {
-    return api.put(`${repoPath(owner, repo)}/collaborators/${encodeURIComponent(principal)}`, { role });
+  set(owner: string, repo: string, principal: string, role: Role, bindingId?: string): Promise<void> {
+    return api.put(`${repoPath(owner, repo)}/collaborators/${encodeURIComponent(principal)}`, {
+      role, ...(bindingId === undefined ? {} : { bindingId }),
+    });
   },
-  remove(owner: string, repo: string, principal: string): Promise<void> {
-    return api.del(`${repoPath(owner, repo)}/collaborators/${encodeURIComponent(principal)}`);
+  remove(owner: string, repo: string, principal: string, principalId?: string): Promise<void> {
+    const query = principalId === undefined ? "" : `?principalId=${encodeURIComponent(principalId)}`;
+    return api.del(`${repoPath(owner, repo)}/collaborators/${encodeURIComponent(principal)}${query}`);
   },
 };
 

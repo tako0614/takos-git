@@ -490,6 +490,8 @@ export interface CombinedStatusDto {
 
 export interface CollaboratorDto {
   readonly principal: PrincipalRef;
+  readonly principalId: string;
+  readonly bindingId: string | null;
   readonly role: "reader" | "writer" | "maintainer" | "owner";
 }
 
