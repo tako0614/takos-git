@@ -1032,6 +1032,9 @@ Visibility is a first-class `public|private|internal` column (roadmap M2); `inte
 | GET | `/api/v1/repos/:owner/:repo/collaborators` | hosting.read / reader | List collaborators + roles | NEW |
 | PUT | `/api/v1/repos/:owner/:repo/collaborators/:principal` | hosting.admin / owner | Add/set role (`reader\|writer\|maintainer\|admin`) | NEW |
 | DELETE | `/api/v1/repos/:owner/:repo/collaborators/:principal` | hosting.admin / owner | Remove collaborator | NEW |
+| GET | `/api/v1/orgs/:org/members` | hosting.read / current org-member | List bounded Principal/binding memberships (`limit`, `cursor`) | NEW |
+| PUT | `/api/v1/orgs/:org/members/:principal` | hosting.admin / current org-admin | Add/set membership (`admin\|member`, optional exact `bindingId`) | NEW |
+| DELETE | `/api/v1/orgs/:org/members/:principalId` | hosting.admin / current org-admin | Remove one Principal membership; retain the last admin | NEW |
 | GET | `/api/v1/orgs/:org/teams` | hosting.read / org-member | List teams | NEW |
 | POST/PATCH/DELETE | `/api/v1/orgs/:org/teams[/:team]` | hosting.admin / org-admin | Team CRUD | NEW |
 | PUT/DELETE | `/api/v1/orgs/:org/teams/:team/members/:principal` | hosting.admin / org-admin | Team membership | NEW |
@@ -1042,6 +1045,10 @@ automation, mutation bodies also carry the exact `bindingId`; an ambiguous
 subject-only lookup fails closed. ACL rows are app-local D1
 (`docs/collaborative-hosting.md:68`); takos-git does not mint one Takosumi
 Interface per repo.
+
+Org member PUT and DELETE recheck current caller-admin membership and retain at least one admin in the same SQL write.
+GET includes a current membership witness in its paged query; a different binding of the same subject is not a member.
+The org-member DELETE path uses the opaque `principalId` returned by membership responses, rather than a subject-wide revoke.
 
 #### 4.3 Branch protection (net-new; replaces `isProtected` boolean stub)
 

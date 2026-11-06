@@ -55,6 +55,9 @@ const repoRoutes: readonly Route[] = [
 
   // --- orgs & teams ---
   { method: "POST", path: "/api/v1/orgs", auth: "public", handler: repoAdminHandlers.createOrg },
+  { method: "GET", path: `${ORG}/members`, auth: "public", handler: collaboratorHandlers.listOrgMembers },
+  { method: "PUT", path: `${ORG}/members/:principal`, auth: "public", handler: collaboratorHandlers.putOrgMember },
+  { method: "DELETE", path: `${ORG}/members/:principalId`, auth: "public", handler: collaboratorHandlers.deleteOrgMember },
   { method: "GET", path: `${ORG}/teams`, auth: "public", handler: collaboratorHandlers.listTeams },
   { method: "POST", path: `${ORG}/teams`, auth: "public", handler: collaboratorHandlers.createTeam },
   { method: "PUT", path: `${ORG}/teams/:team/members/:principal`, auth: "public", handler: collaboratorHandlers.putTeamMember },

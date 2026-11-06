@@ -12,13 +12,11 @@ import { join } from "node:path";
 import { createGitWorker, type Env } from "./worker.ts";
 import { MemoryBucket } from "./test-bucket.ts";
 import { seedRepo } from "./seed.ts";
-import { upsertPrincipal } from "./auth/acl.ts";
-import { getRepoRow } from "./features/repos/repositories.ts";
 import {
+  jsonRequest,
   makeEnv,
   TEST_APP_URL,
   TEST_CAPSULE,
-  TEST_ISSUER,
   TEST_WORKSPACE,
 } from "./features/repos/testkit.ts";
 
@@ -122,26 +120,31 @@ async function runGit(
 
 // Synthetic UserInfo only: MCP and Git remain distinct Interface identities.
 const METADATA_MCP_TOKEN = "taksrv_git_metadata_mcp";
+const METADATA_API_ADMIN = "taksrv_git_metadata_api_admin";
+const METADATA_API_READ = "taksrv_git_metadata_api_read";
 
 function metadataFixture() {
   const handle = makeEnv();
   const worker = createGitWorker(async (_input, init) => {
     const token = new Headers(init?.headers).get("authorization")?.replace(/^Bearer\s+/u, "");
-    if (token !== METADATA_MCP_TOKEN && token !== READ_TOKEN && token !== WRITE_TOKEN) {
+    if (token !== METADATA_MCP_TOKEN && token !== READ_TOKEN && token !== WRITE_TOKEN && token !== METADATA_API_ADMIN && token !== METADATA_API_READ) {
       return new Response(null, { status: 401 });
     }
     const mcp = token === METADATA_MCP_TOKEN;
+    const api = token === METADATA_API_ADMIN || token === METADATA_API_READ;
     return Response.json({
       token_use: "interface_oauth",
       sub: "principal_git_cli",
-      aud: `${TEST_APP_URL}/${mcp ? "mcp" : "git"}`,
-      scope: mcp ? "mcp.invoke" : token === WRITE_TOKEN
+      aud: `${TEST_APP_URL}/${mcp ? "mcp" : api ? "api/v1" : "git"}`,
+      scope: mcp ? "mcp.invoke" : api
+        ? token === METADATA_API_ADMIN ? "source.git.hosting.admin" : "source.git.hosting.read"
+        : token === WRITE_TOKEN
         ? "source.git.smart_http.write" : "source.git.smart_http.read",
       takosumi: {
         workspace_id: TEST_WORKSPACE,
         capsule_id: TEST_CAPSULE,
-        interface_id: mcp ? "interface_mcp" : "interface_git",
-        interface_binding_id: mcp ? "binding_creator_mcp" : "binding_writer_git",
+        interface_id: mcp ? "interface_mcp" : api ? "interface_hosting" : "interface_git",
+        interface_binding_id: mcp ? "binding_creator_mcp" : api ? "binding_owner_api" : "binding_writer_git",
         interface_resolved_revision: 1,
       },
     });
@@ -158,21 +161,27 @@ function metadataFixture() {
       error?: { message: string };
     }>;
   };
-  return { ...handle, worker, call };
+  const api = (method: string, path: string, body?: unknown) => worker.fetch(
+    jsonRequest(method, path, body, method === "GET" ? METADATA_API_READ : METADATA_API_ADMIN), handle.env,
+  );
+  return { ...handle, worker, call, api };
 }
 
-test("metadata MCP clone URL supports real Git with canonical owner and distinct binding", async () => {
+test("normal org and grant APIs authorize MCP creation and a distinct real Git binding", async () => {
   expect(gitAvailable()).toBe(true);
   const handle = metadataFixture();
-  await handle.call("git_repo_create", "Alice/bootstrap");
+  expect((await handle.api("POST", "/api/v1/orgs", { login: "Alice" })).status).toBe(201);
+  const mcpGrant = await handle.api("PUT", "/api/v1/orgs/alice/members/principal_git_cli", {
+    role: "admin", bindingId: "binding_creator_mcp",
+  });
+  expect(mcpGrant.status).toBe(200);
+  const mcpPrincipalId = (await mcpGrant.json() as { member: { principalId: string } }).member.principalId;
   const created = await handle.call("git_repo_create", "aLICE/Widgets");
   expect(created.error).toBeUndefined();
-  const row = await getRepoRow(handle.db, "alice", "widgets");
-  expect(row?.storageKey).toBe("Alice/Widgets");
-  const principal = await upsertPrincipal(handle.db, {
-    issuer: TEST_ISSUER, subject: "principal_git_cli", kind: "service_account",
-    bindingId: "binding_writer_git",
-  });
+  const read = await handle.api("GET", "/api/v1/repos/alice/widgets");
+  expect(read.status).toBe(200);
+  const repository = (await read.json() as { repository: { fullName: string; cloneUrl: string } }).repository;
+  expect(repository.fullName).toBe("Alice/Widgets");
   const server = Bun.serve({
     hostname: "127.0.0.1", port: 0,
     fetch: (request) => handle.worker.fetch(canonicalWorkerRequest(request), handle.env),
@@ -184,16 +193,18 @@ test("metadata MCP clone URL supports real Git with canonical owner and distinct
   const remote = new URL(created.result!.structuredContent.url);
   remote.protocol = "http:";
   remote.host = `127.0.0.1:${server.port}`;
-  const canonicalRemote = new URL(remote);
-  canonicalRemote.pathname = `/git/${row!.storageKey}.git`;
+  const canonicalRemote = new URL(repository.cloneUrl);
+  canonicalRemote.protocol = remote.protocol;
+  canonicalRemote.host = remote.host;
   const auth = (token: string) => ["-c", `http.extraHeader=Authorization: Bearer ${token}`];
   try {
     // Same subject does not inherit the creator's distinct binding authority.
     expect((await runGit([...auth(READ_TOKEN), "ls-remote", canonicalRemote.href])).exitCode).not.toBe(0);
-    await handle.db.run(
-      `INSERT INTO repo_collaborators (repo_id, principal_id, role, created_at) VALUES (?, ?, 'writer', ?)`,
-      [row!.id, principal.id, handle.db.now()],
-    );
+    const grant = await handle.api("PUT", "/api/v1/repos/alice/widgets/collaborators/principal_git_cli", {
+      role: "writer", bindingId: "binding_writer_git",
+    });
+    expect(grant.status).toBe(200);
+    const gitPrincipalId = (await grant.json() as { principalId: string }).principalId;
     const control = await runGit([...auth(READ_TOKEN), "ls-remote", canonicalRemote.href]);
     expect(control.exitCode, control.stderr).toBe(0);
     const accessible = await runGit([...auth(READ_TOKEN), "ls-remote", remote.href]);
@@ -232,6 +243,11 @@ test("metadata MCP clone URL supports real Git with canonical owner and distinct
     const info = await handle.call("git_repo_info", "alice/WIDGETS");
     expect(info.error).toBeUndefined();
     expect(info.result!.structuredContent.refs).toContainEqual({ name: "refs/heads/main", sha: head.stdout.trim() });
+    expect((await handle.api("DELETE", `/api/v1/repos/alice/widgets/collaborators/principal_git_cli?principalId=${encodeURIComponent(gitPrincipalId)}`)).status).toBe(200);
+    expect((await runGit([...auth(READ_TOKEN), "ls-remote", remote.href])).exitCode).not.toBe(0);
+    expect((await handle.api("DELETE", `/api/v1/orgs/alice/members/${encodeURIComponent(mcpPrincipalId)}`)).status).toBe(200);
+    expect((await handle.call("git_repo_create", "Alice/after-revocation")).error?.message).toBe("forbidden");
+    expect((await handle.api("GET", "/api/v1/repos/alice/widgets")).status).toBe(200);
   } finally {
     server.stop(true);
     rmSync(root, { recursive: true, force: true });

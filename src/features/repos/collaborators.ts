@@ -186,6 +186,132 @@ async function requireOrgAdmin(
   return { ownerId: org.id, auth: identity };
 }
 
+function validMemberIdentifier(value: string): boolean {
+  return value.length > 0 && value.length <= 512 && !/[\s\x00-\x1f\x7f]/u.test(value);
+}
+
+async function deniedOrgMembershipWrite(ctx: RouteContext, access: OrgAdminAccess): Promise<Response> {
+  if (await orgMembershipRole(ctx.db!, access.ownerId, access.auth.principal.id) !== "admin") {
+    return errorResponse(403, "forbidden", "Org admin role required.");
+  }
+  return errorResponse(409, "last_admin", "An organization must retain an admin.");
+}
+
+const putOrgMember: Route["handler"] = async (ctx) => {
+  const access = await requireOrgAdmin(ctx, SCOPES.hostingAdmin);
+  if (access instanceof Response) return access;
+  const body = await readJson(ctx.request);
+  if (!body) return errorResponse(400, "invalid_body", "Invalid request body.");
+  const role = body.role;
+  if (role !== "admin" && role !== "member") {
+    return errorResponse(400, "invalid_role", "Expected admin or member.");
+  }
+  const bindingId = parseBindingId(body.bindingId);
+  if (bindingId === null || (bindingId !== undefined && !validMemberIdentifier(bindingId))) {
+    return errorResponse(400, "invalid_binding", "Invalid InterfaceBinding id.");
+  }
+  if (!validMemberIdentifier(ctx.params.principal)) {
+    return errorResponse(400, "invalid_principal", "Invalid Accounts subject.");
+  }
+  const principal = await ensurePrincipalBySubject(
+    ctx.db!, ctx.env.OIDC_ISSUER_URL ?? "", ctx.params.principal, bindingId,
+  );
+  // Fence current caller authority and the last admin in this single write.
+  // In particular, two concurrent demotions cannot both remove the final admins.
+  const result = await ctx.db!.run(
+    `INSERT INTO org_memberships (owner_id, principal_id, role, created_at)
+     SELECT ?, ?, ?, ?
+      WHERE EXISTS (SELECT 1 FROM org_memberships WHERE owner_id = ? AND principal_id = ? AND role = 'admin')
+        AND (? = 'admin'
+          OR NOT EXISTS (SELECT 1 FROM org_memberships WHERE owner_id = ? AND principal_id = ? AND role = 'admin')
+          OR EXISTS (SELECT 1 FROM org_memberships WHERE owner_id = ? AND principal_id <> ? AND role = 'admin'))
+     ON CONFLICT(owner_id, principal_id) DO UPDATE SET role = excluded.role`,
+    [access.ownerId, principal.id, role, ctx.db!.now(),
+      access.ownerId, access.auth.principal.id, role,
+      access.ownerId, principal.id, access.ownerId, principal.id],
+  );
+  if (!result.success || typeof result.meta.changes !== "number") {
+    return errorResponse(503, "membership_write_unconfirmed", "Membership write could not be confirmed.");
+  }
+  if (result.meta.changes === 0) return deniedOrgMembershipWrite(ctx, access);
+  if (result.meta.changes !== 1) {
+    return errorResponse(503, "membership_write_unconfirmed", "Membership write could not be confirmed.");
+  }
+  return json({ member: { principalId: principal.id, subject: principal.subject, bindingId: bindingId ?? null, role } });
+};
+
+const listOrgMembers: Route["handler"] = async (ctx) => {
+  const identity = await resolveIdentity(ctx, SCOPES.hostingRead);
+  if (identity instanceof Response) return identity;
+  if (identity.channel === "anonymous") {
+    return errorResponse(401, "unauthenticated", "Sign-in required.");
+  }
+  const org = await resolveOwner(ctx.db!, ctx.params.org);
+  if (!org || org.type !== "org" || await orgMembershipRole(ctx.db!, org.id, identity.principal.id) === null) {
+    return errorResponse(404, "not_found", "Org not found.");
+  }
+  const query = ctx.url.searchParams;
+  const limit = query.has("limit") ? Number(query.get("limit")) : 100;
+  const cursor = query.get("cursor");
+  if (query.getAll("limit").length > 1 || query.getAll("cursor").length > 1 ||
+      !Number.isInteger(limit) || limit < 1 || limit > 100 ||
+      (cursor !== null && !validMemberIdentifier(cursor))) {
+    return errorResponse(400, "invalid_pagination", "Invalid membership page.");
+  }
+  const rows = await ctx.db!.query<{
+    principal_id: string; subject: string; binding_id: string;
+    display_name: string | null; role: string;
+  }>(
+    `SELECT m.principal_id, m.role, p.subject, p.binding_id, p.display_name
+       FROM org_memberships m JOIN principals p ON p.id = m.principal_id
+      WHERE m.owner_id = ? AND p.id > ?
+        AND EXISTS (SELECT 1 FROM org_memberships actor
+                     WHERE actor.owner_id = m.owner_id AND actor.principal_id = ?)
+      ORDER BY p.id ASC LIMIT ?`,
+    [org.id, cursor ?? "", identity.principal.id, limit + 1],
+  );
+  const page = rows.slice(0, limit);
+  return json({
+    members: page.map(row => ({
+      principalId: row.principal_id, subject: row.subject, bindingId: row.binding_id || null,
+      principal: { id: row.principal_id, subject: row.subject, displayName: row.display_name }, role: row.role,
+    })),
+    nextCursor: rows.length > limit ? page.at(-1)!.principal_id : null,
+  });
+};
+
+const deleteOrgMember: Route["handler"] = async (ctx) => {
+  const access = await requireOrgAdmin(ctx, SCOPES.hostingAdmin);
+  if (access instanceof Response) return access;
+  const principalId = ctx.params.principalId;
+  if (!validMemberIdentifier(principalId)) {
+    return errorResponse(400, "invalid_principal", "Invalid Principal id.");
+  }
+  const result = await ctx.db!.run(
+    `DELETE FROM org_memberships
+      WHERE owner_id = ? AND principal_id = ?
+        AND EXISTS (SELECT 1 FROM org_memberships actor
+                     WHERE actor.owner_id = ? AND actor.principal_id = ? AND actor.role = 'admin')
+        AND (role <> 'admin' OR EXISTS (SELECT 1 FROM org_memberships other
+               WHERE other.owner_id = ? AND other.principal_id <> ? AND other.role = 'admin'))`,
+    [access.ownerId, principalId, access.ownerId, access.auth.principal.id, access.ownerId, principalId],
+  );
+  if (!result.success || typeof result.meta.changes !== "number") {
+    return errorResponse(503, "membership_write_unconfirmed", "Membership write could not be confirmed.");
+  }
+  if (result.meta.changes === 0) {
+    const role = await orgMembershipRole(ctx.db!, access.ownerId, principalId);
+    if (role !== null || await orgMembershipRole(ctx.db!, access.ownerId, access.auth.principal.id) !== "admin") {
+      return deniedOrgMembershipWrite(ctx, access);
+    }
+    // Removing an already absent member is idempotent; guarded existing rows are
+    // never reported as removed when the write made no change.
+  } else if (result.meta.changes !== 1) {
+    return errorResponse(503, "membership_write_unconfirmed", "Membership write could not be confirmed.");
+  }
+  return json({ removed: true });
+};
+
 const listTeams: Route["handler"] = async (ctx) => {
   const identity = await resolveIdentity(ctx, SCOPES.hostingRead);
   if (identity instanceof Response) return identity;
@@ -351,6 +477,9 @@ const deleteTeamRepoAccess: Route["handler"] = async (ctx) => {
 };
 
 export const collaboratorHandlers = {
+  deleteOrgMember,
+  listOrgMembers,
+  putOrgMember,
   listCollaborators,
   putCollaborator,
   deleteCollaborator,
