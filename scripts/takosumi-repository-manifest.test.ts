@@ -103,6 +103,8 @@ test("direct Cloudflare deployment exposes its existing opt-ins without enabling
   for (const name of [
     "enable_cloudflare_resources",
     "enable_cloudflare_worker_script",
+    "manage_browser_session",
+    "enable_metadata",
   ]) {
     const input = module.inputs.find((entry) => entry.name === name);
     expect(input?.source.kind).toBe("user");

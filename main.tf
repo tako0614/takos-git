@@ -12,9 +12,9 @@ terraform {
     }
     # Declared (pinned to the runner provider-mirror version) ONLY so an upgrade
     # from a pre-0.4 install can destroy the orphaned random_id.signing_key /
-    # random_id.mcp_auth_token resources still in its state. v0.4+ creates no
-    # random_* resources (secrets are operator-provided); this can be removed once
-    # no installs carry the legacy resources.
+    # random_id.mcp_auth_token resources still in its state. Standalone secrets
+    # remain operator-provided by default. The explicit managed browser-session
+    # mode below also uses this already pinned provider.
     random = {
       source  = "hashicorp/random"
       version = "= 3.9.0"
@@ -124,6 +124,12 @@ variable "app_session_secret" {
     condition     = trimspace(var.app_session_secret) == "" || length(var.app_session_secret) >= 32
     error_message = "app_session_secret must be empty or at least 32 characters."
   }
+}
+
+variable "manage_browser_session" {
+  description = "For a new direct install, explicitly manage its browser-session key in private OpenTofu state. Mutually exclusive with app_session_secret; keep the state and key across updates."
+  type        = bool
+  default     = false
 }
 
 variable "webhook_secret_key" {
@@ -380,21 +386,22 @@ locals {
   worker_bundle_body                      = local.worker_bundle_uses_url ? data.http.worker_bundle[0].response_body : (local.worker_release_requested ? "" : null)
   worker_bundle_content_sha256            = local.cloudflare_worker_enabled ? (local.worker_bundle_uses_url ? sha256(data.http.worker_bundle[0].response_body) : (local.worker_release_requested ? sha256("") : filesha256(local.worker_bundle_local_path))) : null
 
-  resource_prefix        = var.project_name
-  public_subdomain       = trimspace(var.public_subdomain) != "" ? trimspace(var.public_subdomain) : local.resource_prefix
-  runtime_name           = local.public_subdomain
-  workers_dev_url        = trimspace(var.cloudflare_workers_subdomain) != "" ? "https://${local.public_subdomain}.${trimspace(var.cloudflare_workers_subdomain)}.workers.dev" : null
-  public_origin          = trimsuffix(trimspace(var.public_url), "/")
-  launch_url             = local.public_origin != "" ? local.public_origin : local.workers_dev_url
-  accounts_issuer_url    = trimsuffix(trimspace(var.takosumi_accounts_issuer_url), "/")
-  accounts_client_id     = trimspace(var.takosumi_accounts_client_id)
-  accounts_client_secret = trimspace(var.takosumi_accounts_client_secret)
-  app_session_secret     = trimspace(var.app_session_secret)
-  app_workspace_id       = trimspace(lookup(local.extra_worker_env, "APP_WORKSPACE_ID", ""))
-  app_capsule_id         = trimspace(lookup(local.extra_worker_env, "APP_CAPSULE_ID", ""))
-  browser_auth_requested = local.accounts_client_id != "" || local.accounts_client_secret != "" || local.app_session_secret != ""
-  browser_auth_ready     = local.accounts_issuer_url != "" && local.accounts_client_id != "" && local.app_session_secret != "" && (local.app_capsule_id != "" || local.app_workspace_id != "")
-  provided_mcp_token     = trimspace(var.published_mcp_auth_token)
+  resource_prefix            = var.project_name
+  public_subdomain           = trimspace(var.public_subdomain) != "" ? trimspace(var.public_subdomain) : local.resource_prefix
+  runtime_name               = local.public_subdomain
+  workers_dev_url            = trimspace(var.cloudflare_workers_subdomain) != "" ? "https://${local.public_subdomain}.${trimspace(var.cloudflare_workers_subdomain)}.workers.dev" : null
+  public_origin              = trimsuffix(trimspace(var.public_url), "/")
+  launch_url                 = local.public_origin != "" ? local.public_origin : local.workers_dev_url
+  accounts_issuer_url        = trimsuffix(trimspace(var.takosumi_accounts_issuer_url), "/")
+  accounts_client_id         = trimspace(var.takosumi_accounts_client_id)
+  accounts_client_secret     = trimspace(var.takosumi_accounts_client_secret)
+  app_session_secret         = var.manage_browser_session ? try(random_password.browser_session[0].result, "") : trimspace(var.app_session_secret)
+  app_workspace_id           = trimspace(lookup(local.extra_worker_env, "APP_WORKSPACE_ID", ""))
+  app_capsule_id             = trimspace(lookup(local.extra_worker_env, "APP_CAPSULE_ID", ""))
+  browser_auth_requested     = var.manage_browser_session || local.accounts_client_id != "" || local.accounts_client_secret != "" || local.app_session_secret != ""
+  browser_auth_context_ready = local.accounts_issuer_url != "" && local.accounts_client_id != "" && (local.app_capsule_id != "" || local.app_workspace_id != "")
+  browser_auth_ready         = local.browser_auth_context_ready && local.app_session_secret != ""
+  provided_mcp_token         = trimspace(var.published_mcp_auth_token)
   provided_app_context = {
     for name, value in {
       APP_WORKSPACE_ID = trimspace(var.app_workspace_id)
@@ -417,6 +424,30 @@ locals {
   r2_actions_bucket = "${local.resource_prefix}-actions"
   workflow_queue    = "${local.resource_prefix}-workflows"
   workflow_dlq      = "${local.resource_prefix}-workflows-dlq"
+}
+
+# A stable, opt-in app resource, not an installer's substitute credential. Keep
+# unknown OIDC/context values out of count: check them before provider Create.
+# The Worker consumes this sensitive result only after these checks succeed.
+resource "random_password" "browser_session" {
+  count   = var.manage_browser_session && local.cloudflare_worker_enabled ? 1 : 0
+  length  = 64
+  special = false
+
+  lifecycle {
+    precondition {
+      condition     = trimspace(var.app_session_secret) == ""
+      error_message = "Choose either manage_browser_session or an operator-provided app_session_secret, never both."
+    }
+    precondition {
+      condition     = local.browser_auth_context_ready && local.launch_url != null
+      error_message = "Managed browser sessions require a public URL, OIDC issuer/client, and Capsule or legacy Workspace context."
+    }
+    precondition {
+      condition     = trimspace(var.takosumi_accounts_redirect_uri) == "" || var.takosumi_accounts_redirect_uri == "${trimsuffix(local.launch_url != null ? local.launch_url : "", "/")}/api/auth/callback"
+      error_message = "The registered Accounts callback must match the canonical Git public URL."
+    }
+  }
 }
 
 data "http" "worker_release_manifest" {
@@ -670,6 +701,10 @@ resource "cloudflare_workers_script" "worker" {
 
   lifecycle {
     precondition {
+      condition     = !var.manage_browser_session || trimspace(var.app_session_secret) == ""
+      error_message = "Choose either manage_browser_session or an operator-provided app_session_secret, never both."
+    }
+    precondition {
       condition = alltrue([
         for name, value in local.provided_app_context :
         trimspace(lookup(var.env, name, "")) == "" || trimspace(lookup(var.env, name, "")) == value
@@ -683,7 +718,7 @@ resource "cloudflare_workers_script" "worker" {
 
     precondition {
       condition     = !local.browser_auth_requested || local.browser_auth_ready
-      error_message = "Browser auth requires takosumi_accounts_issuer_url, takosumi_accounts_client_id, app_session_secret, and either app_capsule_id or legacy app_workspace_id together."
+      error_message = "Browser auth requires takosumi_accounts_issuer_url, takosumi_accounts_client_id, app_session_secret, and either app_capsule_id or legacy app_workspace_id together. For a new install, explicitly enabling manage_browser_session can supply the private session key instead."
     }
 
     precondition {
