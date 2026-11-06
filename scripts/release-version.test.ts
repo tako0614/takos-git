@@ -187,7 +187,7 @@ describe("release version and Capsule contract", () => {
     expect(moduleSource).not.toContain("INTERFACE_RESOLVED_REVISION");
   });
 
-  test("pins mirrored providers and retains only the legacy random destroy bridge", () => {
+  test("pins mirrored providers and retains the legacy random_id destroy bridge", () => {
     expect(moduleSource).toContain('version = "= 5.19.1"');
     expect(moduleSource).toContain('version = "= 3.6.0"');
     expect(moduleSource).toContain('version = "= 3.9.0"');

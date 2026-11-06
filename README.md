@@ -148,6 +148,21 @@ Output に書きません。
 Takosumiでdirect Cloudflare module (`.`) を選ぶ場合は、任意の高度な設定にある
 「Cloudflareリソースを作成」と「Gitを起動」を有効にしてからPlanを確認します。
 HCLの既定値はどちらも `false` のままで、変更しない場合はWorkerを配置しません。
+ブラウザのリポジトリ一覧・権限管理・Issueなども使う場合は「リポジトリ管理を有効にする」
+(`enable_metadata`) も選びます。データベース作成は明示opt-inで、既定は `false` のままです。
+
+新規のdirect導入では「ログイン用の鍵をこのインストールで管理」
+(`manage_browser_session = true`) を明示的に選べます。既定は `false` で、既存の手動
+`app_session_secret` と同時には使えません。Workerを配置する場合だけ、公開URL・OIDC・
+Capsule/Workspace・callbackの既存条件を確認してから、アプリ所有の鍵を生成します。
+鍵はprivateなOpenTofu stateに保存し、Workerへは `secret_text` で渡します。
+画面の公開設定やOutputへは渡しません。通常のWorker更新で鍵を再生成しません。
+
+このmodeは新規導入用です。既存installの鍵・mode・stateを変更/再作成すると、
+ブラウザsessionと、同じ鍵へfallbackしていたwebhookの暗号化/署名にも影響します。
+既存source pinとstateを保持し、移行・鍵変更・復旧は別途確認してください。
+Applyは全リソースが一括で成功する処理ではなく、失敗後も作成済みのstateを保持します。
+portable moduleのbrowser launcherやruntime配送を、この設定で有効化することはありません。
 作成資源0件のPlan成功を、Gitが稼働した証明として扱わないでください。
 これらの設定は、上記の正当なWorkspace / Capsule contextやprivateなruntime秘密値の
 供給を代替しません。portable moduleやActionsの設定は変更しません。

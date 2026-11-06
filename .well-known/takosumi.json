@@ -192,6 +192,40 @@
               "en": "Deploy the Git Worker. Also enable Create Cloudflare resources."
             },
             "advanced": true
+          },
+          {
+            "name": "manage_browser_session",
+            "source": {
+              "kind": "user"
+            },
+            "type": "boolean",
+            "required": false,
+            "label": {
+              "ja": "ログイン用の鍵をこのインストールで管理",
+              "en": "Manage this installation’s sign-in key"
+            },
+            "helper": {
+              "ja": "新規導入用です。鍵は更新時も保持します。手動で用意した鍵とは併用できません。",
+              "en": "For a new installation. The key is retained across updates. Cannot be combined with a manually supplied key."
+            },
+            "advanced": true
+          },
+          {
+            "name": "enable_metadata",
+            "source": {
+              "kind": "user"
+            },
+            "type": "boolean",
+            "required": false,
+            "label": {
+              "ja": "リポジトリ管理を有効にする",
+              "en": "Enable repository management"
+            },
+            "helper": {
+              "ja": "リポジトリ一覧・権限管理・Issueなどに必要なデータベースを作成します。適用前に作成内容を確認できます。",
+              "en": "Create the database needed for repository lists, access control, and issues. Review the resource plan before applying."
+            },
+            "advanced": true
           }
         ],
         "requires": [
