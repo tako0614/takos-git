@@ -15,11 +15,25 @@ import {
 } from "./git/refs-store.ts";
 import type { ObjectStoreBinding } from "./git/types.ts";
 import { createDbClient, type D1Binding, type DbClient } from "./db/index.ts";
-import { upsertPrincipal } from "./auth/acl.ts";
-import { ensureOwnerForNamespace } from "./features/repos/owners.ts";
+import { authorizeRepo, upsertPrincipal } from "./auth/acl.ts";
+import {
+  ACTION_REQUIRED_SCOPE,
+  type AuthContext,
+  type Principal,
+  type RepoAction,
+} from "./contract/v1.ts";
+import {
+  ensureOwnerForNamespace,
+  ensureUserOwner,
+  orgMembershipRole,
+  resolveOwner,
+  OwnerConflictError,
+  type OwnerRow,
+} from "./features/repos/owners.ts";
 import {
   deleteRepository,
   getRepoRow,
+  listReadableRepos,
   provisionRepo,
 } from "./features/repos/repositories.ts";
 
@@ -173,6 +187,35 @@ function requireRepo(args: Record<string, unknown>): string {
   return repo;
 }
 
+async function interfacePrincipal(
+  auth: McpAuth,
+  env: McpEnv,
+  db: DbClient | null,
+): Promise<{ db: DbClient; principal: Principal } | null> {
+  // Metadata-disabled installs retain the documented scope-only compatibility.
+  if (auth.kind !== "interface" || !db) return null;
+  const principal = await upsertPrincipal(db, {
+    issuer: env.OIDC_ISSUER_URL ?? "",
+    subject: auth.subject,
+    kind: "service_account",
+    bindingId: auth.bindingId,
+  });
+  return { db, principal };
+}
+
+// mcp.invoke is the verified tool permission. The action scope below adapts
+// this tool to the existing repo-role checker; it is not an extra issued scope.
+function interfaceContext(
+  principal: Principal,
+  action: RepoAction,
+): AuthContext {
+  return {
+    principal,
+    channel: "interface",
+    scopes: new Set(["mcp.invoke", ACTION_REQUIRED_SCOPE[action]]),
+  };
+}
+
 function mcpResult(value: unknown): Record<string, unknown> {
   return {
     content: [{ type: "text", text: JSON.stringify(value, null, 2) }],
@@ -213,11 +256,29 @@ const TOOLS: readonly ToolDefinition[] = [
       idempotentHint: true,
       openWorldHint: false,
     },
-    async call(args, { env }) {
+    async call(args, { env, auth, db }) {
       const limit =
         typeof args.limit === "number" && Number.isInteger(args.limit)
           ? Math.max(1, Math.min(args.limit, 100))
           : 100;
+      const interfaceAuth = await interfacePrincipal(auth, env, db);
+      if (interfaceAuth) {
+        const page = await listReadableRepos(
+          interfaceAuth.db,
+          interfaceAuth.principal,
+          {
+            limit,
+            cursor:
+              typeof args.cursor === "string" && args.cursor
+                ? args.cursor
+                : null,
+          },
+        );
+        return {
+          repos: page.repos.map((repo) => repo.storageKey),
+          nextCursor: page.nextCursor,
+        };
+      }
       const page = await listRepos(env.BUCKET, {
         ...(typeof args.cursor === "string" && args.cursor
           ? { cursor: args.cursor }
@@ -239,24 +300,40 @@ const TOOLS: readonly ToolDefinition[] = [
     },
     async call(args, { env, origin, auth, db }) {
       const repo = requireRepo(args);
+      const interfaceAuth = await interfacePrincipal(auth, env, db);
       if (db) {
         // D1 configured → create the metadata row (via the same repos service)
         // so MCP-created repos are ACL-browsable, plus the R2 refs-doc.
         const [ownerLogin, name] = repo.split("/");
-        const principal =
-          auth.kind === "interface"
-            ? await upsertPrincipal(db, {
-                issuer: env.OIDC_ISSUER_URL ?? "",
-                subject: auth.subject,
-                kind: "service_account",
-                bindingId: auth.bindingId,
-              })
-            : null;
-        const owner = await ensureOwnerForNamespace(
-          db,
-          ownerLogin,
-          principal?.id ?? null,
-        );
+        const principal = interfaceAuth?.principal ?? null;
+        let owner: OwnerRow;
+        if (principal) {
+          const existing = await resolveOwner(db, ownerLogin as string);
+          if (existing?.type === "user") {
+            if (existing.principalId !== principal.id) {
+              throw new Error("forbidden");
+            }
+            owner = existing;
+          } else if (existing?.type === "org") {
+            if ((await orgMembershipRole(db, existing.id, principal.id)) !== "admin") {
+              throw new Error("forbidden");
+            }
+            owner = existing;
+          } else {
+            try {
+              owner = await ensureUserOwner(db, principal, ownerLogin as string);
+            } catch (error) {
+              if (error instanceof OwnerConflictError) throw new Error("forbidden");
+              throw error;
+            }
+          }
+        } else {
+          owner = await ensureOwnerForNamespace(
+            db,
+            ownerLogin as string,
+            null,
+          );
+        }
         const result = await provisionRepo(env.BUCKET, db, owner, {
           name: name as string,
         });
@@ -281,8 +358,20 @@ const TOOLS: readonly ToolDefinition[] = [
       idempotentHint: true,
       openWorldHint: false,
     },
-    async call(args, { env, origin }) {
+    async call(args, { env, origin, auth, db }) {
       const repo = requireRepo(args);
+      const interfaceAuth = await interfacePrincipal(auth, env, db);
+      if (interfaceAuth) {
+        const [owner, name] = repo.split("/");
+        const decision = await authorizeRepo(
+          interfaceAuth.db,
+          interfaceContext(interfaceAuth.principal, "contents.read"),
+          owner as string,
+          name as string,
+          "contents.read",
+        );
+        if (!decision.allow) throw new Error(decision.reason);
+      }
       if (!(await repoExists(env.BUCKET, repo)))
         throw new Error("repository not found");
       const refs = await readRepoRefs(env.BUCKET, repo);
@@ -304,10 +393,21 @@ const TOOLS: readonly ToolDefinition[] = [
       idempotentHint: false,
       openWorldHint: false,
     },
-    async call(args, { env, db }) {
+    async call(args, { env, auth, db }) {
       const repo = requireRepo(args);
+      const interfaceAuth = await interfacePrincipal(auth, env, db);
       if (db) {
         const [owner, name] = repo.split("/");
+        if (interfaceAuth) {
+          const decision = await authorizeRepo(
+            interfaceAuth.db,
+            interfaceContext(interfaceAuth.principal, "repo.admin"),
+            owner as string,
+            name as string,
+            "repo.admin",
+          );
+          if (!decision.allow) throw new Error(decision.reason);
+        }
         const row = await getRepoRow(db, owner as string, name as string);
         if (!row) throw new Error("repository not found");
         const deletion = await deleteRepository(env.BUCKET, db, row);
