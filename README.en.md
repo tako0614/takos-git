@@ -86,7 +86,8 @@ subject is selected after install):
 | `mcp.server`            | `mcp_url`          | `mcp.invoke`                                                |
 
 The portable module does not yet declare the launcher or hosting API. To
-enable browser sign-in through the direct/self-host module, provide
+enable browser sign-in in the default manual mode of the direct/self-host
+module, provide
 `takosumi_accounts_issuer_url`,
 `takosumi_accounts_client_id`, and an `app_session_secret` of at least 32
 characters together. Confidential clients also receive
@@ -94,6 +95,26 @@ characters together. Confidential clients also receive
 receives `app_capsule_id` or compatibility `app_workspace_id` for older installs (legacy
 `env.APP_CAPSULE_ID` / `env.APP_WORKSPACE_ID` remain accepted); secrets do not enter
 the repository or Outputs.
+
+For a direct Cloudflare install (`.`) through Takosumi, explicitly enable Create
+Cloudflare resources and Deploy Git before reviewing the resource plan. Enable
+repository management (`enable_metadata`) too when using the browser repository
+list, access control, or issues; those features need the database. These options
+default to false.
+
+For a **new** direct installation, `manage_browser_session = true` lets the app
+manage its browser sign-in key in private OpenTofu state. It cannot be combined
+with a manually supplied `app_session_secret`. The key is generated only for an
+enabled Worker after checking its public URL, OIDC/context and callback
+prerequisites. It reaches the Worker as `secret_text`, never as a public setting
+or Output, and ordinary Worker updates retain the same key. This does not enable
+the portable module's browser launcher or runtime delivery.
+
+Keep the installation's private state and source pin. Changing or losing the key
+can invalidate browser sessions and the existing webhook encryption/signing
+fallback. Existing-install key changes, migration and recovery need a separate
+reviewed procedure. Apply is not transactional across all resources: preserve
+any state created before a failure.
 
 ## Develop
 
