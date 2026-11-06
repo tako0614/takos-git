@@ -9,9 +9,11 @@
  */
 import {
   createResource,
+  createEffect,
   createSignal,
   For,
   Index,
+  onCleanup,
   Show,
   Suspense,
   type JSX,
@@ -52,27 +54,25 @@ const ROLE_LABEL: Record<Role, string> = {
 };
 
 interface Collab {
+  readonly id: string;
   readonly subject: string;
+  readonly bindingId: string | null;
   readonly displayName: string | null;
   readonly role: Role;
 }
 
-/**
- * Tolerate both the typed `{ principal, role }` mirror and the server's current
- * flat `{ principalId, subject, displayName, role }` row (see integrator note).
- */
 function normalize(dto: CollaboratorDto): Collab {
-  const loose = dto as unknown as {
-    principal?: { subject?: string; displayName?: string | null };
-    subject?: string;
-    displayName?: string | null;
-    role: Role;
-  };
   return {
-    subject: loose.principal?.subject ?? loose.subject ?? "",
-    displayName: loose.principal?.displayName ?? loose.displayName ?? null,
-    role: loose.role,
+    id: dto.principalId,
+    subject: dto.principal.subject,
+    bindingId: dto.bindingId,
+    displayName: dto.principal.displayName,
+    role: dto.role,
   };
+}
+
+function grantLabel(collab: Collab): string {
+  return collab.bindingId ? `${collab.subject} (binding ${collab.bindingId})` : `${collab.subject} (person)`;
 }
 
 export function CollaboratorsSettingsView(): JSX.Element {
@@ -91,61 +91,83 @@ export function CollaboratorsSettingsView(): JSX.Element {
 
   // --- add collaborator -----------------------------------------------------
   const [newSubject, setNewSubject] = createSignal("");
+  const [newBindingId, setNewBindingId] = createSignal("");
   const [newRole, setNewRole] = createSignal<Role>("writer");
   const [adding, setAdding] = createSignal(false);
+  const [busyId, setBusyId] = createSignal<string | null>(null);
+  let alive = true;
+  let generation = 0;
+  createEffect(() => {
+    repo.owner();
+    repo.repo();
+    generation++;
+    setAdding(false);
+    setBusyId(null);
+    setNewSubject("");
+    setNewBindingId("");
+    setNewRole("writer");
+  });
+  onCleanup(() => { alive = false; generation++; });
+  const captureTarget = () => ({ owner: repo.owner(), name: repo.repo(), generation });
+  const isCurrent = (target: ReturnType<typeof captureTarget>) => alive &&
+    target.generation === generation && target.owner === repo.owner() && target.name === repo.repo();
 
   async function addCollaborator(e: Event): Promise<void> {
     e.preventDefault();
     const subject = newSubject().trim();
     if (!subject) return;
+    const target = captureTarget();
     setAdding(true);
     try {
-      await collaboratorsApi.set(repo.owner(), repo.repo(), subject, newRole());
+      await collaboratorsApi.set(target.owner, target.name, subject, newRole(), newBindingId().trim() || undefined);
+      if (!isCurrent(target)) return;
       toast.success(`Added ${subject} as ${ROLE_LABEL[newRole()]}.`);
       setNewSubject("");
+      setNewBindingId("");
       setNewRole("writer");
       reload();
     } catch (err) {
-      toast.error(describeError(err));
+      if (isCurrent(target)) toast.error(describeError(err));
     } finally {
-      setAdding(false);
+      if (isCurrent(target)) setAdding(false);
     }
   }
 
   // --- change role ----------------------------------------------------------
-  const [busySubject, setBusySubject] = createSignal<string | null>(null);
-
-  async function changeRole(subject: string, role: Role): Promise<void> {
-    setBusySubject(subject);
+  async function changeRole(collab: Collab, role: Role): Promise<void> {
+    const target = captureTarget();
+    setBusyId(collab.id);
     try {
-      await collaboratorsApi.set(repo.owner(), repo.repo(), subject, role);
-      toast.success(`${subject} is now ${ROLE_LABEL[role]}.`);
+      await collaboratorsApi.set(target.owner, target.name, collab.subject, role, collab.bindingId ?? undefined);
+      if (!isCurrent(target)) return;
+      toast.success(`${grantLabel(collab)} is now ${ROLE_LABEL[role]}.`);
       reload();
     } catch (err) {
-      toast.error(describeError(err));
-      reload();
+      if (isCurrent(target)) { toast.error(describeError(err)); reload(); }
     } finally {
-      setBusySubject(null);
+      if (isCurrent(target)) setBusyId(null);
     }
   }
 
-  async function removeCollaborator(subject: string): Promise<void> {
+  async function removeCollaborator(collab: Collab): Promise<void> {
+    const target = captureTarget();
     const ok = await confirmDialog.confirm({
       title: "Remove collaborator",
-      message: `Remove ${subject} from this repository? They will lose all access granted here.`,
+      message: `Remove ${grantLabel(collab)} from this repository? Other grants are kept.`,
       confirmText: "Remove",
       danger: true,
     });
-    if (!ok) return;
-    setBusySubject(subject);
+    if (!ok || !isCurrent(target)) return;
+    setBusyId(collab.id);
     try {
-      await collaboratorsApi.remove(repo.owner(), repo.repo(), subject);
-      toast.success(`Removed ${subject}.`);
+      await collaboratorsApi.remove(target.owner, target.name, collab.subject, collab.id);
+      if (!isCurrent(target)) return;
+      toast.success(`Removed ${grantLabel(collab)}.`);
       reload();
     } catch (err) {
-      toast.error(describeError(err));
+      if (isCurrent(target)) toast.error(describeError(err));
     } finally {
-      setBusySubject(null);
+      if (isCurrent(target)) setBusyId(null);
     }
   }
 
@@ -155,7 +177,7 @@ export function CollaboratorsSettingsView(): JSX.Element {
         {/* Add */}
         <SettingsSection
           title="Add a collaborator"
-          description="Grant a person access by their account subject. Roles are ordered Read < Write < Maintain < Admin."
+          description="Grant a person access by account subject. For automation, also enter its InterfaceBinding ID."
           icon={<Icons.User class="h-4 w-4 text-muted" />}
         >
           <form onSubmit={addCollaborator} class="flex flex-wrap items-end gap-3">
@@ -169,6 +191,16 @@ export function CollaboratorsSettingsView(): JSX.Element {
                 disabled={adding()}
               />
             </Field>
+            <Field label="Interface binding (optional)" class="min-w-[240px] flex-1" for="new-collab-binding">
+              <TextInput
+                id="new-collab-binding"
+                placeholder="Leave blank for a person"
+                autocomplete="off"
+                value={newBindingId()}
+                onInput={(e) => setNewBindingId(e.currentTarget.value)}
+                disabled={adding()}
+              />
+            </Field>
             <Field label="Role" class="w-40" for="new-collab-role">
               <Select
                 id="new-collab-role"
@@ -176,7 +208,7 @@ export function CollaboratorsSettingsView(): JSX.Element {
                 onChange={(e) => setNewRole(e.currentTarget.value as Role)}
                 disabled={adding()}
               >
-                <For each={ROLES}>{(r) => <option value={r.value}>{r.label}</option>}</For>
+                <For each={ROLES}>{(r) => <option value={r.value} selected={newRole() === r.value}>{r.label}</option>}</For>
               </Select>
             </Field>
             <div class="pb-1.5">
@@ -223,9 +255,9 @@ export function CollaboratorsSettingsView(): JSX.Element {
                     {(collab) => (
                       <CollaboratorRow
                         collab={collab()}
-                        busy={busySubject() === collab().subject}
-                        onRole={(role) => changeRole(collab().subject, role)}
-                        onRemove={() => removeCollaborator(collab().subject)}
+                        busy={busyId() === collab().id}
+                        onRole={(role) => changeRole(collab(), role)}
+                        onRemove={() => removeCollaborator(collab())}
                       />
                     )}
                   </Index>
@@ -262,26 +294,29 @@ function CollaboratorRow(props: {
         <Show when={props.collab.displayName}>
           <div class="truncate text-xs text-muted">{props.collab.subject}</div>
         </Show>
+        <div class="truncate text-xs text-muted" title={props.collab.bindingId ?? "Person"}>
+          {props.collab.bindingId ? `Binding: ${props.collab.bindingId}` : "Person"}
+        </div>
       </div>
       <Label tone="accent">{ROLE_LABEL[props.collab.role]}</Label>
-      <label class="sr-only" for={`role-${props.collab.subject}`}>
-        Role for {display()}
+      <label class="sr-only" for={`role-${props.collab.id}`}>
+        Role for {grantLabel(props.collab)}
       </label>
       <Select
-        id={`role-${props.collab.subject}`}
+        id={`role-${props.collab.id}`}
         class="w-36"
         value={props.collab.role}
         disabled={props.busy}
         onChange={(e) => props.onRole(e.currentTarget.value as Role)}
       >
-        <For each={ROLES}>{(r) => <option value={r.value}>{r.label}</option>}</For>
+        <For each={ROLES}>{(r) => <option value={r.value} selected={props.collab.role === r.value}>{r.label}</option>}</For>
       </Select>
       <Button
         variant="danger"
         size="sm"
         disabled={props.busy}
         onClick={() => props.onRemove()}
-        aria-label={`Remove ${display()}`}
+        aria-label={`Remove ${grantLabel(props.collab)}`}
       >
         <Show when={props.busy} fallback={<Icons.Trash class="h-4 w-4" />}>
           <Icons.Loader class="h-4 w-4 animate-spin" />

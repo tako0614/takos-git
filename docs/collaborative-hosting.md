@@ -91,6 +91,13 @@ InterfaceBinding は service invocation を許可する。Takos Git の app-loca
 D1 が有効なとき、その認可済み Principal を repository ごとに owner / maintainer / writer / reader
 へ絞り込む。repository ごとに Takosumi Interface を量産しない。
 
+CollaboratorのpersonとInterface automationは、同subjectでも異なるPrincipalとして管理する。
+一覧は従来のflat fieldsに加えてtyped `principal`と`bindingId`（personはnull）を返す。
+ownerはPUTの`bindingId`で対象automationを指定でき、Webの設定画面もそのbindingを維持してroleを変更する。
+DELETEは`?principalId=<一覧のprincipalId>`で一つのgrantへ限定できる。
+selectorを省いた既存API呼出しは、指定subjectの全grantを削除する従来動作を維持する。
+Webの削除は常に対象行のPrincipalを指定する。repo owner・scope・CSRFの判定は共通である。
+
 ## Product milestones
 
 ### M1: hosting shell
