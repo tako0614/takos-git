@@ -1,4 +1,6 @@
+// takos-secret-scan: synthetic — disposable issuer/session and fixed test-only bearers.
 import { expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import {
   mkdirSync,
   mkdtempSync,
@@ -13,10 +15,10 @@ import { createGitWorker, type Env } from "./worker.ts";
 import { MemoryBucket } from "./test-bucket.ts";
 import { seedRepo } from "./seed.ts";
 import {
-  jsonRequest,
   makeEnv,
   TEST_APP_URL,
   TEST_CAPSULE,
+  TEST_ISSUER,
   TEST_WORKSPACE,
 } from "./features/repos/testkit.ts";
 
@@ -118,33 +120,62 @@ async function runGit(
   return { exitCode, stdout, stderr };
 }
 
-// Synthetic UserInfo only: MCP and Git remain distinct Interface identities.
+// Synthetic issuer only: the real Worker callback emits the owner session;
+// human, MCP and Git identities remain distinct even with the same subject.
 const METADATA_MCP_TOKEN = "taksrv_git_metadata_mcp";
-const METADATA_API_ADMIN = "taksrv_git_metadata_api_admin";
-const METADATA_API_READ = "taksrv_git_metadata_api_read";
 
 function metadataFixture() {
   const handle = makeEnv();
-  const worker = createGitWorker(async (_input, init) => {
+  handle.env.OIDC_CLIENT_ID = "synthetic-git-owner-client";
+  handle.env.APP_SESSION_SECRET = "synthetic-git-owner-session-secret-at-least-32-characters";
+  let challenge = "";
+  let ownerCookie = "";
+  let loginAttempt = 0;
+  let pendingCode = "";
+  let currentOwnerToken = "";
+  const issuedOwnerTokens = new Set<string>();
+  const expiredOwnerTokens = new Set<string>();
+  const worker = createGitWorker(async (input, init) => {
+    const url = new URL(input instanceof Request ? input.url : input.toString());
+    expect(url.origin).toBe(TEST_ISSUER);
+    if (url.pathname === "/oauth/token") {
+      const body = new URLSearchParams(String(init?.body));
+      expect(init?.method).toBe("POST");
+      expect(body.get("grant_type")).toBe("authorization_code");
+      expect(pendingCode.length).toBeGreaterThan(0);
+      expect(body.get("code")).toBe(pendingCode);
+      expect(body.get("client_id")).toBe(handle.env.OIDC_CLIENT_ID!);
+      expect(body.get("redirect_uri")).toBe(`${TEST_APP_URL}/api/auth/callback`);
+      expect(challenge.length).toBeGreaterThan(0);
+      expect(createHash("sha256").update(body.get("code_verifier") ?? "").digest("base64url")).toBe(challenge);
+      pendingCode = "";
+      currentOwnerToken = `synthetic-git-owner-oidc-access-${loginAttempt}`;
+      issuedOwnerTokens.add(currentOwnerToken);
+      return Response.json({ access_token: currentOwnerToken, token_type: "Bearer", expires_in: 300 });
+    }
+    expect(url.pathname).toBe("/oauth/userinfo");
     const token = new Headers(init?.headers).get("authorization")?.replace(/^Bearer\s+/u, "");
-    if (token !== METADATA_MCP_TOKEN && token !== READ_TOKEN && token !== WRITE_TOKEN && token !== METADATA_API_ADMIN && token !== METADATA_API_READ) {
+    if (token && issuedOwnerTokens.has(token)) {
+      return expiredOwnerTokens.has(token) ? new Response(null, { status: 401 }) : Response.json({
+        sub: "principal_git_cli", name: "Fixture owner",
+        takosumi: { capsule_id: TEST_CAPSULE, app_role: "member" },
+      });
+    }
+    if (token !== METADATA_MCP_TOKEN && token !== READ_TOKEN && token !== WRITE_TOKEN) {
       return new Response(null, { status: 401 });
     }
     const mcp = token === METADATA_MCP_TOKEN;
-    const api = token === METADATA_API_ADMIN || token === METADATA_API_READ;
     return Response.json({
       token_use: "interface_oauth",
       sub: "principal_git_cli",
-      aud: `${TEST_APP_URL}/${mcp ? "mcp" : api ? "api/v1" : "git"}`,
-      scope: mcp ? "mcp.invoke" : api
-        ? token === METADATA_API_ADMIN ? "source.git.hosting.admin" : "source.git.hosting.read"
-        : token === WRITE_TOKEN
+      aud: `${TEST_APP_URL}/${mcp ? "mcp" : "git"}`,
+      scope: mcp ? "mcp.invoke" : token === WRITE_TOKEN
         ? "source.git.smart_http.write" : "source.git.smart_http.read",
       takosumi: {
         workspace_id: TEST_WORKSPACE,
         capsule_id: TEST_CAPSULE,
-        interface_id: mcp ? "interface_mcp" : api ? "interface_hosting" : "interface_git",
-        interface_binding_id: mcp ? "binding_creator_mcp" : api ? "binding_owner_api" : "binding_writer_git",
+        interface_id: mcp ? "interface_mcp" : "interface_git",
+        interface_binding_id: mcp ? "binding_creator_mcp" : "binding_writer_git",
         interface_resolved_revision: 1,
       },
     });
@@ -161,16 +192,44 @@ function metadataFixture() {
       error?: { message: string };
     }>;
   };
-  const api = (method: string, path: string, body?: unknown) => worker.fetch(
-    jsonRequest(method, path, body, method === "GET" ? METADATA_API_READ : METADATA_API_ADMIN), handle.env,
+  const cookie = (response: Response, name: string) => {
+    const value = new RegExp(`${name}=([^;,]+)`).exec(response.headers.get("set-cookie") ?? "")?.[1];
+    if (!value) throw new Error(`missing fixture ${name}`);
+    return `${name}=${value}`;
+  };
+  const loginOwner = async () => {
+    const login = await worker.fetch(new Request(`${TEST_APP_URL}/api/auth/login?return_to=/`), handle.env);
+    expect(login.status).toBe(302);
+    const authorize = new URL(login.headers.get("location")!);
+    expect(authorize.origin).toBe(TEST_ISSUER);
+    expect(authorize.pathname).toBe("/oauth/authorize");
+    expect(authorize.searchParams.get("code_challenge_method")).toBe("S256");
+    challenge = authorize.searchParams.get("code_challenge") ?? "";
+    pendingCode = `fixture-code-${++loginAttempt}`;
+    const callback = await worker.fetch(new Request(`${TEST_APP_URL}/api/auth/callback?code=${pendingCode}&state=${encodeURIComponent(authorize.searchParams.get("state") ?? "")}`, {
+      headers: { cookie: cookie(login, "takos_git_oauth_state") },
+    }), handle.env);
+    expect(callback.status).toBe(302);
+    ownerCookie = cookie(callback, "takos_git_session");
+  };
+  const api = (method: string, path: string, body?: unknown, origin = TEST_APP_URL) => worker.fetch(
+    new Request(TEST_APP_URL + path, {
+      method, headers: { cookie: ownerCookie, origin, "content-type": "application/json" },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    }), handle.env,
   );
-  return { ...handle, worker, call, api };
+  return { ...handle, worker, call, api, loginOwner, expireOwner: () => { expiredOwnerTokens.add(currentOwnerToken); } };
 }
 
-test("normal org and grant APIs authorize MCP creation and a distinct real Git binding", async () => {
+test("OIDC Cookie owner authorizes MCP creation and a distinct real Git binding", async () => {
   expect(gitAvailable()).toBe(true);
   const handle = metadataFixture();
+  await handle.loginOwner();
+  const session = await handle.api("GET", "/api/auth/session");
+  expect(await session.json()).toMatchObject({ authenticated: true, appRole: "member", user: { subject: "principal_git_cli" } });
+  expect((await handle.api("POST", "/api/v1/orgs", { login: "Alice" }, "https://other.example")).status).toBe(403);
   expect((await handle.api("POST", "/api/v1/orgs", { login: "Alice" })).status).toBe(201);
+  expect((await handle.call("git_repo_create", "Alice/before-grant")).error?.message).toBe("forbidden");
   const mcpGrant = await handle.api("PUT", "/api/v1/orgs/alice/members/principal_git_cli", {
     role: "admin", bindingId: "binding_creator_mcp",
   });
@@ -248,6 +307,13 @@ test("normal org and grant APIs authorize MCP creation and a distinct real Git b
     expect((await handle.api("DELETE", `/api/v1/orgs/alice/members/${encodeURIComponent(mcpPrincipalId)}`)).status).toBe(200);
     expect((await handle.call("git_repo_create", "Alice/after-revocation")).error?.message).toBe("forbidden");
     expect((await handle.api("GET", "/api/v1/repos/alice/widgets")).status).toBe(200);
+    handle.expireOwner();
+    const expired = await handle.api("POST", "/api/v1/orgs", { login: "after-expiry" });
+    expect(expired.status).toBe(401);
+    expect(expired.headers.get("set-cookie")?.includes("Max-Age=0")).toBe(true);
+    await handle.loginOwner();
+    expect((await handle.api("GET", "/api/v1/repos/alice/widgets")).status).toBe(200);
+    expect((await handle.api("POST", "/api/v1/orgs", { login: "after-expiry" })).status).toBe(201);
   } finally {
     server.stop(true);
     rmSync(root, { recursive: true, force: true });
