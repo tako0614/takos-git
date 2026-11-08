@@ -462,6 +462,9 @@ export async function processRepositoryDeletionQueue(
     try {
       const repo = await getRepoRowById(db, row.repo_id, true);
       if (!repo) {
+        // A previous attempt may have committed D1 cleanup before its final
+        // marker delete failed. Do not complete the retry with R2 bytes left.
+        await removeRepositoryQuarantineMarker(bucket, row.generation);
         await db.run(
           `UPDATE repository_deletions
            SET status = 'completed', last_error = NULL,

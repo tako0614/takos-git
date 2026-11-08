@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 
 import { RouteRegistry, type RouterEnv } from "../../router.ts";
 import { repoExists } from "../../git/refs-store.ts";
+import { repositoryQuarantineKey } from "../../git/repository-deletion.ts";
+import type { ObjectStoreBinding } from "../../git/types.ts";
 import { repositoryObjectStore } from "../../git/repo-object-store.ts";
 import { MemoryBucket } from "../../test-bucket.ts";
 import {
@@ -201,6 +203,107 @@ describe("repository deletion quarantine", () => {
     expect(recreated?.generation).not.toBe(original?.generation);
     expect(await repoExists(handle.bucket, "alice/web")).toBe(true);
   });
+
+  test.each([1, 2])(
+    "retries the final quarantine marker after metadata deletion (%i failures)",
+    async (failureCount) => {
+      const handle = makeEnv();
+      const registry = router();
+      const create = () => dispatch(
+        registry,
+        jsonRequest(
+          "POST",
+          "/api/v1/repos",
+          { owner: "alice", name: "retry-marker", visibility: "private" },
+          "taksrv_alice_w",
+        ),
+        handle.env,
+      );
+      expect((await create()).status).toBe(201);
+      const original = await handle.db.queryOne<{
+        id: string;
+        generation: string;
+      }>(
+        `SELECT id, generation FROM repositories
+         WHERE storage_key = 'alice/retry-marker'`,
+      );
+      if (!original) throw new Error("created repository missing");
+      const markerKey = repositoryQuarantineKey(original.generation);
+      await repositoryObjectStore(handle.bucket, "alice/retry-marker").put(
+        "objects/aa/old",
+        "old",
+      );
+      expect((await dispatch(
+        registry,
+        jsonRequest(
+          "DELETE",
+          "/api/v1/repos/alice/retry-marker",
+          undefined,
+          "taksrv_alice_a",
+        ),
+        handle.env,
+      )).status).toBe(202);
+
+      let failures = 0;
+      const bucket: ObjectStoreBinding = {
+        get: (key) => handle.bucket.get(key),
+        head: (key) => handle.bucket.head(key),
+        put: (key, value, options) => handle.bucket.put(key, value, options),
+        list: (options) => handle.bucket.list(options),
+        async delete(keys) {
+          if (
+            (Array.isArray(keys) ? keys : [keys]).includes(markerKey) &&
+            failures < failureCount
+          ) {
+            failures += 1;
+            throw new Error("marker removal unavailable");
+          }
+          await handle.bucket.delete(keys);
+        },
+      };
+      for (let attempt = 0; attempt < failureCount; attempt += 1) {
+        expect(await processRepositoryDeletionQueue(handle.db, bucket, {
+          now: Number.MAX_SAFE_INTEGER,
+        })).toEqual({ cleaned: 0, failed: 1 });
+        // The first attempt already removed metadata; later failures still
+        // need to retain the queue entry until the last R2 marker is gone.
+        expect(await handle.db.queryOne(
+          `SELECT id FROM repositories WHERE id = ?`,
+          [original.id],
+        )).toBeNull();
+        expect(handle.bucket.store.has(markerKey)).toBe(true);
+        expect(await handle.db.queryOne(
+          `SELECT status, last_error FROM repository_deletions
+           WHERE generation = ?`,
+          [original.generation],
+        )).toEqual({ status: "failed", last_error: "marker removal unavailable" });
+      }
+      expect(failures).toBe(failureCount);
+      expect(await processRepositoryDeletionQueue(handle.db, bucket, {
+        now: Number.MAX_SAFE_INTEGER,
+      })).toEqual({ cleaned: 0, failed: 0 });
+      expect(handle.bucket.store.has(markerKey)).toBe(false);
+      const completed = await handle.db.queryOne<{
+        status: string;
+        last_error: string | null;
+        completed_at: number | null;
+      }>(
+        `SELECT status, last_error, completed_at FROM repository_deletions
+         WHERE generation = ?`,
+        [original.generation],
+      );
+      expect(completed?.status).toBe("completed");
+      expect(completed?.last_error).toBeNull();
+      expect(completed?.completed_at).not.toBeNull();
+      expect((await handle.bucket.list({
+        prefix: "git/v3/repos/alice/retry-marker/",
+      })).objects).toEqual([]);
+      expect(await processRepositoryDeletionQueue(handle.db, bucket, {
+        now: Number.MAX_SAFE_INTEGER,
+      })).toEqual({ cleaned: 0, failed: 0 });
+      expect((await create()).status).toBe(201);
+    },
+  );
 
   test("cleanup is idempotent after a completed generation", async () => {
     const handle = makeEnv();
