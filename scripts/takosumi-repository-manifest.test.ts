@@ -11,6 +11,7 @@ const options = JSON.parse(
   await readFile(new URL("install-options.json", root), "utf8"),
 ) as { options: Array<{ source: { path: string } }> };
 const moduleSources: Record<string, string> = {
+  "deploy/takoform-v1": await readFile(new URL("deploy/takoform-v1/main.tf", root), "utf8"),
   ".": await readFile(new URL("main.tf", root), "utf8"),
   "deploy/takoform": await readFile(
     new URL("deploy/takoform/main.tf", root),
@@ -32,6 +33,7 @@ test("Takos Git publishes a closed Repository manifest", () => {
   expect(Object.keys(manifest.install.modules)).toEqual([
     ".",
     "deploy/takoform",
+    "deploy/takoform-v1",
   ]);
   for (const option of options.options) {
     expect(manifest.install.modules[option.source.path]).toBeDefined();
@@ -190,7 +192,7 @@ interface RepositoryModule {
   requires?: Array<{
     kind: string;
     callbackPath?: string;
-    deliver: { variables?: Record<string, string> };
+    deliver: { variables?: Record<string, string>; bindings?: Record<string, string> };
   }>;
   inputs: Array<{
     name: string;
@@ -215,3 +217,13 @@ interface RepositoryModule {
     bindingRequests?: Array<Record<string, unknown>>;
   }>;
 }
+
+
+test("current Host module requests private registration and a source-built Suite launcher", () => {
+  const module = manifest.install.modules["deploy/takoform-v1"]!;
+  expect(options.options.some(option => option.source.path === "deploy/takoform-v1")).toBe(true);
+  expect(module.requires?.find(entry => entry.kind === "identity.oidc")?.deliver.bindings).toEqual({
+    issuerUrl: "OIDC_ISSUER_URL", clientId: "OIDC_CLIENT_ID", ownerSubject: "OIDC_OWNER_SUB", redirectUri: "OIDC_REDIRECT_URI",
+  });
+  expect(module.interfaces?.map(entry => entry.spec.type)).toEqual(["interface.ui.surface", "source.git.smart_http", "mcp.server"]);
+});

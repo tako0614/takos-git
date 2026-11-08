@@ -8,3 +8,5 @@ terraform.tfstate.backup
 *.tfvars
 !example.tfvars
 .DS_Store
+
+/deploy/takoform-v1/.generated/

@@ -15,6 +15,15 @@
         "url": "https://github.com/tako0614/takos-git.git",
         "path": "."
       }
+    },
+    {
+      "id": "takoform-v1",
+      "title": "Takoform Host",
+      "description": "Build the current source for a compatible Takoform Host.",
+      "source": {
+        "url": "https://github.com/tako0614/takos-git.git",
+        "path": "deploy/takoform-v1"
+      }
     }
   ]
 }

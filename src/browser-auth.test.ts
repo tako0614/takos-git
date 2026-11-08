@@ -478,3 +478,68 @@ describe("takos-git browser auth", () => {
     });
   });
 });
+
+describe("Host-delivered registered callback", () => {
+  type DeliveredEnv = BrowserAuthEnv & { OIDC_REDIRECT_URI?: string };
+  const delivered: DeliveredEnv = {
+    ...ENV,
+    APP_URL: undefined,
+    OIDC_CLIENT_SECRET: undefined,
+    OIDC_REDIRECT_URI: "https://git-host.example/api/auth/callback",
+  };
+
+  test("login uses registered callback without a public URL inferred from request Host", async () => {
+    const response = await handleBrowserAuth(
+      new Request("https://internal-worker.example/api/auth/login"), delivered,
+    );
+    expect(response?.status).toBe(302);
+    expect(new URL(response!.headers.get("location")!).searchParams.get("redirect_uri"))
+      .toBe(delivered.OIDC_REDIRECT_URI);
+  });
+
+  test("code exchange uses the same registered callback and public PKCE client", async () => {
+    const login = await beginLogin("/repos", delivered);
+    let exchanges = 0;
+    const fetchImpl: OAuthFetch = async (input, init) => {
+      if (new URL(input.toString()).pathname === "/oauth/token") {
+        exchanges++;
+        const body = new URLSearchParams(String(init?.body));
+        expect(body.get("redirect_uri")).toBe(delivered.OIDC_REDIRECT_URI);
+        expect(body.has("client_secret")).toBe(false);
+        expect(body.get("code_verifier")!.length).toBeGreaterThan(20);
+        return Response.json({ access_token: "synthetic-app-login" });
+      }
+      return Response.json({ sub: "app_member", takosumi: { capsule_id: "capsule_git", app_role: "member" } });
+    };
+    const callback = await handleBrowserAuth(new Request(
+      `https://internal-worker.example/api/auth/callback?code=synthetic-code&state=${encodeURIComponent(login.state)}`,
+      { headers: { cookie: `takos_git_oauth_state=${login.stateCookie}` } },
+    ), delivered, fetchImpl);
+    expect(callback?.status).toBe(302);
+    expect(exchanges).toBe(1);
+    const session = cookieValue(callback!, "takos_git_session");
+    expect(await readBrowserSession(sessionRequest(session), delivered, fetchImpl))
+      .toMatchObject({ subject: "app_member", capsuleId: "capsule_git", appRole: "member" });
+  });
+
+  for (const value of ["", " ", "http://git-host.example/api/auth/callback", "https://user:secret@git-host.example/api/auth/callback", "https://git-host.example/other", "https://git-host.example/api/auth/callback?code=bad", "https://git-host.example/api/auth/callback#bad"]) {
+    test(`invalid declared callback cannot fall back to valid APP_URL: ${JSON.stringify(value)}`, async () => {
+      const response = await handleBrowserAuth(
+        new Request("https://internal-worker.example/api/auth/login"),
+        { ...delivered, APP_URL: "https://git-host.example", OIDC_REDIRECT_URI: value },
+      );
+      expect(response?.status).toBe(503);
+      expect(response?.headers.get("location")).toBeNull();
+    });
+  }
+
+  for (const APP_URL of ["", " ", "https://other.example", "https://git-host.example/subpath"]) {
+    test(`invalid or conflicting explicit APP_URL is not masked: ${JSON.stringify(APP_URL)}`, async () => {
+      const response = await handleBrowserAuth(
+        new Request("https://internal-worker.example/api/auth/login"), { ...delivered, APP_URL },
+      );
+      expect(response?.status).toBe(503);
+      expect(response?.headers.get("location")).toBeNull();
+    });
+  }
+});
