@@ -206,3 +206,28 @@ Worker 内部の `PUBLISHED_MCP_AUTH_TOKEN` として注入します。空なら
 ```sh
 bun run check # format/static/type/tests/OpenTofu/build の portable gate
 ```
+
+### Current-source Takoform Host option
+
+The separate `deploy/takoform-v1` option uses Provider 4.0.0 and builds the selected
+Git source, including its web UI. It stages the exact Worker bytes before using
+ModuleWorker/Bundle/Version/Deployment/Endpoint, an object bucket, metadata SQLite
+and the existing maintenance cron. The old root, Provider 2.1 module and release
+pins are retained; this option is for a new install, not a state/data migration.
+Actions execution remains unconfigured and is not claimed by the new option.
+
+Current app/context IDs come from the selected install context. The current
+runtime-binding v2 profile supplies a generated session secret and private OIDC
+binding names. No secret values are HCL inputs or outputs. The registered HTTPS
+`OIDC_REDIRECT_URI` supplies the exact login/code-exchange callback and the public
+origin used by browser, Smart HTTP and MCP consumers. Invalid delivery or an
+explicit conflicting `APP_URL` fails closed before dispatch, rather than using
+an internal request Host. Without the new binding, legacy `APP_URL` behavior is
+unchanged. `OIDC_OWNER_SUB` is metadata, not an owner-only authorization rule.
+
+The option publishes the authorized Suite launcher, Smart HTTP and MCP
+Interfaces. `launch_url` remains an ordinary output and is not fed back into
+WorkerVersion. A compatible Host must reserve an origin matching its final
+endpoint and deliver the exact registered callback before activation. Source
+compilation and local synthetic configuration do not qualify that Host, real
+SSO, provider Plan/Apply, an installed app or Actions execution.

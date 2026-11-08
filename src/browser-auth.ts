@@ -14,6 +14,7 @@ const MAX_WORKSPACE_MEMBERSHIPS = 256;
 
 export interface BrowserAuthEnv {
   APP_URL?: string;
+  OIDC_REDIRECT_URI?: string;
   OIDC_ISSUER_URL?: string;
   OIDC_CLIENT_ID?: string;
   OIDC_CLIENT_SECRET?: string;
@@ -129,9 +130,33 @@ function publicOrigin(value: string | undefined): URL | null {
   }
 }
 
+function registeredCallback(env: BrowserAuthEnv): URL | null {
+  const value = env.OIDC_REDIRECT_URI;
+  if (value === undefined || value.length === 0 || value.length > 2048 || value !== value.trim()) return null;
+  try {
+    const callback = new URL(value);
+    return callback.protocol === "https:" && callback.username === "" && callback.password === "" &&
+      callback.pathname === "/api/auth/callback" && callback.search === "" && callback.hash === ""
+      ? callback : null;
+  } catch { return null; }
+}
+
+/** Host-delivered registration supplies the public origin before endpoint activation. */
+export function browserPublicOrigin(env: BrowserAuthEnv): string | undefined {
+  if (env.OIDC_REDIRECT_URI === undefined) return publicOrigin(env.APP_URL)?.origin;
+  const callback = registeredCallback(env);
+  if (!callback) return undefined;
+  if (env.APP_URL !== undefined) {
+    const explicit = publicOrigin(env.APP_URL);
+    if (!explicit || env.APP_URL !== env.APP_URL.trim() || explicit.origin !== callback.origin) return undefined;
+  }
+  return callback.origin;
+}
+
 export function browserAuthMissing(env: BrowserAuthEnv): readonly string[] {
   const missing: string[] = [];
-  if (!publicOrigin(env.APP_URL)) missing.push("APP_URL");
+  if (env.OIDC_REDIRECT_URI !== undefined && !registeredCallback(env)) missing.push("OIDC_REDIRECT_URI");
+  else if (!browserPublicOrigin(env)) missing.push("APP_URL");
   if (!issuerBase(env.OIDC_ISSUER_URL)) missing.push("OIDC_ISSUER_URL");
   const clientId = configuredValue(env.OIDC_CLIENT_ID);
   if (!clientId || clientId.length > 512) missing.push("OIDC_CLIENT_ID");
@@ -361,8 +386,9 @@ function safeReturnTo(value: string | null): string {
 }
 
 function callbackUrl(env: BrowserAuthEnv): string {
-  const origin = publicOrigin(env.APP_URL);
-  return origin ? new URL("/api/auth/callback", origin).href : "";
+  const origin = browserPublicOrigin(env);
+  if (!origin) return "";
+  return env.OIDC_REDIRECT_URI ?? new URL("/api/auth/callback", origin).href;
 }
 
 async function readBoundedJson(response: Response): Promise<unknown> {

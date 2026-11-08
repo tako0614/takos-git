@@ -19,9 +19,10 @@
     "check:types": "bunx tsc --noEmit",
     "check:opentofu": "tofu init -backend=false -lockfile=readonly && tofu validate && tofu test && tofu plan -refresh=false -input=false -lock=false && bun run scripts/test-managed-browser-unknown.ts",
     "check:takoform": "tofu -chdir=deploy/takoform init -backend=false -lockfile=readonly && tofu -chdir=deploy/takoform validate && tofu -chdir=deploy/takoform test",
-    "check": "bun run fmt:check && bun run lint && bun run check:opentofu && bun run check:takoform && bun run test && bun run build",
+    "check": "bun run fmt:check && bun run lint && bun run check:opentofu && bun run check:takoform && bun run check:takoform-v1 && bun run test && bun run build",
     "check:web": "cd web && tsc --noEmit",
-    "test:web": "cd web && bun test --conditions browser src"
+    "test:web": "cd web && bun test --conditions browser src",
+    "check:takoform-v1": "tofu -chdir=deploy/takoform-v1 init -backend=false -lockfile=readonly && tofu -chdir=deploy/takoform-v1 validate"
   },
   "dependencies": {
     "yaml": "^2.5.0",

@@ -42,6 +42,7 @@ import { routes } from "./router.ts";
 import { hasEmbeddedSpa, serveEmbeddedAsset } from "./spa-assets.ts";
 import { createDbClient, type D1Database } from "./db/index.ts";
 import { ensureSchema } from "./db/ensure-schema.ts";
+import { browserPublicOrigin } from "./browser-auth.ts";
 import { authorizeRepo, upsertPrincipal } from "./auth/acl.ts";
 import {
   ACTION_REQUIRED_SCOPE,
@@ -111,6 +112,7 @@ export interface Env {
   ASSETS?: AssetFetcher;
   PUBLISHED_MCP_AUTH_TOKEN?: string;
   APP_URL?: string;
+  OIDC_REDIRECT_URI?: string;
   OIDC_ISSUER_URL?: string;
   OIDC_CLIENT_ID?: string;
   OIDC_CLIENT_SECRET?: string;
@@ -772,6 +774,13 @@ async function fetchHandler(
   ctx?: WaitUntilContext,
   interfaceUserInfoFetch?: InterfaceUserInfoFetch,
 ): Promise<Response> {
+  if (env.OIDC_REDIRECT_URI !== undefined) {
+    const origin = browserPublicOrigin(env);
+    if (!origin) return json({ error: "registered_callback_invalid" }, 503);
+    // Every browser, Git and MCP consumer receives the same registered origin.
+    // Invalid delivery never falls back to the incoming request Host.
+    env = { ...env, APP_URL: origin };
+  }
   const scope = requestScope(ctx);
   const response = await dispatchRequest(
     request,
