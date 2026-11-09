@@ -169,9 +169,15 @@ export function IssueDetail(props: {
   // --- comment composer -----------------------------------------------------
 
   const [commentDraft, setCommentDraft] = createSignal("");
+  let commentDraftRevision = 0;
+  const updateCommentDraft = (value: string) => {
+    commentDraftRevision += 1;
+    setCommentDraft(value);
+  };
 
   async function submitComment(closeAfter?: "open" | "closed"): Promise<void> {
     const bodyText = commentDraft().trim();
+    const submittedRevision = commentDraftRevision;
     setBusy(true);
     try {
       if (bodyText) {
@@ -182,7 +188,8 @@ export function IssueDetail(props: {
           bodyText,
         );
         setComments((prev) => [...prev, comment]);
-        setCommentDraft("");
+        // An ACK owns the submitted draft, not edits made while it was pending.
+        if (commentDraftRevision === submittedRevision) setCommentDraft("");
       }
       if (closeAfter) {
         await patchIssue({ state: closeAfter });
@@ -380,7 +387,7 @@ export function IssueDetail(props: {
                         <h2 class="mb-2 text-sm font-semibold text-fg">Add a comment</h2>
                         <MarkdownEditor
                           value={commentDraft()}
-                          onInput={setCommentDraft}
+                          onInput={updateCommentDraft}
                           placeholder="Leave a comment"
                         />
                         <div class="mt-2 flex flex-wrap items-center justify-end gap-2">
