@@ -1172,8 +1172,11 @@ Issues share the comment/label/milestone tables with PRs (a PR is an issue with 
 
 #### 4.7 Pull requests, reviews, inline comments
 
-The Web PR list keeps each repository's creation state separate. A delayed
-creation response cannot navigate or close a different repository's form. If
+The Web PR list keeps each repository's creation state separate. Creation is
+enabled only after metadata matches the current repository's owner/name using
+the API's case-insensitive name lookup, so a
+previous repository's cached default branch is not used. A delayed creation
+response cannot navigate or close a different repository's form. If
 the dialog was closed/reopened or edited while saving, a confirmed creation is
 linked without discarding the current draft. Rejected input stays editable.
 Only a confirmed creation refreshes the list; closing the dialog neither
