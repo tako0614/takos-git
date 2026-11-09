@@ -66,6 +66,18 @@ describe("two-phase — R2 is authoritative, D1 pointers are advisory", () => {
 });
 
 describe("two-phase — ETag CAS commit point", () => {
+  test("an unrelated existing writer preserves retained PR receipts", async () => {
+    const bucket = new MemoryBucket();
+    await seedRepo(bucket, { repo: REPO, content: "initial\n" });
+    const pendingMerges = { pr: { repoId: "repo", issueId: "issue", actorId: "actor", baseRef: "main", headRef: "feature",
+      baseSha: "a".repeat(40), headSha: "b".repeat(40), commitSha: "c".repeat(40), method: "squash" as const, at: 1, advanced: true } };
+    await writeRepoRefs(bucket, REPO, { ...mainDoc("c".repeat(40)), pendingMerges });
+    // Existing callers construct only refs/defaultBranch. The shared writer
+    // must retain the pending action even when those callers do not know it.
+    const result = await writeRefsWithMetadata(bucket, { repo: REPO, mutateRefs: () => mainDoc(FORCED_SHA) });
+    expect(result.status).toBe("committed");
+    expect((await readRepoRefsSnapshot(bucket, REPO))?.doc.pendingMerges).toEqual(pendingMerges);
+  });
   test("binds the result and projection to its own write before a later writer", async () => {
     const bucket = new ObservedBucket();
     await seedRepo(bucket, { repo: REPO, content: "initial\n" });

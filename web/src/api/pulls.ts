@@ -21,6 +21,16 @@ interface PullEnvelope {
   readonly pull_request: PullRequestDto;
 }
 
+export interface MergeResponse {
+  readonly pull: PullRequestDto;
+  readonly mergeCommit: string;
+  readonly metadataPending: boolean;
+}
+
+function unwrapMerge(response: PullEnvelope & { merge_commit: string; metadata_pending?: true }): MergeResponse {
+  return { ...unwrapPull(response), mergeCommit: response.merge_commit, metadataPending: response.metadata_pending === true };
+}
+
 function unwrapPull(response: PullEnvelope): { pull: PullRequestDto } {
   return { pull: response.pull_request };
 }
@@ -79,14 +89,14 @@ export const pullsApi = {
     return api.post<PullEnvelope>(`${repoPath(owner, repo)}/pulls/${number}/reopen`).then(unwrapPull);
   },
 
-  merge(owner: string, repo: string, number: number, input: { method: "merge" | "squash" | "rebase"; commitTitle?: string; commitMessage?: string }): Promise<{ pull: PullRequestDto; mergeCommit: string }> {
+  merge(owner: string, repo: string, number: number, input: { method: "merge" | "squash" | "rebase"; commitTitle?: string; commitMessage?: string }): Promise<MergeResponse> {
     const message = input.commitTitle
       ? `${input.commitTitle}${input.commitMessage ? `\n\n${input.commitMessage}` : ""}`
       : input.commitMessage;
-    return api.post<PullEnvelope & { merge_commit: string }>(
+    return api.post<PullEnvelope & { merge_commit: string; metadata_pending?: true }>(
       `${repoPath(owner, repo)}/pulls/${number}/merge`,
       { method: input.method, commit_message: message },
-    ).then(response => ({ ...unwrapPull(response), mergeCommit: response.merge_commit }));
+    ).then(unwrapMerge);
   },
 
   review(owner: string, repo: string, number: number, input: { state: "approved" | "changes_requested" | "commented"; body?: string; commitSha?: string }): Promise<{ review: ReviewDto }> {
@@ -97,7 +107,11 @@ export const pullsApi = {
     return api.post(`${repoPath(owner, repo)}/pulls/${number}/comments`, input);
   },
 
-  resolve(owner: string, repo: string, number: number, input: unknown): Promise<unknown> {
-    return api.post(`${repoPath(owner, repo)}/pulls/${number}/resolve`, input);
+  resolve(owner: string, repo: string, number: number, input: unknown): Promise<MergeResponse> {
+    return api.post<PullEnvelope & { merge_commit: string; metadata_pending?: true }>(`${repoPath(owner, repo)}/pulls/${number}/resolve`, input).then(unwrapMerge);
+  },
+
+  reconcile(owner: string, repo: string, number: number): Promise<MergeResponse> {
+    return api.post<PullEnvelope & { merge_commit: string; metadata_pending?: true }>(`${repoPath(owner, repo)}/pulls/${number}/reconcile`).then(unwrapMerge);
   },
 };

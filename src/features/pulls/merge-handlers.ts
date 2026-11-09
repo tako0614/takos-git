@@ -8,6 +8,9 @@
  * are emitted for the integrator (webhooks + Actions) to consume.
  */
 
+import { readRepoRefs } from "../../git/refs-store.ts";
+import { pendingMerge, projectionComplete, pendingResult, reconcileMerge } from "./merge-projection.ts";
+import type { MergeResult } from "./merge.ts";
 import type { RouteContext } from "../../router.ts";
 import { json, errorResponse } from "../repos/http.ts";
 import { computeGitState, findPullRequest, shapePullRequest } from "./read-model.ts";
@@ -31,6 +34,8 @@ function resolveMethod(value: unknown): MergeMethod | null {
 
 async function handleMerge(ctx: RouteContext, prctx: PrHandlerCtx): Promise<Response> {
   const { access, pr, repo } = prctx;
+  const pending = pendingMerge(await readRepoRefs(ctx.env.BUCKET, repo), pr);
+  if (pending) return mergeResponse(ctx, prctx, pendingResult(pending, projectionComplete(pr, pending)));
   if (pr.merged !== 0) return errorResponse(409, "already_merged", "Pull request is already merged.");
   if (pr.state !== "open") return errorResponse(409, "not_open", "Pull request is not open.");
 
@@ -77,34 +82,36 @@ async function handleMerge(ctx: RouteContext, prctx: PrHandlerCtx): Promise<Resp
     return errorResponse(result.status, result.code, result.message, result.details);
   }
 
-  await emitRepoEvent({
-    type: "pull_request.merged",
-    repo,
-    actorId: access.auth.principal.id,
-    payload: {
-      number: pr.number,
-      mergeCommitSha: result.mergeCommitSha,
-      method: result.method,
-      headSha: result.headSha,
-      baseRef: pr.baseRef,
-    },
-  });
-  if (result.previousBaseSha) {
+  if (!result.metadataOnly) {
     await emitRepoEvent({
-      type: "push",
+      type: "pull_request.merged",
       repo,
       actorId: access.auth.principal.id,
       payload: {
-        ref: `refs/heads/${pr.baseRef}`,
-        before: result.previousBaseSha,
-        after: result.newBaseSha,
+        number: pr.number,
+        mergeCommitSha: result.mergeCommitSha,
+        method: result.method,
+        headSha: result.headSha,
+        baseRef: pr.baseRef,
       },
     });
+    if (result.previousBaseSha) {
+      await emitRepoEvent({
+        type: "push",
+        repo,
+        actorId: access.auth.principal.id,
+        payload: {
+          ref: `refs/heads/${pr.baseRef}`,
+          before: result.previousBaseSha,
+          after: result.newBaseSha,
+        },
+      });
+    }
   }
 
   const updated = await findPullRequest(db, access.repo.id, pr.number);
   const dto = await shapePullRequest(db, ctx.env.BUCKET, repo, updated ?? pr, false);
-  return json({ pull_request: dto, merge_commit: result.mergeCommitSha });
+  return json({ pull_request: dto, merge_commit: result.mergeCommitSha, ...(result.metadataDeferred ? { metadata_pending: true } : {}) }, result.metadataDeferred ? 202 : 200);
 }
 
 async function handleConflicts(ctx: RouteContext, prctx: PrHandlerCtx): Promise<Response> {
@@ -125,6 +132,8 @@ async function handleConflicts(ctx: RouteContext, prctx: PrHandlerCtx): Promise<
 
 async function handleResolve(ctx: RouteContext, prctx: PrHandlerCtx): Promise<Response> {
   const { access, pr, repo } = prctx;
+  const pending = pendingMerge(await readRepoRefs(ctx.env.BUCKET, repo), pr);
+  if (pending) return mergeResponse(ctx, prctx, pendingResult(pending, projectionComplete(pr, pending)));
   if (pr.merged !== 0) return errorResponse(409, "already_merged", "Pull request is already merged.");
   if (pr.state !== "open") return errorResponse(409, "not_open", "Pull request is not open.");
 
@@ -168,27 +177,44 @@ async function handleResolve(ctx: RouteContext, prctx: PrHandlerCtx): Promise<Re
   });
   if (!result.ok) return errorResponse(result.status, result.code, result.message, result.details);
 
-  await emitRepoEvent({
-    type: "pull_request.merged",
-    repo,
-    actorId: access.auth.principal.id,
-    payload: { number: pr.number, mergeCommitSha: result.mergeCommitSha, method: "merge", baseRef: pr.baseRef },
-  });
-  if (result.previousBaseSha) {
+  if (!result.metadataOnly) {
     await emitRepoEvent({
-      type: "push",
+      type: "pull_request.merged",
       repo,
       actorId: access.auth.principal.id,
-      payload: { ref: `refs/heads/${pr.baseRef}`, before: result.previousBaseSha, after: result.newBaseSha },
+      payload: { number: pr.number, mergeCommitSha: result.mergeCommitSha, method: "merge", baseRef: pr.baseRef },
     });
+    if (result.previousBaseSha) {
+      await emitRepoEvent({
+        type: "push",
+        repo,
+        actorId: access.auth.principal.id,
+        payload: { ref: `refs/heads/${pr.baseRef}`, before: result.previousBaseSha, after: result.newBaseSha },
+      });
+    }
   }
 
   const updated = await findPullRequest(db, access.repo.id, pr.number);
   const dto = await shapePullRequest(db, ctx.env.BUCKET, repo, updated ?? pr, false);
-  return json({ pull_request: dto, merge_commit: result.mergeCommitSha });
+  return json({ pull_request: dto, merge_commit: result.mergeCommitSha, ...(result.metadataDeferred ? { metadata_pending: true } : {}) }, result.metadataDeferred ? 202 : 200);
+}
+
+async function mergeResponse(ctx: RouteContext, prctx: PrHandlerCtx, result: MergeResult): Promise<Response> {
+  if (!result.ok) return errorResponse(result.status, result.code, result.message, result.details);
+  const updated = await findPullRequest(ctx.db!, prctx.access.repo.id, prctx.pr.number);
+  const dto = await shapePullRequest(ctx.db!, ctx.env.BUCKET, prctx.repo, updated ?? prctx.pr, false);
+  return json({ pull_request: dto, merge_commit: result.mergeCommitSha,
+    ...(result.metadataDeferred ? { metadata_pending: true } : {}) }, result.metadataDeferred ? 202 : 200);
+}
+
+async function handleReconcile(ctx: RouteContext, prctx: PrHandlerCtx): Promise<Response> {
+  // The shared writer ACL is rechecked for this request. This endpoint cannot
+  // create a commit, change a Git ref, or emit an old push/merge event again.
+  return mergeResponse(ctx, prctx, await reconcileMerge(ctx.db!, ctx.env.BUCKET, prctx.repo, prctx.pr));
 }
 
 export const mergeHandlers = {
+  reconcile: prWriteHandler("pulls.merge", handleReconcile),
   merge: prWriteHandler("pulls.merge", handleMerge),
   conflicts: prReadHandler(handleConflicts),
   resolve: prWriteHandler("pulls.merge", handleResolve),

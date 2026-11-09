@@ -245,6 +245,7 @@ export interface PrincipalLite {
 }
 
 export interface PullRequestDto {
+  readonly mergePending?: { readonly commitSha: string; readonly method: "merge" | "squash" | "rebase"; readonly baseRef: string };
   readonly number: number;
   readonly state: "open" | "closed";
   readonly title: string;

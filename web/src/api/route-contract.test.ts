@@ -35,6 +35,17 @@ afterEach(() => {
 });
 
 describe("SPA route contract", () => {
+  test("merge, resolve and explicit status recovery preserve the committed-but-pending receipt", async () => {
+    const pull = { number: 7, state: "open", merged: false };
+    const receipt = { pull_request: pull, merge_commit: "c".repeat(40), metadata_pending: true };
+    const requests = captureFetch([receipt, receipt, { ...receipt, metadata_pending: undefined }]);
+    expect(await pullsApi.merge("alice", "web", 7, { method: "squash" })).toEqual({ pull, mergeCommit: receipt.merge_commit, metadataPending: true });
+    expect(await pullsApi.resolve("alice", "web", 7, { resolutions: [] })).toEqual({ pull, mergeCommit: receipt.merge_commit, metadataPending: true });
+    expect((await pullsApi.reconcile("alice", "web", 7)).metadataPending).toBe(false);
+    expect(requests.map(r => r.path)).toEqual([
+      "/api/v1/repos/alice/web/pulls/7/merge", "/api/v1/repos/alice/web/pulls/7/resolve", "/api/v1/repos/alice/web/pulls/7/reconcile",
+    ]);
+  });
   test("pull lists decode the worker envelope without corrupting filter pagination", async () => {
     const pull = { number: 7, title: "Visible PR", state: "open", merged: false };
     const requests = captureFetch([{ pull_requests: [pull], nextCursor: "next" }]);

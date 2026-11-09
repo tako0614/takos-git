@@ -8,6 +8,7 @@
  * state/author; pull_requests carries the git head/base projection).
  */
 
+import { pendingMerge } from "./merge-projection.ts";
 import { parsePagination } from "../../contract/v1.ts";
 import type { RouteContext } from "../../router.ts";
 import { readRepoRefs } from "../../git/refs-store.ts";
@@ -192,6 +193,9 @@ async function handleUpdate(ctx: RouteContext, prctx: PrHandlerCtx): Promise<Res
   }
 
   const newBase = shortBranch(body.base ?? body.base_branch);
+  if (newBase && pendingMerge(await readRepoRefs(ctx.env.BUCKET, repo), pr)) {
+    return errorResponse(409, "metadata_pending", "The merge has committed. Update its status before changing the base.");
+  }
   if (newBase && newBase !== pr.baseRef) {
     if (newBase === pr.headRef) {
       return errorResponse(422, "identical_branches", "Head and base branches must differ.");
@@ -236,6 +240,9 @@ async function setState(
   const { access, pr, repo } = prctx;
   if (!isAuthorOrMaintainer(access, pr.authorId)) {
     return errorResponse(403, "forbidden", "Only the author or a maintainer may change this pull request's state.");
+  }
+  if (pendingMerge(await readRepoRefs(ctx.env.BUCKET, repo), pr)) {
+    return errorResponse(409, "metadata_pending", "The merge has committed. Update its status before changing state.");
   }
   if (pr.merged !== 0) {
     return errorResponse(409, "already_merged", "A merged pull request cannot change state.");

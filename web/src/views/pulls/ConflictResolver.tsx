@@ -7,13 +7,15 @@
 import {
   createResource,
   createSignal,
+  onCleanup,
   ErrorBoundary,
   Index,
   Show,
   Suspense,
   type JSX,
 } from "solid-js";
-import { pullsApi } from "../../api/pulls.ts";
+import { pullsApi, type MergeResponse } from "../../api/pulls.ts";
+import { useSession } from "../../store/session.tsx";
 import { ApiError } from "../../api/client.ts";
 import type { PullRequestDto } from "../../api/types.ts";
 import {
@@ -51,10 +53,14 @@ function ResolverBody(props: {
   repo: string;
   pr: PullRequestDto;
   conflicts: readonly DetailedConflict[];
-  onResolved: () => void;
+  onResolved: (result: MergeResponse) => void;
   onCancel: () => void;
 }): JSX.Element {
   const toast = useToast();
+  const session = useSession();
+  let live = true;
+  onCleanup(() => { live = false; });
+  const scope = () => JSON.stringify([props.owner, props.repo, props.pr.number, session.user()?.subject]);
   const [resolutions, setResolutions] = createSignal<Map<string, Resolution>>(new Map());
   const [selected, setSelected] = createSignal(props.conflicts[0]?.path ?? "");
   const [edit, setEdit] = createSignal(props.conflicts[0]?.ours ?? props.conflicts[0]?.theirs ?? "");
@@ -101,22 +107,24 @@ function ResolverBody(props: {
 
   const submit = async () => {
     if (!allResolved() || submitting()) return;
+    const captured = scope();
     setSubmitting(true);
     setError(null);
     try {
-      await pullsApi.resolve(props.owner, props.repo, props.pr.number, {
+      const result = await pullsApi.resolve(props.owner, props.repo, props.pr.number, {
         resolutions: [...resolutions().values()].map((r) => ({
           path: r.path,
           content: r.content,
           delete: r.delete,
         })),
       });
-      props.onResolved();
+      if (live && captured === scope()) props.onResolved(result);
     } catch (err) {
+      if (!live || captured !== scope()) return;
       setError(err instanceof ApiError ? err.message : "Failed to submit resolutions.");
       toast.error("Failed to resolve conflicts.");
     } finally {
-      setSubmitting(false);
+      if (live && captured === scope()) setSubmitting(false);
     }
   };
 
@@ -253,7 +261,7 @@ export function ConflictResolver(props: {
   owner: string;
   repo: string;
   pr: PullRequestDto;
-  onResolved: () => void;
+  onResolved: (result: MergeResponse) => void;
   onCancel: () => void;
 }): JSX.Element {
   const [data] = createResource(

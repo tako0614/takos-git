@@ -13,7 +13,7 @@ import type { DbClient } from "../../db/index.ts";
 import type { ObjectStoreBinding } from "../../git/types.ts";
 import { repositoryObjectStore } from "../../git/repo-object-store.ts";
 import { readRepoRefs } from "../../git/refs-store.ts";
-import { writeRefsWithMetadata } from "../../git/two-phase.ts";
+import { commitMerge, pendingMerge, projectionComplete, pendingResult } from "./merge-projection.ts";
 import { getCommitData, putBlob, putCommit } from "../../git/object-store.ts";
 import { buildTreeFromPaths, flattenTree, getBlobAtPath, isValidGitPath } from "../../git/tree-ops.ts";
 import { findMergeBase } from "../../git/merge-base.ts";
@@ -21,7 +21,7 @@ import { mergeTrees3Way } from "../../git/merge.ts";
 import { decodeBlobContent } from "../../git/text-diff.ts";
 import type { GitSignature } from "../../git/git-objects.ts";
 import type { PullRequestRow } from "./dto.ts";
-import { markMerged, type MergeActor, type MergeFailure, type MergeResult } from "./merge.ts";
+import { type MergeActor, type MergeFailure, type MergeResult } from "./merge.ts";
 
 function fail(
   status: number,
@@ -204,6 +204,8 @@ export async function resolveConflictsAndMerge(params: ResolveParams): Promise<M
   const { db, bucket, repoKey, pr, resolutions, commitMessage, actor } = params;
   const objects = repositoryObjectStore(bucket, repoKey);
   const refs = await readRepoRefs(bucket, repoKey);
+  const pending = pendingMerge(refs, pr);
+  if (pending) return pendingResult(pending, projectionComplete(pr, pending));
   const baseRecord = refs.refs.find((r) => r.name === `refs/heads/${pr.baseRef}`);
   const headRecord = refs.refs.find((r) => r.name === `refs/heads/${pr.headRef}`);
   if (!baseRecord || !headRecord) return fail(404, "branch_not_found", "Head or base branch no longer exists.");
@@ -271,43 +273,8 @@ export async function resolveConflictsAndMerge(params: ResolveParams): Promise<M
     committer: signature,
   });
 
-  const baseRefName = `refs/heads/${pr.baseRef}`;
-  const cas = await writeRefsWithMetadata(bucket, {
-    repo: repoKey,
-    mutateRefs: (current) => {
-      const record = current.refs.find((r) => r.name === baseRefName);
-      if (!record || record.sha !== baseSha) return null;
-      return {
-        ...current,
-        refs: current.refs.map((r) =>
-          r.name === baseRefName ? { name: r.name, sha: mergeCommitSha } : r,
-        ),
-      };
-    },
-    projectMetadata: async () => {
-      await markMerged(db, pr, mergeCommitSha, "merge", actor.id, mergeCommitSha, headSha);
-    },
-  });
-
-  switch (cas.status) {
-    case "committed":
-      return {
-        ok: true,
-        mergeCommitSha,
-        newBaseSha: mergeCommitSha,
-        headSha,
-        previousBaseSha: baseSha,
-        method: "merge",
-      };
-    case "conflict": {
-      const current = cas.current.refs.find((r) => r.name === baseRefName);
-      return fail(409, "ref_conflict", "The base branch was modified by another process.", {
-        current: current?.sha ?? null,
-      });
-    }
-    case "aborted":
-      return fail(409, "ref_conflict", "The base branch was modified by another process.");
-    case "absent":
-      return fail(500, "repo_missing", "Repository refs document is missing.");
-  }
+  return commitMerge({ db, bucket, repo: repoKey, pr, receipt: {
+    repoId: pr.repoId, issueId: pr.issueId, baseRef: pr.baseRef, headRef: pr.headRef,
+    baseSha, headSha, commitSha: mergeCommitSha, method: "merge", actorId: actor.id, at: db.now(), advanced: true,
+  } });
 }

@@ -174,6 +174,7 @@ export function principalLite(
 // ============================================================================
 
 export interface PullRequestDto {
+  readonly mergePending?: { readonly commitSha: string; readonly method: "merge" | "squash" | "rebase"; readonly baseRef: string };
   readonly number: number;
   readonly state: "open" | "closed";
   readonly title: string;
@@ -201,6 +202,7 @@ export interface PullRequestDto {
 }
 
 export interface PullRequestMetrics {
+  readonly mergePending?: PullRequestDto["mergePending"];
   readonly author: PrincipalLite | null;
   readonly mergedBy: PrincipalLite | null;
   readonly commitsCount: number;
@@ -220,6 +222,7 @@ export function toPullRequestDto(
   metrics: PullRequestMetrics,
 ): PullRequestDto {
   return {
+    ...(metrics.mergePending ? { mergePending: metrics.mergePending } : {}),
     number: row.number,
     state: row.state === "closed" ? "closed" : "open",
     title: row.title,

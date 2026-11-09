@@ -431,7 +431,7 @@ function nextRefsDoc(
       : branches.includes("main")
         ? "main"
         : (branches[0] ?? null);
-  return { refs: records, defaultBranch };
+  return { ...current, refs: records, defaultBranch };
 }
 
 export interface ReceivePackHooks {

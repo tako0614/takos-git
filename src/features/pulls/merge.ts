@@ -16,7 +16,7 @@ import type { DbClient } from "../../db/index.ts";
 import type { ObjectStoreBinding } from "../../git/types.ts";
 import { repositoryObjectStore } from "../../git/repo-object-store.ts";
 import { readRepoRefs } from "../../git/refs-store.ts";
-import { writeRefsWithMetadata } from "../../git/two-phase.ts";
+import { commitMerge, pendingMerge, projectionComplete, pendingResult } from "./merge-projection.ts";
 import { getCommitData, putCommit } from "../../git/object-store.ts";
 import { findMergeBase, isAncestor } from "../../git/merge-base.ts";
 import { mergeTrees3Way } from "../../git/merge.ts";
@@ -49,6 +49,8 @@ export type MergeSuccess = {
   readonly headSha: string;
   readonly previousBaseSha: string | null;
   readonly method: MergeMethod;
+  readonly metadataDeferred?: true;
+  readonly metadataOnly?: true;
 };
 
 export type MergeResult = MergeSuccess | MergeFailure;
@@ -201,6 +203,8 @@ export async function performMerge(params: PerformMergeParams): Promise<MergeRes
   const { db, bucket, repoKey, pr, method, commitMessage, actor } = params;
   const objects = repositoryObjectStore(bucket, repoKey);
   const refs = await readRepoRefs(bucket, repoKey);
+  const pending = pendingMerge(refs, pr);
+  if (pending) return pendingResult(pending, projectionComplete(pr, pending));
   const baseRecord = refs.refs.find((r) => r.name === `refs/heads/${pr.baseRef}`);
   const headRecord = refs.refs.find((r) => r.name === `refs/heads/${pr.headRef}`);
   if (!baseRecord || !headRecord) return fail(404, "branch_not_found", "Head or base branch no longer exists.");
@@ -209,15 +213,10 @@ export async function performMerge(params: PerformMergeParams): Promise<MergeRes
 
   // Already merged: head is an ancestor of base — no ref change, mark merged.
   if (await isAncestor(objects, headSha, baseSha)) {
-    await markMerged(db, pr, baseSha, method, actor.id, baseSha, headSha);
-    return {
-      ok: true,
-      mergeCommitSha: baseSha,
-      newBaseSha: baseSha,
-      headSha,
-      previousBaseSha: null,
-      method,
-    };
+    return commitMerge({ db, bucket, repo: repoKey, pr, receipt: {
+      repoId: pr.repoId, issueId: pr.issueId, baseRef: pr.baseRef, headRef: pr.headRef,
+      baseSha, headSha, commitSha: baseSha, method, actorId: actor.id, at: db.now(), advanced: false,
+    } });
   }
 
   const canFastForward = await isAncestor(objects, baseSha, headSha);
@@ -249,71 +248,8 @@ export async function performMerge(params: PerformMergeParams): Promise<MergeRes
   if (!target.ok) return target;
 
   const newBaseSha = target.newBaseSha;
-  const baseRefName = `refs/heads/${pr.baseRef}`;
-
-  const cas = await writeRefsWithMetadata(bucket, {
-    repo: repoKey,
-    mutateRefs: (current) => {
-      const record = current.refs.find((r) => r.name === baseRefName);
-      // Base moved since we resolved it — abort so the caller reports a conflict
-      // instead of clobbering a concurrent advance. (The ETag CAS is the backstop.)
-      if (!record || record.sha !== baseSha) return null;
-      return {
-        ...current,
-        refs: current.refs.map((r) =>
-          r.name === baseRefName ? { name: r.name, sha: newBaseSha } : r,
-        ),
-      };
-    },
-    projectMetadata: async () => {
-      await markMerged(db, pr, newBaseSha, method, actor.id, newBaseSha, headSha);
-    },
-  });
-
-  switch (cas.status) {
-    case "committed":
-      return {
-        ok: true,
-        mergeCommitSha: newBaseSha,
-        newBaseSha,
-        headSha,
-        previousBaseSha: baseSha,
-        method,
-      };
-    case "conflict": {
-      const current = cas.current.refs.find((r) => r.name === baseRefName);
-      return fail(409, "ref_conflict", "The base branch was modified by another process.", {
-        current: current?.sha ?? null,
-      });
-    }
-    case "aborted":
-      return fail(409, "ref_conflict", "The base branch was modified by another process.");
-    case "absent":
-      return fail(500, "repo_missing", "Repository refs document is missing.");
-  }
-}
-
-/** Mark a PR merged + close its issue. Idempotent (safe to retry after R2 commit). */
-export async function markMerged(
-  db: DbClient,
-  pr: PullRequestRow,
-  mergeCommitSha: string,
-  method: MergeMethod,
-  mergedById: string,
-  newBaseSha: string,
-  headSha: string,
-): Promise<void> {
-  const now = db.now();
-  await db.run(
-    `UPDATE pull_requests
-        SET merged = 1, merged_at = ?, merged_by_id = ?, merge_commit_sha = ?,
-            merge_method = ?, base_sha = ?, head_sha = ?, mergeable = 'clean', updated_at = ?
-      WHERE id = ?`,
-    [now, mergedById, mergeCommitSha, method, newBaseSha, headSha, now, pr.id],
-  );
-  await db.run(
-    `UPDATE issues SET state = 'closed', state_reason = 'completed', closed_at = ?, updated_at = ?
-      WHERE id = ?`,
-    [now, now, pr.issueId],
-  );
+  return commitMerge({ db, bucket, repo: repoKey, pr, receipt: {
+    repoId: pr.repoId, issueId: pr.issueId, baseRef: pr.baseRef, headRef: pr.headRef,
+    baseSha, headSha, commitSha: newBaseSha, method, actorId: actor.id, at: db.now(), advanced: true,
+  } });
 }

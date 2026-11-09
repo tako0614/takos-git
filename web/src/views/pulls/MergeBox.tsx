@@ -6,8 +6,8 @@
  * an inline banner, and expands the ConflictResolver when the PR is not
  * mergeable.
  */
-import { createSignal, Show, type JSX } from "solid-js";
-import { pullsApi } from "../../api/pulls.ts";
+import { createEffect, createSignal, onCleanup, Show, type JSX } from "solid-js";
+import { pullsApi, type MergeResponse } from "../../api/pulls.ts";
 import { ApiError } from "../../api/client.ts";
 import type { PullRequestDto } from "../../api/types.ts";
 import { useSession } from "../../store/session.tsx";
@@ -60,28 +60,58 @@ export function MergeBox(props: {
   const [protection, setProtection] = createSignal<ApiError | null>(null);
   const [showResolver, setShowResolver] = createSignal(false);
 
-  const dirty = () => props.pr.mergeable === "dirty";
-
-  const doMerge = async () => {
-    setBusy(true);
-    setProtection(null);
-    try {
-      await pullsApi.merge(props.owner, props.repo, props.pr.number, {
-        method: method(),
-        commitMessage: message().trim() || undefined,
-      });
+  let live = true;
+  onCleanup(() => { live = false; });
+  const scope = () => JSON.stringify([props.owner, props.repo, props.pr.number, session.user()?.subject]);
+  const [ack, setAck] = createSignal<{ scope: string; commitSha: string } | null>(null);
+  createEffect(() => {
+    scope();
+    setAck(null); setBusy(false); setConfirming(false); setProtection(null); setShowResolver(false);
+  });
+  const pending = () => props.pr.mergePending?.commitSha ?? (ack()?.scope === scope() ? ack()?.commitSha : undefined);
+  const accept = (result: MergeResponse) => {
+    setAck(result.metadataPending ? { scope: scope(), commitSha: result.mergeCommit } : null);
+    if (!result.metadataPending) {
       toast.success("Pull request merged.");
       setConfirming(false);
       setMessage("");
-      props.onChanged();
+    }
+    props.onChanged();
+  };
+  const updateStatus = async () => {
+    if (busy()) return;
+    const captured = scope();
+    setBusy(true);
+    try {
+      const result = await pullsApi.reconcile(props.owner, props.repo, props.pr.number);
+      if (live && captured === scope()) accept(result);
     } catch (err) {
+      if (live && captured === scope()) toast.error(err instanceof ApiError ? err.message : "Failed to update merge status.");
+    } finally { if (live && captured === scope()) setBusy(false); }
+  };
+
+  const dirty = () => props.pr.mergeable === "dirty";
+
+  const doMerge = async () => {
+    if (busy() || pending()) return;
+    const captured = scope();
+    setBusy(true);
+    setProtection(null);
+    try {
+      const result = await pullsApi.merge(props.owner, props.repo, props.pr.number, {
+        method: method(),
+        commitMessage: message().trim() || undefined,
+      });
+      if (live && captured === scope()) accept(result);
+    } catch (err) {
+      if (!live || captured !== scope()) return;
       if (err instanceof ApiError && err.status === 403) {
         setProtection(err);
       } else {
         toast.error(err instanceof ApiError ? err.message : "Failed to merge.");
       }
     } finally {
-      setBusy(false);
+      if (live && captured === scope()) setBusy(false);
     }
   };
 
@@ -90,10 +120,9 @@ export function MergeBox(props: {
     onSelect: () => setMethod(m),
   }));
 
-  // Merged / closed terminal states.
-  if (props.pr.merged) {
-    return (
-      <Box class="p-4">
+
+  return (
+    <Show when={!props.pr.merged} fallback={<Box class="p-4">
         <div class="flex items-center gap-2">
           <span class="inline-flex h-8 w-8 items-center justify-center rounded-full bg-done-emphasis text-white">
             <Icons.GitMerge class="h-4 w-4" />
@@ -105,24 +134,17 @@ export function MergeBox(props: {
             </span>
           </div>
         </div>
-      </Box>
-    );
-  }
-  if (props.pr.state === "closed") {
-    return (
-      <Box class="p-4">
+      </Box>}>
+    <Show when={props.pr.state !== "closed"} fallback={<Box class="p-4">
         <div class="flex items-center gap-2 text-sm">
           <span class="inline-flex h-8 w-8 items-center justify-center rounded-full bg-danger-emphasis text-white">
             <Icons.X class="h-4 w-4" />
           </span>
           <span class="font-semibold text-fg">Closed with unmerged commits.</span>
         </div>
-      </Box>
-    );
-  }
-
-  return (
+      </Box>}>
     <Box>
+      <Show when={pending()} fallback={<>
       <div class="flex items-start gap-3 border-b border-border px-4 py-3">
         <Show
           when={!dirty()}
@@ -177,10 +199,9 @@ export function MergeBox(props: {
                     owner={props.owner}
                     repo={props.repo}
                     pr={props.pr}
-                    onResolved={() => {
+                    onResolved={(result) => {
                       setShowResolver(false);
-                      toast.success("Conflicts resolved and merged.");
-                      props.onChanged();
+                      accept(result);
                     }}
                     onCancel={() => setShowResolver(false)}
                   />
@@ -229,6 +250,19 @@ export function MergeBox(props: {
           </Show>
         </Show>
       </div>
+      </>}>
+        <div class="p-4 space-y-3">
+          <Banner tone="warning" title="Merge committed; status update pending">
+            The Git changes were applied at <code class="font-mono break-all">{pending()}</code>.
+            Update the pull request status without merging again.
+          </Banner>
+          <Show when={session.authenticated()} fallback={<p class="text-sm text-muted">Sign in to update this merge's status.</p>}>
+            <Button onClick={updateStatus} disabled={busy()}>{busy() ? "Updating status…" : "Update status"}</Button>
+          </Show>
+        </div>
+      </Show>
     </Box>
+    </Show>
+    </Show>
   );
 }
