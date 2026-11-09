@@ -174,6 +174,8 @@ export function principalLite(
 // ============================================================================
 
 export interface PullRequestDto {
+  /** Actual backing Issue on read projections; historical creation ACKs may omit it. */
+  readonly issueId?: string;
   readonly mergePending?: { readonly commitSha: string; readonly method: "merge" | "squash" | "rebase"; readonly baseRef: string };
   readonly number: number;
   readonly state: "open" | "closed";
@@ -223,6 +225,7 @@ export function toPullRequestDto(
 ): PullRequestDto {
   return {
     ...(metrics.mergePending ? { mergePending: metrics.mergePending } : {}),
+    issueId: row.issueId,
     number: row.number,
     state: row.state === "closed" ? "closed" : "open",
     title: row.title,

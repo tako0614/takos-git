@@ -3,7 +3,7 @@ task: TASK-0117
 title: Recover original PR creation with a durable submission receipt
 status: active
 opened: 2026-11-09
-branch: fix/TASK-0117-issue-comment-reload-20261109
+branch: fix/TASK-0117-pr-conversation-recovery-20261109
 requiredFor:
   - persisted_schema
   - release_behavior
@@ -132,3 +132,36 @@ which could flow through object spreading into a state-only follow-up. Reject
 unknown context fields and serialize only its three identifiers; preserve raw
 corrupt markers before another POST. This is client/local source evidence, not
 a live exploit or new authority. Backend/runtime inputs remain unchanged.
+
+## Follow-up: PR conversation comment recovery
+
+The separate PR conversation still sent unkeyed comments and cleared newer
+input after any fulfilled response. Actual held201 cleared a newer draft;
+socket loss after a committed201 appeared as empty200 to this browser ingress
+and was accepted as success. Reload and a normal same-body send saved a second
+comment, without a receipt. Preserve the distinct transport observations;
+this unit does not diagnose or modify that ingress.
+
+Reuse the existing Issue comment journal/recovery. Read DTOs project their
+actual backing Issue ID; historical write-only creation metadata remains
+byte-exact and may omit that field. Validate the submitted comment response
+before retiring a pending key, isolate caller/repository/PR lifetimes, preserve
+newer input and refresh the actual count. Current auth/CSRF/guard/SQL/schema and
+all original receipts remain unchanged.
+
+Actual built-SPA recovery retained one original comment after reload, rejected
+another actual local writer with409/effect0, hid the original draft from that
+writer and preserved a different PR's draft after a retired ACK. A separate
+long-conversation RED hid the posted51st comment and had no cursor control.
+Wire the existing opaque cursor to shared timeline append and keep confirmed
+rows when an older page finishes. Final actual UI read53 unique comments,
+retained the recovered pending draft and recovered a timed-out page by explicit
+retry; a bounded in-flight-page/new-ACK case displayed52 unique rows.
+
+Focused backend11/81 assertions and client2/78 assertions pass. One new actual
+workerd/D1/R2 checkpoint confirms the read DTO's real Issue ID, same-key comment
+replay and actual caller/other-PR/Repo409 effect0, with original metadata/FKs
+preserved and outward HTTP0. Prior Issue/native cohorts are not rerun or
+promoted. Fixed-source canonical, independent review and normal PR/CI/merge are
+qualified separately. No real input, schema/dependency or deployment authority
+is included; the original ecosystem goal remains incomplete.
