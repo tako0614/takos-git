@@ -26,7 +26,7 @@
 import {
   readRepoRefs,
   readRepoRefsSnapshot,
-  writeRepoRefs,
+  writeRepoRefsSnapshot,
   type RefsDoc,
 } from "./refs-store.ts";
 import type { ObjectStoreBinding } from "./types.ts";
@@ -82,17 +82,22 @@ export async function writeRefsWithMetadata(
   if (next === null) return { status: "aborted" };
 
   // --- ATOMIC COMMIT POINT: R2 refs-doc ETag CAS ---
-  const written = await writeRepoRefs(bucket, write.repo, next, snapshot.etag);
+  const written = await writeRepoRefsSnapshot(
+    bucket,
+    write.repo,
+    next,
+    snapshot.etag,
+  );
   if (!written) {
     // Lost the race; re-read the authoritative doc so the caller can retry.
     return { status: "conflict", current: await readRepoRefs(bucket, write.repo) };
   }
 
-  // R2 has committed and is now authoritative. Capture the new ETag.
-  const after = await readRepoRefsSnapshot(bucket, write.repo);
+  // R2 acknowledged this commit. A later GET could observe a different writer
+  // or fail after this write already landed; use this put's exact receipt.
   const committed: CommittedRefs = {
-    refs: after?.doc ?? next,
-    etag: after?.etag ?? snapshot.etag,
+    refs: written.doc,
+    etag: written.etag,
   };
 
   if (write.projectMetadata) {
