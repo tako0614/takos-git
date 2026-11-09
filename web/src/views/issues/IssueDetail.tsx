@@ -49,6 +49,7 @@ import { AssigneeEditor, LabelEditor, MilestoneEditor } from "./pickers.tsx";
 import { issuesExtraApi } from "./api-extra.ts";
 import type { IssueCommentDto } from "../../api/types.ts";
 import { createCommentTimeline } from "./comment-timeline.ts";
+import { createCommentSubmission, type CommentSubmission } from "./comment-submission.ts";
 
 export function IssueDetail(props: {
   owner: string;
@@ -171,6 +172,7 @@ export function IssueDetail(props: {
   // --- comment composer -----------------------------------------------------
 
   const [commentDraft, setCommentDraft] = createSignal("");
+  const submission = createCommentSubmission();
   let commentDraftRevision = 0;
   const updateCommentDraft = (value: string) => {
     commentDraftRevision += 1;
@@ -178,31 +180,57 @@ export function IssueDetail(props: {
   };
 
   async function submitComment(closeAfter?: "open" | "closed"): Promise<void> {
+    if (busy() || submission.state()) return;
     const bodyText = commentDraft().trim();
-    const submittedRevision = commentDraftRevision;
+    if (!bodyText) {
+      if (closeAfter) await patchIssue({ state: closeAfter });
+      return;
+    }
+    const attempt = { body: bodyText, revision: commentDraftRevision, closeAfter };
+    if (submission.begin(attempt)) await sendComment(attempt);
+  }
+
+  async function sendComment(attempt: CommentSubmission): Promise<void> {
     setBusy(true);
     try {
-      if (bodyText) {
-        const { comment } = await issuesApi.comment(
-          props.owner,
-          props.repo,
-          props.number,
-          bodyText,
-        );
-        timeline.acknowledge(comment);
-        // An ACK owns the submitted draft, not edits made while it was pending.
-        if (commentDraftRevision === submittedRevision) setCommentDraft("");
-      }
-      if (closeAfter) {
-        await patchIssue({ state: closeAfter });
-      } else if (bodyText) {
+      const { comment } = await issuesApi.comment(props.owner, props.repo, props.number, attempt.body);
+      if (!submission.acknowledge(attempt)) return;
+      timeline.acknowledge(comment);
+      // An ACK owns the submitted draft, not edits made while it was pending.
+      if (commentDraftRevision === attempt.revision) setCommentDraft("");
+      if (attempt.closeAfter) {
+        await patchIssue({ state: attempt.closeAfter });
+      } else {
         void refetchIssue(); // refresh comment count
       }
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Could not add comment.");
+      submission.fail(attempt, err);
+      if (submission.unknown()) {
+        // Read actual state for the user's inspection; a body match or an empty
+        // page is not an ACK and never silently unlocks another POST.
+        void loadComments(true);
+        void refetchIssue();
+      } else {
+        toast.error(err instanceof ApiError ? err.message : "Could not add comment.");
+      }
     } finally {
       setBusy(false);
     }
+  }
+
+  function resolveComment(attempt: CommentSubmission): void {
+    if (submission.resolve(attempt) && commentDraftRevision === attempt.revision) setCommentDraft("");
+  }
+
+  async function retryComment(attempt: CommentSubmission): Promise<void> {
+    const ok = await confirm({
+      title: "Post this comment again?",
+      message: "The original comment may already be posted. Sending it again can create a duplicate. Check the conversation before posting the original comment again." +
+        (attempt.closeAfter ? ` This will also ${attempt.closeAfter === "closed" ? "close" : "reopen"} the issue after the comment is posted.` : ""),
+      confirmText: "Post again",
+      danger: true,
+    });
+    if (ok && !busy() && submission.retry(attempt)) await sendComment(attempt);
   }
 
   const notFound = () =>
@@ -387,6 +415,27 @@ export function IssueDetail(props: {
                         }
                       >
                         <h2 class="mb-2 text-sm font-semibold text-fg">Add a comment</h2>
+                        <Show when={submission.unknown()}>
+                          {(attempt) => (
+                            <Banner tone="warning" title="Comment result unknown" class="mb-3">
+                              <p>Your comment may have been posted. Check the conversation before sending it again.</p>
+                              <Show when={attempt().closeAfter}>
+                                <p>Also check whether the issue still needs to be closed or reopened.</p>
+                              </Show>
+                              <details class="mt-2">
+                                <summary>Submitted comment</summary>
+                                <p class="max-h-40 overflow-auto whitespace-pre-wrap">{attempt().body}</p>
+                              </details>
+                              <div class="mt-2 flex flex-wrap gap-2">
+                                <Button size="sm" disabled={commentsLoading()} onClick={() => { void loadComments(true); void refetchIssue(); }}>
+                                  Refresh comments
+                                </Button>
+                                <Button size="sm" onClick={() => resolveComment(attempt())}>Comment is already posted</Button>
+                                <Button size="sm" onClick={() => void retryComment(attempt())}>Post original again…</Button>
+                              </div>
+                            </Banner>
+                          )}
+                        </Show>
                         <MarkdownEditor
                           value={commentDraft()}
                           onInput={updateCommentDraft}
@@ -397,7 +446,7 @@ export function IssueDetail(props: {
                             when={iss().state === "open"}
                             fallback={
                               <Button
-                                disabled={busy()}
+                                disabled={busy() || !!submission.state()}
                                 onClick={() => void submitComment("open")}
                               >
                                 <Icons.Refresh class="h-4 w-4" />{" "}
@@ -407,7 +456,7 @@ export function IssueDetail(props: {
                           >
                             <Button
                               variant="danger"
-                              disabled={busy()}
+                              disabled={busy() || !!submission.state()}
                               onClick={() => void submitComment("closed")}
                             >
                               <Icons.Check class="h-4 w-4" />{" "}
@@ -416,7 +465,7 @@ export function IssueDetail(props: {
                           </Show>
                           <Button
                             variant="primary"
-                            disabled={busy() || !commentDraft().trim()}
+                            disabled={busy() || !!submission.state() || !commentDraft().trim()}
                             onClick={() => void submitComment()}
                           >
                             Comment
