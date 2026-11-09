@@ -141,9 +141,9 @@ export class DbClient {
   }
 
   /** Execute a batch atomically (D1 wraps the batch in a transaction). */
-  async batch(statements: readonly DbStatement[]): Promise<void> {
-    if (statements.length === 0) return;
-    await this.binding.batch(
+  async batch(statements: readonly DbStatement[]): Promise<D1Result[]> {
+    if (statements.length === 0) return [];
+    return this.binding.batch(
       statements.map((statement) =>
         this.binding.prepare(statement.sql).bind(...(statement.params ?? [])),
       ),

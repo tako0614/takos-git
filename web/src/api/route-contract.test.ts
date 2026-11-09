@@ -11,6 +11,7 @@ interface CapturedRequest {
   readonly method: string;
   readonly path: string;
   readonly body: unknown;
+  readonly idempotencyKey?: string;
 }
 
 function captureFetch(responses: readonly unknown[]): CapturedRequest[] {
@@ -22,6 +23,8 @@ function captureFetch(responses: readonly unknown[]): CapturedRequest[] {
       method: init?.method ?? "GET",
       path: String(input),
       body: rawBody,
+      ...(new Headers(init?.headers).has("idempotency-key")
+        ? { idempotencyKey: new Headers(init?.headers).get("idempotency-key")! } : {}),
     });
     return new Response(JSON.stringify(responses[responseIndex++]), {
       status: 200,
@@ -36,6 +39,16 @@ afterEach(() => {
 });
 
 describe("SPA route contract", () => {
+  test("a comment retry preserves its captured key without leaking it into another write", async () => {
+    const requests = captureFetch([{ comment: { id: "one" } }, { comment: { id: "one" } }, { issue: { number: 2 } }]);
+    await issuesApi.comment("alice", "web", 1, "original", "captured-key");
+    await issuesApi.comment("alice", "web", 1, "original", "captured-key");
+    await issuesApi.create("alice", "web", { title: "different intent" });
+    expect(requests.slice(0, 2).map(r => r.idempotencyKey)).toEqual(["captured-key", "captured-key"]);
+    expect(requests.slice(0, 2).map(r => r.body)).toEqual([{ body: "original" }, { body: "original" }]);
+    expect(requests[2].idempotencyKey).toBeUndefined();
+  });
+
   test("issue filters survive first-page limit and later-page cursor", async () => {
     const requests = captureFetch([
       { issues: [], nextCursor: "next" },

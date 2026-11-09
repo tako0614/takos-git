@@ -711,6 +711,68 @@ export async function createComment(
   return toCommentDto(row as IssueCommentRow, author.get(authorId) ?? null);
 }
 
+type CommentSubmissionResult =
+  | { readonly outcome: "created" | "replayed"; readonly comment: IssueCommentDto }
+  | { readonly outcome: "conflict" }
+  | { readonly outcome: "deleted" };
+
+async function submissionHash(value: string): Promise<string> {
+  const bytes = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)));
+  return Array.from(bytes, byte => byte.toString(16).padStart(2, "0")).join("");
+}
+
+/** One transaction owns the row, count and receipt, even after a lost reply. */
+export async function createCommentSubmission(
+  db: DbClient,
+  issueId: string,
+  authorId: string,
+  body: string,
+  key: string,
+): Promise<CommentSubmissionResult> {
+  const keyHash = await submissionHash(key), bodyHash = await submissionHash(body);
+  const scope = [issueId, authorId, keyHash];
+  const id = db.id(), now = db.now();
+  const absent = `NOT EXISTS (SELECT 1 FROM issue_comment_submissions
+    WHERE issue_id = ? AND principal_id = ? AND key_hash = ?)`;
+  // D1 batch is atomic: concurrent callers see either no receipt or the entire
+  // earlier submission. A key conflict never modifies the original row/count.
+  const results = await db.batch([
+    {
+      sql: `INSERT INTO issue_comments (id, issue_id, author_id, body, created_at, updated_at)
+        SELECT ?, ?, ?, ?, ?, ? WHERE ${absent}`,
+      params: [id, issueId, authorId, body, now, now, ...scope],
+    },
+    {
+      sql: `UPDATE issues SET comment_count = comment_count + 1, updated_at = ?
+        WHERE id = ? AND ${absent}`,
+      params: [now, issueId, ...scope],
+    },
+    {
+      sql: `INSERT INTO issue_comment_submissions
+        (issue_id, principal_id, key_hash, body_hash, comment_id, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT (issue_id, principal_id, key_hash) DO NOTHING`,
+      params: [issueId, authorId, keyHash, bodyHash, id, now],
+    },
+  ]);
+  const receipt = await db.queryOne<{ body_hash: string; comment_id: string }>(
+    `SELECT body_hash, comment_id FROM issue_comment_submissions
+      WHERE issue_id = ? AND principal_id = ? AND key_hash = ?`, scope,
+  );
+  if (!receipt) throw new Error("Missing committed comment submission receipt");
+  if (receipt.body_hash !== bodyHash) return { outcome: "conflict" };
+  const row = await db.queryOne<IssueCommentRow>(
+    `SELECT ${COMMENT_COLUMNS} FROM issue_comments WHERE id = ? AND issue_id = ?`,
+    [receipt.comment_id, issueId],
+  );
+  if (!row) return { outcome: "deleted" };
+  const authors = await principalRefsByIds(db, [authorId]);
+  return {
+    outcome: results[0]?.meta.changes === 1 ? "created" : "replayed",
+    comment: toCommentDto(row, authors.get(authorId) ?? null),
+  };
+}
+
 export interface CommentPosition {
   readonly createdAt: number;
   readonly id: string;

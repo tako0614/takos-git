@@ -25,7 +25,7 @@ describe("D1 metadata plane (fake adapter + baseline schema)", () => {
     const repoId = db.id();
     const now = db.now();
 
-    await db.batch([
+    const results = await db.batch([
       {
         sql: `INSERT INTO principals (id, subject, kind, display_name, email, created_at, updated_at)
               VALUES (?, ?, 'user', ?, ?, ?, ?)`,
@@ -43,6 +43,7 @@ describe("D1 metadata plane (fake adapter + baseline schema)", () => {
       },
     ]);
 
+    expect(results.map(result => result.meta.changes)).toEqual([1, 1, 1]);
     const repo = await db.queryOne<{ name: string; owner_login: string; visibility: string }>(
       `SELECT r.name, r.visibility, o.login AS owner_login
          FROM repositories r JOIN owners o ON o.id = r.owner_id

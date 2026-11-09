@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { ApiError } from "../../api/client.ts";
 import { createCommentSubmission, type CommentSubmission } from "./comment-submission.ts";
 
-const attempt = (body = "original", revision = 1): CommentSubmission => ({ body, revision, closeAfter: "closed" });
+const attempt = (body = "original", revision = 1): CommentSubmission => ({ body, revision, closeAfter: "closed", idempotencyKey: `local-key-${revision}` });
 
 describe("comment submission recovery", () => {
   test("a lost response retains the submitted draft and refuses a fresh or concurrent POST", () => {
@@ -12,7 +12,7 @@ describe("comment submission recovery", () => {
     flow.fail(original, new TypeError("Failed to fetch"));
     expect(flow.unknown()).toBe(original);
     expect(flow.begin(attempt("newer draft", 2))).toBe(false);
-    expect(flow.state()?.attempt).toEqual({ body: "original", revision: 1, closeAfter: "closed" });
+    expect(flow.state()?.attempt).toEqual({ body: "original", revision: 1, closeAfter: "closed", idempotencyKey: "local-key-1" });
   });
 
   test("timeouts, malformed responses and proxy/server failures stay uncertain", () => {
@@ -39,6 +39,7 @@ describe("comment submission recovery", () => {
     flow.begin(original); flow.fail(original, new TypeError("Lost reply"));
     expect(flow.retry(different)).toBe(false);
     expect(flow.retry(original)).toBe(true);
+    expect(flow.state()?.attempt.idempotencyKey).toBe("local-key-1");
     expect(flow.state()?.phase).toBe("sending");
     expect(flow.retry(original)).toBe(false);
     expect(flow.resolve(original)).toBe(false);

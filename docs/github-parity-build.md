@@ -1007,6 +1007,20 @@ Private-repo reads require at least `reader`; public repos allow anonymous GET (
 - **Idempotency / concurrency** — resources with optimistic concurrency (repo settings, branch protection, PR state) accept `If-Match` against a returned `ETag`. Ref-writing endpoints surface the refs-doc CAS failure as `409 ref_update_conflict` (retryable), never a silent overwrite.
 - **`Idempotency-Key`** honored on POST create endpoints for at-least-once automation callers.
 
+The implemented Issue-comment create route (`POST …/issues/:number/comments`)
+accepts an optional key of 1–255 visible ASCII characters. Keep the same key and
+normalized body when retrying an uncertain submission. Its durable D1 receipt is
+scoped to the current principal record and Issue: the same key/body returns the
+same comment identity in its current edited state, with `201` and
+`Idempotency-Replayed: true`, without incrementing the count or emitting another
+comment-created event. Different content under that key returns `409
+idempotency_conflict`; replay after deletion returns `410 submission_deleted`
+and cannot recreate the comment. Comment deletion retains the receipt; removal
+of its parent Issue or principal retires that scope. Receipts store key/body
+hashes and the comment ID, not their raw content. Unkeyed legacy calls remain
+distinct intentional creates. This is not a durable event-delivery guarantee or
+a receipt implementation for every other POST endpoint.
+
 ### 4. Route table
 
 Auth column = required Interface-OAuth scope ceiling **/** minimum repo role. "browser" reads carry full ceiling bounded by role. `PORT` = adapt existing Takos handler (rewrite `:repoId`→`:owner/:repo`, sever `accounts`/`Space` FK, drop Takos RPC types); `NEW` = build fresh.

@@ -87,6 +87,7 @@ async function toError(response: Response): Promise<ApiError> {
 }
 
 interface RequestOptions {
+  readonly idempotencyKey?: string;
   readonly query?: Query;
   readonly signal?: AbortSignal;
   readonly body?: unknown;
@@ -107,6 +108,7 @@ async function request<T>(
   const signal = combined?.signal ?? controller.signal;
 
   const headers: Record<string, string> = { accept: "application/json" };
+  if (options.idempotencyKey !== undefined) headers["idempotency-key"] = options.idempotencyKey;
   let body: BodyInit | undefined;
   if (options.rawBody !== undefined) {
     body = options.rawBody;
@@ -181,8 +183,8 @@ function combineSignals(signals: readonly AbortSignal[]): {
 export const api = {
   get: <T>(path: string, query?: Query, signal?: AbortSignal) =>
     request<T>("GET", path, { query, signal }),
-  post: <T>(path: string, body?: unknown, signal?: AbortSignal) =>
-    request<T>("POST", path, { body, signal }),
+  post: <T>(path: string, body?: unknown, signal?: AbortSignal, options?: Pick<RequestOptions, "idempotencyKey">) =>
+    request<T>("POST", path, { body, signal, ...options }),
   put: <T>(path: string, body?: unknown, signal?: AbortSignal) =>
     request<T>("PUT", path, { body, signal }),
   patch: <T>(path: string, body?: unknown, signal?: AbortSignal) =>

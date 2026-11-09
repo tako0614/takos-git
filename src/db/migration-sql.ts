@@ -8,6 +8,7 @@ import baseline from "../../migrations/0001_init.sql" with { type: "text" };
 import principalIdentity from "../../migrations/0002_principal_identity.sql" with { type: "text" };
 import webhookOutbox from "../../migrations/0003_webhook_outbox.sql" with { type: "text" };
 import repositoryDeletionQuarantine from "../../migrations/0004_repository_deletion_quarantine.sql" with { type: "text" };
+import issueCommentSubmissions from "../../migrations/0005_issue_comment_submissions.sql" with { type: "text" };
 
 export const migrations: readonly {
   readonly version: string;
@@ -17,6 +18,7 @@ export const migrations: readonly {
   { version: "0002", sql: principalIdentity },
   { version: "0003", sql: webhookOutbox },
   { version: "0004", sql: repositoryDeletionQuarantine },
+  { version: "0005", sql: issueCommentSubmissions },
 ];
 
 /**
