@@ -82,6 +82,11 @@ merge／squash／rebase／resolveは、保護ルールを評価した時点のba
 拒否後はreloadして新しいsnapshotを確認し、明示的に再試行する。新headのrequired checkがなければ
 通常どおり拒否される。無関係なtagがCAS snapshotを読む前に追加された場合は、それを保持して処理できる。
 
+競合解消は、明示された競合pathだけを解消し、それ以外は通常の3-way tree mergeと同じ規則で引き継ぐ。
+merge baseと片側の両方にpathがない場合、その側は「変更なし」であり、反対側で追加したfileを消さない。
+片側だけの追加、合意した追加、非競合の削除やfile mode変更も保持する。競合pathの未解決拒否と
+明示的な削除／content解消は従来どおりで、textの自動diff3やrename推論を新たに導入しない。
+
 ## Authentication and authorization
 
 認証経路を混ぜない。

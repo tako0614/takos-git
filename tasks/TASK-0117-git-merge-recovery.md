@@ -92,3 +92,32 @@ Correct byte input keeps the same refusal/effect oracles: 20 tests pass and 12
 reproduce the race before the source repair. Updated full/native qualification,
 independent exact-head review and normal integration are tracked with the same
 TASK-0117, not a new task or mutation authority.
+
+## Follow-up: preserve unrelated files during conflict resolution
+
+The current built Worker was exercised through real local Git CLI push, actual
+Accounts/Core-backed browser authentication, normal PR/check/merge APIs and a
+second CLI clone/fetch. Merge, squash and rebase read back correctly. Resolving
+only README on a divergent branch then returned a valid merge commit but
+dropped unrelated squash.txt and rebase.txt added on main. The native run
+stopped after 249 successful observations with ENOENT; it is retained as RED,
+not whole-path qualification. Git fsck succeeded, and the actual first-parent
+tree contains the files while the fetched merge tree omits them.
+
+The conflict-resolution map treated an absent base entry and absent incoming
+entry as a change. Compare optional SHA/mode pairs so absence equals absence;
+preserve the opposite side's addition. This is one runtime hunk, with dedicated
+actual-route regressions for local/incoming additions, agreed additions,
+one-sided deletions, executable modes and unresolved-conflict refusal. The
+original tests reproduce 1 pass/3 fail. Keep the existing normalizations,
+checked-ref pair, CAS, receipt, metadata projection, authorization and budgets.
+
+The native fixture's earlier lowercase-only DB observer and later 401 while
+reusing a 60-second credential are separate retained failures; the exact v2
+delay cause was not instrumented. Its caller now obtains
+fresh credentials through the same actual Core issuer before each remote CLI
+operation, verifying the same Principal/binding and original lifetime bound;
+it neither extends expiry nor retries an uncertain operation. The completed
+four-method native flow and updated exact-source checks/review are qualified
+separately. Initial identity/resource custody remains synthetic; there is no
+real SSO/provider/DB/credential/Apply/deploy authority or installed-app claim.
