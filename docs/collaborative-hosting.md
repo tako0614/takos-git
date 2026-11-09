@@ -75,6 +75,13 @@ status 更新する。元の merge POST を自動再送しない。event の cra
 旧 runtime に戻して receipt を消す手順を rollback と呼ばない。既存の receipt がない過去の部分失敗を
 現在の ref tip から推測して補完しない。source/local qualification は live rollout や旧データ修復の証明ではない。
 
+merge／squash／rebase／resolveは、保護ルールを評価した時点のbase/head SHAを内部処理へ必須で渡す。
+その後の読取でどちらかが変わっていたら409 `ref_conflict`とし、新しい未検査commitを取り込まない。
+計算中にheadが進んだ場合も、refs documentのCASでbaseとheadの両方を比較し、古いheadだけを
+マージしてPRを閉じない。現在のrole、required checks／reviews、CODEOWNERSなどの判定自体は維持する。
+拒否後はreloadして新しいsnapshotを確認し、明示的に再試行する。新headのrequired checkがなければ
+通常どおり拒否される。無関係なtagがCAS snapshotを読む前に追加された場合は、それを保持して処理できる。
+
 ## Authentication and authorization
 
 認証経路を混ぜない。

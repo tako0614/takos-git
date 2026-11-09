@@ -77,6 +77,7 @@ async function handleMerge(ctx: RouteContext, prctx: PrHandlerCtx): Promise<Resp
     method,
     commitMessage,
     actor: mergeActor(access),
+    checkedRefs: gitState,
   });
   if (!result.ok) {
     return errorResponse(result.status, result.code, result.message, result.details);
@@ -174,6 +175,7 @@ async function handleResolve(ctx: RouteContext, prctx: PrHandlerCtx): Promise<Re
     resolutions: normalized.resolutions,
     commitMessage,
     actor: mergeActor(access),
+    checkedRefs: gitState,
   });
   if (!result.ok) return errorResponse(result.status, result.code, result.message, result.details);
 

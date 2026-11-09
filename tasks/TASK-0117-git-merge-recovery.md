@@ -7,6 +7,7 @@ branch: fix/TASK-0117-git-merge-metadata-20261109
 requiredFor:
   - persisted_schema
   - release_behavior
+  - security_or_authority
 repos:
   - takos-control
   - takos-git
@@ -64,3 +65,30 @@ functional source unchanged; updated exact-head CI/review and normal merge
 remain to be read back. Crash-safe event delivery is a separate contract.
 Production STOP/control push HOLD remain in effect. No provider, real DB,
 credential, SSO, payment, Apply or deployment operation is authorized here.
+
+## Follow-up: preserve the refs that passed merge protection
+
+On 2026-11-09, the same writer reproduced a separate current-source race:
+after the real required-status query succeeded for H1, a real branch update
+advanced the head to unchecked H2, and the route merged H2 with HTTP 200.
+The isolated native D1/R2 counterexample passed its two setup observations and
+failed all four refusal/effect assertions. This is source/local evidence, not a
+live exploit claim. The original six assertions pass after the minimal repair.
+
+Pass the exact checked base/head tuple from the handler to both merge and
+resolution algorithms, refuse a changed pair before computing a target, and
+compare both refs again at the existing conditional-write boundary. Preserve
+the original status/review/role policy, ETag CAS, durable receipt and metadata
+recovery. Do not automatically replay a refused operation; a fresh explicit
+request must evaluate the new head's real status. An unrelated tag update
+before the CAS snapshot is read must be retained without invalidating the pair.
+
+Dedicated regressions exercise all four methods, head/base changes at the
+protection result, algorithm read and CAS snapshot, stable unchecked refusal,
+valid checked success, unrelated ref preservation, and explicit recovery after
+refusal. The first portable fixture supplied strings to a byte-only Git-tree
+helper; its two accidental content conflicts are retained as fixture errors.
+Correct byte input keeps the same refusal/effect oracles: 20 tests pass and 12
+reproduce the race before the source repair. Updated full/native qualification,
+independent exact-head review and normal integration are tracked with the same
+TASK-0117, not a new task or mutation authority.
