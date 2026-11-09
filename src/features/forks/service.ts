@@ -207,6 +207,7 @@ export function toRepositoryDtoFull(
   originBase: string,
 ): RepositoryDto {
   return {
+    id: row.id,
     owner: row.ownerLogin,
     name: row.name,
     fullName: `${row.ownerLogin}/${row.name}`,

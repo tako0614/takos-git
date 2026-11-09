@@ -118,6 +118,8 @@ function NewPullDialog(props: {
   open: boolean;
   owner: string;
   repo: string;
+  repositoryId: string;
+  recoveryScope: string;
   defaultBase: string;
   onClose: () => void;
   onCreated: () => void;
@@ -127,19 +129,23 @@ function NewPullDialog(props: {
   const { confirm } = useConfirmDialog();
   const scope = { owner: props.owner, repo: props.repo };
   const pullsHref = `/${encodeURIComponent(scope.owner)}/${encodeURIComponent(scope.repo)}/pulls`;
-  const [title, setTitle] = createSignal("");
-  const [base, setBase] = createSignal(props.defaultBase);
-  const [head, setHead] = createSignal("");
-  const [body, setBody] = createSignal("");
-  const [draft, setDraft] = createSignal(false);
+  const submission = createPullSubmission(undefined, { storage: () => sessionStorage, scope: props.recoveryScope, repositoryId: props.repositoryId });
+  const restored = submission.restoredForm();
+  const [title, setTitle] = createSignal(restored?.input.title ?? "");
+  const [base, setBase] = createSignal(restored?.input.base ?? props.defaultBase);
+  const [head, setHead] = createSignal(restored?.input.head ?? "");
+  const [body, setBody] = createSignal(restored?.input.body ?? "");
+  const [draft, setDraft] = createSignal(restored?.input.draft ?? false);
   const [error, setError] = createSignal<string | null>(null);
   const [created, setCreated] = createSignal<number | null>(null);
-  const submission = createPullSubmission();
-  let retired = false, revision = 0, viewEpoch = 0;
+  let retired = false, revision = restored?.revision ?? 0, viewEpoch = 0;
   onCleanup(() => { retired = true; });
   const busy = () => submission.state()?.phase === "sending";
   const close = () => { viewEpoch++; props.onClose(); };
-  function change<T>(setter: (value: T) => unknown, value: T): void { revision++; setter(value); }
+  function change<T>(setter: (value: T) => unknown, value: T): void {
+    revision++; setter(value);
+    submission.saveDraft({ title: title(), body: body(), base: base(), head: head(), draft: draft() }, revision);
+  }
 
   const canSubmit = () => !retired && title().trim() && base().trim() && head().trim() && !submission.state();
 
@@ -198,12 +204,12 @@ function NewPullDialog(props: {
       <div class="space-y-3">
         <Show when={submission.unknown()}>
           {(attempt) => <Banner tone="warning" title="Creation result unknown">
-            <p>{error()} Retry the original submission for “{attempt().input.title}” to recover its result. Your newer edits remain here.</p>
+            <p>{submission.storageError() ?? error()} Retry the original submission for “{attempt().input.title}” to recover its result. Your newer edits remain here.</p>
             <A class="text-accent hover:underline" href={pullsHref} target="_blank" rel="noopener noreferrer">Check original pull requests</A>
             <Button size="sm" class="ml-2" onClick={() => void retryOriginal(attempt())}>Retry original creation</Button>
           </Banner>}
         </Show>
-        <Show when={!submission.unknown() && error()}>
+        <Show when={!submission.unknown() && (submission.storageError() ?? error())}>
           {(message) => <Banner tone="danger">{message()}</Banner>}
         </Show>
         <Show when={created()}>
@@ -249,7 +255,6 @@ function NewPullDialog(props: {
 
 export function PRList(): JSX.Element {
   const repo = useRepo();
-  const identity = createMemo(() => ({ owner: repo.owner(), repo: repo.repo() }));
   const currentDetail = () => {
     // `latest` can still describe the previous repo while this route loads.
     const detail = repo.detail();
@@ -258,6 +263,12 @@ export function PRList(): JSX.Element {
       && detail.name.toLowerCase() === repo.repo().toLowerCase() ? detail : undefined;
   };
   const session = useSession();
+  const identity = createMemo(() => {
+    const detail = currentDetail(), state = session.state();
+    return detail && detail.id && state?.authenticated && /^[A-Za-z0-9_-]{43}$/u.test(state.recoveryScope)
+      ? { owner: repo.owner(), repo: repo.repo(), repositoryId: detail.id, recoveryScope: state.recoveryScope } : null;
+  }, undefined, { equals: (a, b) => a?.owner === b?.owner && a?.repo === b?.repo
+    && a?.repositoryId === b?.repositoryId && a?.recoveryScope === b?.recoveryScope });
   const [filter, setFilter] = createSignal<StateFilter>("open");
   const [cursor, setCursor] = createSignal<string | null>(null);
   const [showNew, setShowNew] = createSignal(false);
@@ -293,15 +304,21 @@ export function PRList(): JSX.Element {
 
   return (
     <div>
-      <Show when={session.authenticated() && currentDetail() && identity()} keyed>
+      <Show when={identity()} keyed>
         {(scope) => <NewPullDialog
           open={showNew()}
           owner={scope.owner}
           repo={scope.repo}
+          repositoryId={scope.repositoryId}
+          recoveryScope={scope.recoveryScope}
           defaultBase={currentDetail()?.defaultBranch ?? "main"}
           onClose={() => setShowNew(false)}
           onCreated={() => void refetch()}
         />}
+      </Show>
+
+      <Show when={session.authenticated() && currentDetail() && !identity()}>
+        <Banner tone="warning">Safe PR recovery is unavailable. Refresh after the server has been updated before creating a pull request.</Banner>
       </Show>
 
       <Box>
@@ -312,7 +329,7 @@ export function PRList(): JSX.Element {
             {filterButton("all", "All", <Icons.MessageSquare class="h-4 w-4" />)}
           </div>
           <Show when={session.authenticated()}>
-            <Button variant="primary" size="sm" disabled={!currentDetail()} onClick={() => setShowNew(true)}>
+            <Button variant="primary" size="sm" disabled={!identity()} onClick={() => setShowNew(true)}>
               <Icons.Plus class="h-4 w-4" /> New pull request
             </Button>
           </Show>

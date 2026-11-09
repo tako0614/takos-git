@@ -404,6 +404,25 @@ describe("takos-git browser auth", () => {
     expect(await readBrowserSession(sessionRequest(tampered), ENV, fetchImpl)).toBeNull();
   });
 
+  test("the non-authorizing recovery scope is stable for one caller and changes with identity or install context", async () => {
+    const { response, fetchImpl } = await completeLogin({ sub: "ordinary" });
+    const cookie = cookieValue(response, "takos_git_session");
+    const first = await sessionInfo(cookie, fetchImpl);
+    expect(first.recoveryScope).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+    expect((await sessionInfo(cookie, fetchImpl)).recoveryScope).toBe(first.recoveryScope);
+    const other = await completeLogin({ sub: "another" });
+    expect((await sessionInfo(cookieValue(other.response, "takos_git_session"), other.fetchImpl)).recoveryScope).not.toBe(first.recoveryScope);
+    for (const context of [
+      { OIDC_ISSUER_URL: "https://other-accounts.example" }, { OIDC_CLIENT_ID: "another-client" },
+      { APP_CAPSULE_ID: "another-capsule" }, { APP_WORKSPACE_ID: "another-workspace" },
+    ]) {
+      const env = { ...ENV, ...context }, changed = await completeLogin({ sub: "ordinary" }, env);
+      expect(changed.response.status).toBe(302);
+      expect((await sessionInfo(cookieValue(changed.response, "takos_git_session"), changed.fetchImpl, env)).recoveryScope).not.toBe(first.recoveryScope);
+    }
+    expect(JSON.stringify(first)).not.toContain("oauth-access");
+  });
+
   test("legacy signed Workspace sessions retain ordinary access without management authority", async () => {
     const cookie = await legacyCookie({
       subject: "legacy", name: null, email: null, workspaceIds: ["workspace_a"],

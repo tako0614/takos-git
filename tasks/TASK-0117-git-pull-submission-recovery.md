@@ -77,8 +77,24 @@ review are read separately before normal integration.
 
 ## Remaining boundaries
 
-Submission keys live in the current form only; reload/navigation custody is
-not implemented. The opened event is advisory, not crash-safe exactly-once
+PR pending submissions now retain their original key/input and newer form in
+this tab's sessionStorage across reload/route return, restoring as unknown with
+explicit retry only. Stable repository ID and non-authorizing current sign-in
+context constrain the journal and are verified server-side before replay/write.
+The original actual built UI lost its key on reload and created PR2 from the
+same intent. Fixed built UI recovered PR1 with one receipt/event, preserved
+newer input, and created that new intent only with a fresh key. A real local
+cookie switch to another synthetic caller was409/effect0; that caller's reload
+showed none of the original recovery input, while the original caller recovered
+PR1. Wrong canonical repository ID was409 with refs/counts unchanged.
+Focused client15/80 assertions and backend78/250 assertions pass. Updated
+fixed-source canonical, exact-head independent review and CI are qualified
+separately. Prior successful SQL/native qualification is retained only for its
+unchanged store/schema, not treated as proof of these new context guards.
+
+Closing the tab/clearing storage loses custody; unsent drafts before a pending
+submission, Issue/comment reload custody and cross-device recovery remain
+outside this slice. The opened event is advisory, not crash-safe exactly-once
 delivery. Keep these limits separate from duplicate-free committed creation.
 Production STOP/control push HOLD remain in effect. Real DB/schema apply,
 provider, credential, SSO, payment, Apply and deployment operations are outside

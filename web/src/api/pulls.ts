@@ -73,7 +73,7 @@ export const pullsApi = {
 
   // --- writes ---------------------------------------------------------------
 
-  create(owner: string, repo: string, input: { title: string; body?: string; head: string; base: string; draft?: boolean }, idempotencyKey?: string): Promise<{ pull: PullRequestDto }> {
+  create(owner: string, repo: string, input: { title: string; body?: string; head: string; base: string; draft?: boolean; repository_id?: string; recovery_scope?: string }, idempotencyKey?: string): Promise<{ pull: PullRequestDto }> {
     return api.post<PullEnvelope>(`${repoPath(owner, repo)}/pulls`, input, undefined, { idempotencyKey }).then(unwrapPull);
   },
 

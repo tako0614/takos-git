@@ -275,6 +275,11 @@ function sessionContext(env: BrowserAuthEnv): ArrayBuffer {
   ).buffer;
 }
 
+/** Non-authorizing UI custody tag; never a cookie, token or access grant. */
+export async function browserRecoveryScope(env: BrowserAuthEnv, subject: string): Promise<string> {
+  return sha256Base64Url(JSON.stringify([new TextDecoder().decode(sessionContext(env)), subject]));
+}
+
 async function sessionKey(secret: string): Promise<CryptoKey> {
   const digest = await crypto.subtle.digest(
     "SHA-256",
@@ -779,6 +784,7 @@ export async function handleBrowserAuth(
       session
         ? {
             authenticated: true,
+            recoveryScope: await browserRecoveryScope(env, session.subject),
             capsuleId: session.capsuleId,
             appRole: session.appRole,
             canManageApp: session.appRole !== null,

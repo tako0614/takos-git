@@ -131,6 +131,7 @@ export function cloneUrlFor(originBase: string, storageKey: string): string {
 
 export function toRepositoryDto(row: RepoRow, originBase: string): RepositoryDto {
   return {
+    id: row.id,
     owner: row.ownerLogin,
     name: row.name,
     fullName: `${row.ownerLogin}/${row.name}`,

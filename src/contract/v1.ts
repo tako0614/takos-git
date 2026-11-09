@@ -132,6 +132,8 @@ export interface PrincipalDto {
 // ============================================================================
 
 export interface RepositoryDto {
+  /** Stable metadata identity; a recreated path is a different repository. */
+  readonly id: string;
   readonly owner: string;
   readonly name: string;
   /** `owner/name`. */
