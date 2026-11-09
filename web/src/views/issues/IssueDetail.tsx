@@ -6,11 +6,12 @@
  * refetched so the UI reflects the server.
  */
 import {
-  batch,
   createEffect,
+  createMemo,
   createResource,
   createSignal,
   ErrorBoundary,
+  For,
   Index,
   Show,
   Suspense,
@@ -47,6 +48,7 @@ import {
 import { AssigneeEditor, LabelEditor, MilestoneEditor } from "./pickers.tsx";
 import { issuesExtraApi } from "./api-extra.ts";
 import type { IssueCommentDto } from "../../api/types.ts";
+import { createCommentTimeline } from "./comment-timeline.ts";
 
 export function IssueDetail(props: {
   owner: string;
@@ -78,12 +80,15 @@ export function IssueDetail(props: {
   });
 
   // Comment timeline (accumulated across "load more").
-  const [comments, setComments] = createSignal<IssueCommentDto[]>([]);
-  const [commentsCursor, setCommentsCursor] = createSignal<string | null>(null);
+  const timeline = createCommentTimeline();
+  const comments = timeline.items;
+  const commentsById = createMemo(() => new Map(comments().map((item) => [item.id, item])));
+  const commentsCursor = timeline.cursor;
   const [commentsLoading, setCommentsLoading] = createSignal(false);
   const [commentsError, setCommentsError] = createSignal<string | null>(null);
 
   async function loadComments(reset: boolean): Promise<void> {
+    const read = timeline.beginRead();
     setCommentsLoading(true);
     setCommentsError(null);
     try {
@@ -91,13 +96,11 @@ export function IssueDetail(props: {
       const pageData = await issuesApi.comments(props.owner, props.repo, props.number, {
         cursor,
       });
-      batch(() => {
-        setComments((prev) => (reset ? [...pageData.items] : [...prev, ...pageData.items]));
-        setCommentsCursor(pageData.nextCursor);
-      });
+      timeline.accept(read, pageData, reset);
     } catch (err) {
       setCommentsError(err instanceof ApiError ? err.message : "Could not load comments.");
     } finally {
+      timeline.finishRead(read);
       setCommentsLoading(false);
     }
   }
@@ -107,8 +110,7 @@ export function IssueDetail(props: {
     props.owner;
     props.repo;
     props.number;
-    setComments([]);
-    setCommentsCursor(null);
+    timeline.reset();
     void loadComments(true);
   });
 
@@ -187,7 +189,7 @@ export function IssueDetail(props: {
           props.number,
           bodyText,
         );
-        setComments((prev) => [...prev, comment]);
+        timeline.acknowledge(comment);
         // An ACK owns the submitted draft, not edits made while it was pending.
         if (commentDraftRevision === submittedRevision) setCommentDraft("");
       }
@@ -332,25 +334,25 @@ export function IssueDetail(props: {
                     <Show when={commentsError()}>
                       {(msg) => <Banner tone="danger">{msg()}</Banner>}
                     </Show>
-                    <Index each={comments()}>
-                      {(comment) => (
-                        <CommentItem
-                          owner={props.owner}
-                          repo={props.repo}
-                          comment={comment()}
-                          canManage={session.authenticated()}
-                          onChange={(updated) =>
-                            setComments((prev) =>
-                              prev.map((c) => (c.id === updated.id ? updated : c)),
-                            )
-                          }
-                          onDelete={(id) => {
-                            setComments((prev) => prev.filter((c) => c.id !== id));
-                            void refetchIssue();
-                          }}
-                        />
+                    <For each={comments().map((comment) => comment.id)}>
+                      {(id) => (
+                        <Show when={commentsById().get(id)}>
+                          {(comment) => (
+                            <CommentItem
+                              owner={props.owner}
+                              repo={props.repo}
+                              comment={comment()}
+                              canManage={session.authenticated()}
+                              onChange={timeline.acknowledge}
+                              onDelete={(id) => {
+                                timeline.remove(id);
+                                void refetchIssue();
+                              }}
+                            />
+                          )}
+                        </Show>
                       )}
-                    </Index>
+                    </For>
 
                     <Show when={commentsLoading() && comments().length === 0}>
                       <div class="flex items-center gap-2 px-2 text-sm text-muted">
