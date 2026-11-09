@@ -160,3 +160,23 @@ describe("issues CRUD + auth", () => {
     expect(events.some((e) => e.type === "issue.opened" && e.issueNumber === 1 && e.owner === "alice")).toBe(true);
   });
 });
+
+
+test("close-after-comment context cannot change another issue or caller target", async () => {
+  const h = makeEnv(), reg = router(), root = "/api/v1/repos/alice/web/issues";
+  try {
+    await setupRepo(reg, h.env);
+    const first = (await (await dispatch(reg, jsonRequest("POST", root, { title: "first" }, "taksrv_bob_w"), h.env)).json()).issue;
+    const second = (await (await dispatch(reg, jsonRequest("POST", root, { title: "second" }, "taksrv_bob_w"), h.env)).json()).issue;
+    const repo = await h.db.queryOne<{ id: string }>("SELECT id FROM repositories WHERE name='web'");
+    const before = await h.db.query("SELECT id,state,updated_at FROM issues ORDER BY number");
+    for (const patch of [{ issue_id: second.id }, { repository_id: "wrong" }, { recovery_scope: "foreign" }]) {
+      const denied = await dispatch(reg, jsonRequest("PATCH", root + "/1", { state: "closed", ...patch }, "taksrv_bob_w"), h.env);
+      expect(denied.status).toBe(409);expect((await denied.json()).error.code).toBe("submission_context_changed");
+      expect(await h.db.query("SELECT id,state,updated_at FROM issues ORDER BY number")).toEqual(before);
+    }
+    const accepted = await dispatch(reg, jsonRequest("PATCH", root + "/1", { state: "closed", repository_id: repo!.id, issue_id: first.id }, "taksrv_bob_w"), h.env);
+    expect(accepted.status).toBe(200);expect((await accepted.json()).issue).toMatchObject({ id:first.id,state:"closed" });
+    expect((await (await dispatch(reg, get(root + "/2", "taksrv_bob_r"), h.env)).json()).issue.state).toBe("open");
+  } finally { h.fake.db.close(); }
+});

@@ -16,6 +16,7 @@ import {
   type Role,
 } from "../../contract/v1.ts";
 import type { Route } from "../../router.ts";
+import { submissionContextError } from "../submission-context.ts";
 import type { DbClient } from "../../db/index.ts";
 import { errorResponse, json } from "../repos/http.ts";
 import { csrfGuard, requireRepoAccess, type RepoAccess } from "../repos/identity.ts";
@@ -110,6 +111,8 @@ const openIssueHandler: Route["handler"] = async (ctx) => {
 
   const body = await readJson(ctx.request);
   if (!body) return errorResponse(400, "invalid_body", "Invalid request body.");
+  const contextError = await submissionContextError(ctx, access.auth, access.repo.id, body);
+  if (contextError) return contextError;
   const title = str(body.title);
   if (!title || title.length > MAX_TITLE) {
     return errorResponse(400, "invalid_title", "A non-empty title is required.");
@@ -227,6 +230,9 @@ const patchIssueHandler: Route["handler"] = async (ctx) => {
 
   const body = await readJson(ctx.request);
   if (!body) return errorResponse(400, "invalid_body", "Invalid request body.");
+
+  const contextError = await submissionContextError(ctx, access.auth, access.repo.id, body, row.id);
+  if (contextError) return contextError;
 
   const fields: {
     title?: string;

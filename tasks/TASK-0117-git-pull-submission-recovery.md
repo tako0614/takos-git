@@ -3,7 +3,7 @@ task: TASK-0117
 title: Recover original PR creation with a durable submission receipt
 status: active
 opened: 2026-11-09
-branch: fix/TASK-0117-pr-creation-receipt-20261109
+branch: fix/TASK-0117-issue-comment-reload-20261109
 requiredFor:
   - persisted_schema
   - release_behavior
@@ -93,10 +93,42 @@ separately. Prior successful SQL/native qualification is retained only for its
 unchanged store/schema, not treated as proof of these new context guards.
 
 Closing the tab/clearing storage loses custody; unsent drafts before a pending
-submission, Issue/comment reload custody and cross-device recovery remain
-outside this slice. The opened event is advisory, not crash-safe exactly-once
+submission and cross-device recovery remain outside this slice. The opened event is advisory, not crash-safe exactly-once
 delivery. Keep these limits separate from duplicate-free committed creation.
 Production STOP/control push HOLD remain in effect. Real DB/schema apply,
 provider, credential, SSO, payment, Apply and deployment operations are outside
 this unit. Preserve existing service/data and the ecosystem goal's unfinished
 integration, normal-use, update/recovery and dedicated-App qualification.
+
+
+## Follow-up: Issue and conversation-comment reload custody
+
+The same writer reproduced two further actual built-SPA counterexamples on
+current main: lost committed response, normal reload, same input with a new
+key created Issue2 or comment2. Their new helper regressions were11 pass/4 fail.
+Reuse the existing PR storage/recovery rather than independent implementations,
+preserving its actual PR54 stored-wire fixture. Store original intent and newer
+form separately; bind the actual caller/repository and comment's Issue ID.
+Expose Issue.id from its actual row/existing receipt, without SQL/metadata
+format changes. Bind comment-followed-by-close/reopen to the captured context
+and suppress retired-response side effects. Old unbound API callers retain
+compatibility; all existing role/scope/CSRF checks remain first.
+
+During actual browser qualification, a deleted saved label remained hidden in
+an otherwise retained newer draft and caused400. Show values absent from the
+loaded choices with explicit removal, without inventing metadata or treating
+list absence as global nonexistence. A separate comment reload hung because a
+memoized recovery factory tracked its own restore signals. The bounded actual
+Solid regression reproduced the recursive construction; untracked initial
+restore fixes it without timers or automatic requests. The final built SPA
+recovered both original identities, retained newer drafts/triage, refused an
+actual second writer, and performed close only after the original caller's ACK.
+Focused client40/224 assertions and backend42/271 pass. Final fixed-source
+canonical/native/independent review and normal CI/integration are read separately.
+No new schema/dependency, real input or deploy authority is included.
+
+A further actual helper counterexample accepted a stored context.body field,
+which could flow through object spreading into a state-only follow-up. Reject
+unknown context fields and serialize only its three identifiers; preserve raw
+corrupt markers before another POST. This is client/local source evidence, not
+a live exploit or new authority. Backend/runtime inputs remain unchanged.

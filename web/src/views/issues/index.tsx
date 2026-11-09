@@ -14,6 +14,9 @@
 import { createMemo, Show, type JSX } from "solid-js";
 import { useParams } from "@solidjs/router";
 import { useRepo } from "../../app/RepoLayout.tsx";
+import { useSession } from "../../store/session.tsx";
+import { useSubmissionScope } from "../../lib/submission-scope.ts";
+import { Banner } from "../../ui/index.ts";
 import { IssueList } from "./IssueList.tsx";
 import { IssueDetail } from "./IssueDetail.tsx";
 import { NewIssueForm } from "./NewIssue.tsx";
@@ -46,7 +49,10 @@ export function IssueDetailView(): JSX.Element {
 
 /** `/:owner/:repo/issues/new` — open a new issue. */
 export function NewIssueView(): JSX.Element {
-  const repo = useRepo();
-  const identity = createMemo(() => ({ owner: repo.owner(), repo: repo.repo() }));
-  return <Show when={identity()} keyed>{scope => <NewIssueForm owner={scope.owner} repo={scope.repo} />}</Show>;
+  const repo = useRepo(), session = useSession(), scope = useSubmissionScope();
+  const identity = createMemo(() => scope() ?? (!session.authenticated()
+    ? { owner: repo.owner(), repo: repo.repo(), repositoryId: "", recoveryScope: "" } : null));
+  return <Show when={identity()} keyed fallback={<Banner tone="warning">Safe Issue recovery is unavailable. Refresh after the server has been updated.</Banner>}>
+    {context => <NewIssueForm owner={context.owner} repo={context.repo} repositoryId={context.repositoryId} recoveryScope={context.recoveryScope} />}
+  </Show>;
 }

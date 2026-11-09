@@ -152,3 +152,19 @@ describe("durable comment submissions through the real router", () => {
     } finally { f.fake.db.close(); }
   });
 });
+
+
+test("captured comment target and caller context refuse before receipt replay", async () => {
+  const f = await fixture();
+  try {
+    await f.send(); const before = await f.state();
+    const rows = await f.db.query<{ id: string; repo_id: string }>("SELECT id,repo_id FROM issues ORDER BY number");
+    for (const patch of [{ repository_id: "wrong-repository" }, { issue_id: rows[1].id }, { recovery_scope: "foreign-browser-context" }]) {
+      const request = jsonRequest("POST", root + "/1/comments", { body: "original", ...patch }, "taksrv_bob_w"); request.headers.set("Idempotency-Key", "same-key");
+      const denied = await dispatch(f.reg, request, f.env); expect(denied.status).toBe(409);
+      expect((await denied.json()).error.code).toBe("submission_context_changed"); expect(await f.state()).toEqual(before);
+    }
+    const request = jsonRequest("POST", root + "/1/comments", { body: "original", repository_id: rows[0].repo_id, issue_id: rows[0].id }, "taksrv_bob_w");request.headers.set("Idempotency-Key", "same-key");
+    const recovered = await dispatch(f.reg, request, f.env);expect(recovered.status).toBe(201);expect(recovered.headers.get("Idempotency-Replayed")).toBe("true");expect(await f.state()).toEqual(before);
+  } finally { f.fake.db.close(); }
+});

@@ -19,7 +19,9 @@ export interface IssueListFilter {
   readonly cursor?: string | null;
 }
 
-export interface IssueCreateInput {
+export interface SubmissionContext { readonly repository_id?: string; readonly recovery_scope?: string; readonly issue_id?: string }
+
+export interface IssueCreateInput extends SubmissionContext {
   readonly title: string;
   readonly body?: string;
   readonly labels?: readonly string[];
@@ -57,12 +59,14 @@ export const issuesApi = {
     return api.post(`${repoPath(owner, repo)}/issues`, input, undefined, { idempotencyKey });
   },
 
-  update(owner: string, repo: string, number: number, patch: Partial<{ title: string; body: string; state: "open" | "closed"; labels: string[]; assignees: string[]; milestone: number | null }>): Promise<{ issue: IssueDto }> {
+  update(owner: string, repo: string, number: number, patch: Partial<{ title: string; body: string; state: "open" | "closed"; labels: string[]; assignees: string[]; milestone: number | null }> & SubmissionContext): Promise<{ issue: IssueDto }> {
     return api.patch(`${repoPath(owner, repo)}/issues/${number}`, patch);
   },
 
-  comment(owner: string, repo: string, number: number, body: string, idempotencyKey?: string): Promise<{ comment: IssueCommentDto }> {
-    return api.post(`${repoPath(owner, repo)}/issues/${number}/comments`, { body }, undefined, { idempotencyKey });
+  comment(owner: string, repo: string, number: number, body: string, idempotencyKey?: string, context?: SubmissionContext): Promise<{ comment: IssueCommentDto }> {
+    return api.post(`${repoPath(owner, repo)}/issues/${number}/comments`, {
+      body, repository_id: context?.repository_id, recovery_scope: context?.recovery_scope, issue_id: context?.issue_id,
+    }, undefined, { idempotencyKey });
   },
 };
 

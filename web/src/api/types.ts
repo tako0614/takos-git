@@ -210,6 +210,7 @@ export interface IssueMilestoneRef {
 }
 
 export interface IssueDto {
+  readonly id: string;
   readonly number: number;
   readonly title: string;
   readonly body: string | null;

@@ -600,7 +600,7 @@ export async function getIssueSubmission(
   const details: IssueDetails = JSON.parse(receipt.creation_metadata);
   return { outcome: "replayed", issue: {
     number: receipt.issue_number, title: input.title, body: input.body,
-    state: "open", stateReason: null, ...details, isPullRequest: false, commentCount: 0,
+    state: "open", stateReason: null, ...details, id: receipt.issue_id, isPullRequest: false, commentCount: 0,
     createdAt: receipt.created_at, updatedAt: receipt.created_at, closedAt: null,
   } };
 }

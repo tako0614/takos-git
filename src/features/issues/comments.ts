@@ -14,6 +14,7 @@ import {
   type Role,
 } from "../../contract/v1.ts";
 import type { Route } from "../../router.ts";
+import { submissionContextError } from "../submission-context.ts";
 import { errorResponse, json } from "../repos/http.ts";
 import { csrfGuard, requireRepoAccess, type RepoAccess } from "../repos/identity.ts";
 import { buildEvent, emitDomainEvent } from "./events.ts";
@@ -76,6 +77,8 @@ const createCommentHandler: Route["handler"] = async (ctx) => {
   if (!text || !isValidCommentBody(text)) {
     return errorResponse(400, "invalid_body", "A non-empty comment body is required.");
   }
+  const contextError = await submissionContextError(ctx, access.auth, access.repo.id, body!, issue.id);
+  if (contextError) return contextError;
   const key = ctx.request.headers.get("Idempotency-Key");
   if (key !== null && !/^[\x21-\x7e]{1,255}$/u.test(key)) {
     return errorResponse(400, "invalid_idempotency_key", "Idempotency-Key must contain 1–255 visible ASCII characters.");

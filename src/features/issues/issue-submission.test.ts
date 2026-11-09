@@ -170,3 +170,22 @@ describe("durable Issue creation through the real router", () => {
     } finally { f.fake.db.close(); }
   });
 });
+
+
+test("captured Issue repository/caller context refuses before an existing receipt replay", async () => {
+  const f = await fixture();
+  try {
+    const repo = await f.db.queryOne<{ id: string }>("SELECT id FROM repositories WHERE name='web'");
+    const created = (await (await f.send("same-key", { ...original, repository_id: repo!.id })).json()).issue;
+    expect(created.id).toBe((await f.state()).issues[0].id);
+    const before = await f.state();
+    for (const patch of [{ repository_id: "wrong-repository" }, { recovery_scope: "foreign-browser-context" }]) {
+      const denied = await f.send("same-key", { ...original, ...patch });
+      expect(denied.status).toBe(409); expect((await denied.json()).error.code).toBe("submission_context_changed");
+      expect(await f.state()).toEqual(before);
+    }
+    const receipt = await f.db.queryOne<{ creation_metadata: string }>("SELECT creation_metadata FROM issue_submissions");
+    expect(JSON.parse(receipt!.creation_metadata).id).toBeUndefined();
+    expect((await (await f.send()).json()).issue.id).toBe(created.id);
+  } finally { f.fake.db.close(); }
+});

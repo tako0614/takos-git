@@ -110,7 +110,7 @@ to the route restores an unknown result; it never automatically posts. A
 confirmed ACK or typed deletion clears only that attempt. Corrupt/unavailable
 storage refuses a fresh submission rather than overwriting an uncertain one.
 Closing the tab or clearing its storage loses this recovery; ordinary unsent
-forms and Issue/comment submissions do not gain persistent drafts here.
+forms and cross-device recovery are not included.
 
 `GET /api/auth/session` adds a non-authorizing `recoveryScope` digest of the
 configured issuer/client/Capsule/Workspace context and current subject. No
@@ -124,6 +124,43 @@ checks both before receipt lookup or writes and returns409
 after the page loaded. These optional checks grant no authority and leave old
 unbound API callers compatible. Updated Web creation requires both server
 metadata fields, so partial old-server rollout is visibly unavailable.
+
+## Issue and comment recovery after reload
+
+New Issue and Issue-conversation comment forms use the same write-ahead,
+current-tab recovery as PR creation. They preserve the submitted key/input and
+newer edits separately, restore unknown without automatic POST, and retain
+uncertain originals on later authorization failures. Only a confirmed ACK,
+authorized receipt tombstone, or the comment composer's existing explicit user
+confirmation retires its local pending marker. A list match alone is not an ACK.
+The persisted form contains user-entered content, not authentication material.
+
+Issue creation retains labels, assignee subjects and milestone number as part
+of its original intent; later edits do not mutate that snapshot. Saved choices
+not present in the loaded options are displayed with explicit local removal,
+not silently dropped or promoted into current metadata. This also lets a user
+correct a newer draft after the original's triage references were removed.
+
+Issue DTOs add stable `id`, including replay from an older receipt's existing
+`issue_id`; no receipt format or database migration changes. Comment journals
+are separated by caller context, repository ID and Issue ID. Optional captured
+`repository_id`/`recovery_scope`/`issue_id` constraints are checked after existing
+auth/CSRF and before Issue/comment replay or mutation. The same constraints bind
+comment-followed-by-close/reopen. These remain separate authorized operations:
+a comment ACK does not prove the later state change succeeded. Retired or
+changed-context responses do not consume the current draft or perform a follow-up.
+
+Saved comment context accepts only repository/caller/Issue identifiers. Request
+serialization cannot spread stored context fields into comment content or the
+state-only follow-up. Unexpected stored fields retain the raw marker and block
+a fresh request rather than reinterpret that intent.
+
+The shared recovery constructor does not track its own restore transitions
+when created in a reactive memo. The pre-existing PR54 journal format remains
+readable. Corrupt/unavailable storage holds the original instead of starting a
+fresh operation; tab closure/clearing storage and unsent/cross-device drafts
+remain outside the guarantee. A generic rejected retry still does not prove
+that the original request rolled back.
 
 ## Authentication and authorization
 

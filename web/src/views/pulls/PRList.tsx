@@ -4,7 +4,6 @@
  * and a "New pull request" dialog wired to `pullsApi.create`.
  */
 import {
-  createMemo,
   createResource,
   createSignal,
   ErrorBoundary,
@@ -20,6 +19,7 @@ import { pullsApi } from "../../api/pulls.ts";
 import { ApiError } from "../../api/client.ts";
 import type { PullRequestDto } from "../../api/types.ts";
 import { useSession } from "../../store/session.tsx";
+import { useSubmissionScope } from "../../lib/submission-scope.ts";
 import {
   Banner,
   Box,
@@ -263,12 +263,7 @@ export function PRList(): JSX.Element {
       && detail.name.toLowerCase() === repo.repo().toLowerCase() ? detail : undefined;
   };
   const session = useSession();
-  const identity = createMemo(() => {
-    const detail = currentDetail(), state = session.state();
-    return detail && detail.id && state?.authenticated && /^[A-Za-z0-9_-]{43}$/u.test(state.recoveryScope)
-      ? { owner: repo.owner(), repo: repo.repo(), repositoryId: detail.id, recoveryScope: state.recoveryScope } : null;
-  }, undefined, { equals: (a, b) => a?.owner === b?.owner && a?.repo === b?.repo
-    && a?.repositoryId === b?.repositoryId && a?.recoveryScope === b?.recoveryScope });
+  const identity = useSubmissionScope();
   const [filter, setFilter] = createSignal<StateFilter>("open");
   const [cursor, setCursor] = createSignal<string | null>(null);
   const [showNew, setShowNew] = createSignal(false);
