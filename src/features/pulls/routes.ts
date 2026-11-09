@@ -41,6 +41,7 @@ const pullRoutes: readonly Route[] = [
   { method: "GET", path: `${PN}/conflicts`, auth: "public", handler: mergeHandlers.conflicts },
   { method: "POST", path: `${PN}/resolve`, auth: "public", handler: mergeHandlers.resolve },
   { method: "POST", path: `${PN}/merge`, auth: "public", handler: mergeHandlers.merge },
+  { method: "POST", path: `${PN}/reconcile`, auth: "public", handler: mergeHandlers.reconcile },
 
   // --- reviews ---
   { method: "POST", path: `${PN}/reviews`, auth: "public", handler: reviewHandlers.submit },

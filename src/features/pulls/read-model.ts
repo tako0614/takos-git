@@ -7,6 +7,7 @@
  * numbers share the per-repo `issue` counter (GitHub parity), allocated here.
  */
 
+import { pendingMerge } from "./merge-projection.ts";
 import type { DbClient } from "../../db/index.ts";
 import type { ObjectStoreBinding } from "../../git/types.ts";
 import { readRepoRefs, type RefsDoc } from "../../git/refs-store.ts";
@@ -106,6 +107,7 @@ export async function listPullRequests(
 // ============================================================================
 
 export interface GitState {
+  readonly mergePending?: { readonly commitSha: string; readonly method: "merge" | "squash" | "rebase"; readonly baseRef: string };
   readonly headSha: string;
   readonly baseSha: string;
   readonly headExists: boolean;
@@ -133,10 +135,14 @@ export async function computeGitState(
   deep: boolean,
 ): Promise<GitState> {
   const refs = await readRepoRefs(bucket, repoKey);
+  const pending = pendingMerge(refs, pr);
+  const mergePending = pending && (!pr.merged || pr.state !== "closed" || pr.mergeCommitSha !== pending.commitSha)
+    ? { commitSha: pending.commitSha, method: pending.method, baseRef: pending.baseRef } : undefined;
   const headSha = refSha(refs, pr.headRef);
   const baseSha = refSha(refs, pr.baseRef);
   if (!headSha || !baseSha) {
     return {
+      ...(mergePending ? { mergePending } : {}),
       headSha: headSha ?? pr.headSha,
       baseSha: baseSha ?? pr.baseSha,
       headExists: headSha !== null,
@@ -159,6 +165,7 @@ export async function computeGitState(
   } catch {
     // Orphaned/oversized graph: leave counts at 0, mergeable unknown.
     return {
+      ...(mergePending ? { mergePending } : {}),
       headSha,
       baseSha,
       headExists: true,
@@ -196,6 +203,7 @@ export async function computeGitState(
   }
 
   return {
+    ...(mergePending ? { mergePending } : {}),
     headSha,
     baseSha,
     headExists: true,
@@ -240,6 +248,7 @@ export async function buildMetrics(
     ]);
 
   return {
+    ...(gitState.mergePending ? { mergePending: gitState.mergePending } : {}),
     author: principalLite(pr.authorId, principals),
     mergedBy: principalLite(pr.mergedById, principals),
     commitsCount: gitState.aheadBy,

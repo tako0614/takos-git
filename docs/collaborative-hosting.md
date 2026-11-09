@@ -53,6 +53,28 @@ boundary として維持する。D1 はすでに利用できる metadata plane �
 暗黙に D1 へ二重化しない。metadata operation と ref update をまたぐ処理は retryable state machine として
 明示する。D1 を無効にした deploy は、per-repository ACL を適用せず scope-only の互換動作へ縮退する。
 
+### Committed merge status recovery
+
+PR merge / squash / rebase / conflict resolution は、実行結果の commit・元 head/base・method・actor・時刻を
+内部 refs document の `pendingMerges` に同じ R2 conditional write で保存する。D1 の PR/Issue 更新は
+一つの atomic batch とし、失敗時は Git の変更を戻さず HTTP 202 と `metadata_pending: true` を返す。
+通常の PR 読取にも `mergePending` を含め、reload 後も未反映を表示する。Web の **Update status** は
+`POST /api/v1/repos/:owner/:repo/pulls/:number/reconcile` を呼ぶ。現在の `pulls.merge` ACL/scope/CSRF を
+再確認し、保存済みの commit だけを D1 へ反映する。Git ref・object の再生成や merge/push event の
+再送はしない。後続 push や force-push があっても、現在の tip を元の merge commit と取り違えない。
+
+反映待ち中の base 変更・close/reopen は拒否する。状態更新後の receipt 削除は新しい refs snapshot に
+対する一回の CAS とし、競合・storage 障害時は receipt を保持して警告する。DB 反映済みなら成功を
+取り消さず、同じ status 更新で cleanup できる。未解消 receipt は最大128件、古い pending action を
+自動廃棄しない。R2 ACK が失われた場合は失敗/不明として扱い、fresh PR GET で receipt を確認して
+status 更新する。元の merge POST を自動再送しない。event の crash-safe/exactly-once 配送は別契約である。
+
+この内部 R2 format は旧 document を読み続ける additive change だが、旧 writer は追加 field を保存しない。
+有効化時は同じ bucket を更新する旧 runtime を先に drain し、全 writer が新 format を保持する状態で
+使う。downgrade は pending receipt を正規経路で反映・解消してから行う。未解消 action があるまま
+旧 runtime に戻して receipt を消す手順を rollback と呼ばない。既存の receipt がない過去の部分失敗を
+現在の ref tip から推測して補完しない。source/local qualification は live rollout や旧データ修復の証明ではない。
+
 ## Authentication and authorization
 
 認証経路を混ぜない。

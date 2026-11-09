@@ -21,6 +21,41 @@ export interface RefsDoc {
   readonly refs: readonly RefRecord[];
   /** Default branch SHORT name (e.g. `main`), used to synthesize HEAD. */
   readonly defaultBranch: string | null;
+  /** Committed PR actions awaiting their D1 projection, written in the SAME CAS. */
+  readonly pendingMerges?: Readonly<Record<string, PendingMerge>>;
+}
+
+export interface PendingMerge {
+  readonly repoId: string;
+  readonly issueId: string;
+  readonly baseRef: string;
+  readonly headRef: string;
+  readonly baseSha: string;
+  readonly headSha: string;
+  readonly commitSha: string;
+  readonly method: "merge" | "squash" | "rebase";
+  readonly actorId: string;
+  readonly at: number;
+  readonly advanced: boolean;
+}
+
+function parsePendingMerges(value: unknown): RefsDoc["pendingMerges"] {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("invalid pending merges");
+  const entries = Object.entries(value);
+  if (entries.length > 128) throw new Error("too many pending merges");
+  for (const [id, entry] of entries) {
+    const r = entry as Partial<PendingMerge> | null;
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(id) || !r ||
+      ![r.repoId, r.issueId, r.actorId].every(s => typeof s === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(s)) ||
+      ![r.baseRef, r.headRef].every(s => typeof s === "string" && isValidRefName(`refs/heads/${s}`)) ||
+      ![r.baseSha, r.headSha, r.commitSha].every(s => typeof s === "string" && /^[a-f0-9]{40}$/.test(s)) ||
+      !["merge", "squash", "rebase"].includes(r.method ?? "") ||
+      !Number.isSafeInteger(r.at) || r.at! < 0 || typeof r.advanced !== "boolean") {
+      throw new Error("invalid pending merge receipt");
+    }
+  }
+  return Object.fromEntries(entries) as Record<string, PendingMerge>;
 }
 
 const EMPTY: RefsDoc = { refs: [], defaultBranch: null };
@@ -98,6 +133,7 @@ export async function readRepoRefsSnapshot(
     return {
       doc: {
         refs,
+        ...(parsed.pendingMerges === undefined ? {} : { pendingMerges: parsePendingMerges(parsed.pendingMerges) }),
         defaultBranch:
           typeof parsed.defaultBranch === "string"
             ? parsed.defaultBranch

@@ -67,6 +67,21 @@ test("a corrupt refs document fails closed", async () => {
   expect(readRepoRefs(bucket, REPO)).rejects.toThrow("invalid refs document");
 });
 
+test("pending merge receipts reject corrupt or unbounded durable state", async () => {
+  const bucket = new MemoryBucket();
+  const receipt = { repoId: "repo", issueId: "issue", actorId: "actor", baseRef: "main", headRef: "feature",
+    baseSha: "a".repeat(40), headSha: "b".repeat(40), commitSha: "c".repeat(40), method: "squash", at: 1, advanced: true };
+  for (const pendingMerges of [null, [], { pr: { ...receipt, commitSha: "invalid" } },
+    { pr: { ...receipt, baseRef: "../other" } }, { pr: { ...receipt, method: "unknown" } },
+    Object.fromEntries(Array.from({ length: 129 }, (_, i) => [String(i), receipt]))]) {
+    await bucket.put(`git/v2/refs/${REPO}.json`, JSON.stringify({ refs: [], defaultBranch: null, pendingMerges }));
+    await expect(readRepoRefs(bucket, REPO)).rejects.toThrow("invalid refs document");
+  }
+  const valid = { refs: [], defaultBranch: null, pendingMerges: { pr: receipt } };
+  await bucket.put(`git/v2/refs/${REPO}.json`, JSON.stringify(valid));
+  expect(await readRepoRefs(bucket, REPO)).toEqual(valid);
+});
+
 test("repository deletion removes only that repository's object namespace", async () => {
   const bucket = new MemoryBucket();
   const otherRepo = "space_test/other";

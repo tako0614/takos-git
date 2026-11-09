@@ -85,7 +85,7 @@ export async function writeRefsWithMetadata(
   const written = await writeRepoRefsSnapshot(
     bucket,
     write.repo,
-    next,
+    { ...snapshot.doc, ...next },
     snapshot.etag,
   );
   if (!written) {
