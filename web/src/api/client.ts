@@ -60,7 +60,7 @@ function withQuery(path: string, query?: Query): string {
     params.set(key, String(value));
   }
   const qs = params.toString();
-  return qs ? `${path}?${qs}` : path;
+  return qs ? `${path}${path.includes("?") ? "&" : "?"}${qs}` : path;
 }
 
 async function toError(response: Response): Promise<ApiError> {
