@@ -141,8 +141,11 @@ corresponding receipts. No table rebuild, data wipe, or foreign-key disablement
 is required. Older runtime code can still read and perform unkeyed writes after
 this additive migration, but cannot provide keyed replay safety: repair forward
 to receipt-aware code rather than deleting the table or migration ledger. The
-browser retains its submission key only in the current Issue component; this
-does not add persistent drafts or recovery of keys lost on reload.
+browser now retains the pending comment key/body, newer draft and close-after
+intent in the current tab across reload. Caller/repository/Issue identities
+constrain restoration and the actual handler; generic denial does not discard
+an uncertain original. This is not a durable event-delivery or cross-device
+draft guarantee.
 
 Migration `0006` adds `issue_submissions`; applied `0001`–`0005` remain
 byte-for-byte immutable. The shared Issue/PR number allocation, Issue,
@@ -156,8 +159,11 @@ read authority over later edits. Read-capable callers receive current state.
 No existing table rebuild or destructive apply is needed. Old runtime code's
 unkeyed writes remain compatible; it cannot provide keyed Issue replay safety.
 Repair forward to receipt-aware code without deleting receipts or ledger rows.
-New Issue keys are retained only in the current form, including an explicit
-retry of its captured input after a lost reply; reload does not restore them.
+New Issue keys and captured triage/input now use the same current-tab
+write-ahead recovery as PRs; reload restores unknown and explicit retry keeps
+the original input/key. Newer edits and explicit correction of unavailable
+saved choices remain separate. Issue DTOs expose their stable id, reconstructed
+from the existing receipt id on replay; no new SQL migration is required.
 
 Migration `0007` additively introduces `pull_request_submissions`; applied
 `0001`–`0006` are immutable. Shared allocation, Issue, PR and receipt use one
@@ -173,7 +179,7 @@ form in the current tab's sessionStorage before dispatch. Reload/route return
 restores unknown, with explicit retry only; closing the tab or clearing storage
 loses custody. No auth token or secret is copied into it. Browser storage must
 be available; corruption or failed retention refuses a new submission.
-The updated Web also requires Repository DTO `id` and session `recoveryScope`;
+The updated Web also requires Repository/Issue DTO `id` and session `recoveryScope`;
 serve the updated API and Web together. Captured repository/caller contexts
 are checked server-side before receipt/write even if a path/cookie changed
 after the page loaded. They are custody constraints, not authorization grants.

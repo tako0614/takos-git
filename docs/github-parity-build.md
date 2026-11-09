@@ -1048,8 +1048,21 @@ Verified read-capable callers receive the Issue's current state. Unkeyed calls
 remain independent creates. Event delivery across process failure is not
 exactly-once. The New Issue form captures one key and input per submission,
 offers explicit same-key recovery after an uncertain reply, preserves newer
-edits, and retires late responses when leaving its Repo. Keys live only in that
-form instance; reload/route departure does not add durable draft or key recovery.
+edits, and retires late responses when leaving its Repo. Before POST, it saves
+the pending original and newer form in this tab's sessionStorage. Reload/route
+return restores unknown without automatic POST. Labels/assignees/milestone are
+captured separately from newer changes. Saved choices absent from loaded
+options remain visible and explicitly removable rather than silently omitted.
+Issue DTOs include stable `id`, sourced from the actual row or older receipt's
+existing `issue_id`. Comment journals also bind that Issue ID. Captured
+repository/caller/Issue contexts are checked server-side before replay/write,
+including close/reopen after a comment. Comment ACK and that later state update
+remain separate operations, with separate failure readback. Existing explicit
+manual comment confirmation is local reconciliation, not a forged server ACK.
+All three forms share storage/recovery semantics, preserving PR54's stored
+format; memo construction cannot subscribe to its own restore transitions.
+Tab closure/storage clearing, unsent drafts and cross-device custody remain
+outside this recovery.
 Once a submission becomes uncertain, a later rejected recovery (including
 temporary loss of authorization) retains that original key: denial of recovery
 does not prove that the earlier creation rolled back. A confirmed response is

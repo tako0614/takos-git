@@ -82,3 +82,16 @@ describe("current-tab PR recovery across documents", () => {
     expect(f.values.size).toBe(0); expect(flow.begin({ ...input, title: "corrected" }, 2)?.idempotencyKey).toBe("key-2");
   });
 });
+
+
+test("PR54's original pending wire format survives the shared recovery extraction", () => {
+  // Produced by the actual PR54 helper before this extraction; not an ACK.
+  const values = new Map<string, string>([["takos-git:pending-pr:v1:[\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"repo-a\"]", "{\"version\":1,\"scope\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"repositoryId\":\"repo-a\",\"attempt\":{\"idempotencyKey\":\"legacy-pending-pr\",\"revision\":2,\"input\":{\"title\":\"PR54 original\",\"body\":\"original\",\"base\":\"main\",\"head\":\"feature\",\"repository_id\":\"repo-a\",\"recovery_scope\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\"}},\"form\":{\"input\":{\"title\":\"newer PR54 draft\",\"body\":\"newer\",\"base\":\"feature\",\"head\":\"main\",\"repository_id\":\"repo-a\",\"recovery_scope\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\"},\"revision\":3}}"]]);
+  const storage = { getItem: (k: string) => values.get(k) ?? null, setItem: (k: string,v: string) => { values.set(k,v); }, removeItem: (k: string) => { values.delete(k); } };
+  const restored = createPullSubmission(() => "must-not-replace-original", { storage: () => storage, scope: "A".repeat(43), repositoryId: "repo-a" });
+  expect(restored.unknown()?.idempotencyKey).toBe("legacy-pending-pr");
+  expect(restored.unknown()?.input.title).toBe("PR54 original");
+  expect(restored.restoredForm()?.input.title).toBe("newer PR54 draft");
+  expect(restored.restoredForm()?.revision).toBe(3);
+  restored.retry(restored.unknown()!); expect(restored.acknowledge(restored.state()!.attempt)).toBe(true); expect(values.size).toBe(0);
+});

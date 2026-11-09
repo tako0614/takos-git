@@ -9,7 +9,7 @@
  */
 
 import { pendingMerge } from "./merge-projection.ts";
-import { browserRecoveryScope } from "../../browser-auth.ts";
+import { submissionContextError } from "../submission-context.ts";
 import { parsePagination, SCOPES } from "../../contract/v1.ts";
 import type { RouteContext } from "../../router.ts";
 import { readRepoRefs } from "../../git/refs-store.ts";
@@ -69,13 +69,8 @@ async function handleOpen(ctx: RouteContext, access: RepoAccess): Promise<Respon
   const body = await readJson<OpenBody>(ctx);
   if (!body) return errorResponse(400, "invalid_body", "Invalid JSON body.");
 
-  // Pin a restored browser intent to its actual repository and caller context,
-  // even if a path was recreated or the cookie changed after the UI loaded.
-  if ((body.repository_id !== undefined && body.repository_id !== access.repo.id)
-    || (body.recovery_scope !== undefined && (access.auth.channel !== "browser"
-      || body.recovery_scope !== await browserRecoveryScope(ctx.env, access.auth.principal.subject)))) {
-    return errorResponse(409, "submission_context_changed", "The original repository or sign-in context changed. Return to its original context before recovering this submission.");
-  }
+  const contextError = await submissionContextError(ctx, access.auth, access.repo.id, body);
+  if (contextError) return contextError;
 
   const title = typeof body.title === "string" ? body.title.trim() : "";
   if (!title) return errorResponse(422, "title_required", "Title is required.");

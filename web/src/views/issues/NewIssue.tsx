@@ -31,7 +31,7 @@ import { LabelChip, MarkdownEditor } from "./parts.tsx";
 import { AssigneeEditor, LabelEditor, MilestoneEditor } from "./pickers.tsx";
 import { createIssueSubmission, type IssueSubmission } from "./issue-submission.ts";
 
-export function NewIssueForm(props: { owner: string; repo: string }): JSX.Element {
+export function NewIssueForm(props: { owner: string; repo: string; repositoryId: string; recoveryScope: string }): JSX.Element {
   const session = useSession();
   const toast = useToast();
   const navigate = useNavigate();
@@ -41,21 +41,24 @@ export function NewIssueForm(props: { owner: string; repo: string }): JSX.Elemen
   let retired = false;
   onCleanup(() => { retired = true; });
 
-  const [title, setTitle] = createSignal("");
-  const [body, setBody] = createSignal("");
-  const [labelNames, setLabelNames] = createSignal<string[]>([]);
-  const [assigneeSubjects, setAssigneeSubjects] = createSignal<string[]>([]);
-  const [milestone, setMilestone] = createSignal<number | null>(null);
+  const submission = createIssueSubmission(undefined, props.repositoryId && props.recoveryScope
+    ? { storage: () => sessionStorage, scope: props.recoveryScope, repositoryId: props.repositoryId } : undefined);
+  const restored = submission.restoredForm();
+  const [title, setTitle] = createSignal(restored?.input.title ?? "");
+  const [body, setBody] = createSignal(restored?.input.body ?? "");
+  const [labelNames, setLabelNames] = createSignal<string[]>([...(restored?.input.labels ?? [])]);
+  const [assigneeSubjects, setAssigneeSubjects] = createSignal<string[]>([...(restored?.input.assignees ?? [])]);
+  const [milestone, setMilestone] = createSignal<number | null>(restored?.input.milestone ?? null);
   const [submitting, setSubmitting] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
   const [created, setCreated] = createSignal<number | null>(null);
-  const submission = createIssueSubmission();
-  let revision = 0;
-  const changeTitle = (value: string) => { revision++; setTitle(value); };
-  const changeBody = (value: string) => { revision++; setBody(value); };
-  const changeLabels = (value: string[]) => { revision++; setLabelNames(value); };
-  const changeAssignees = (value: string[]) => { revision++; setAssigneeSubjects(value); };
-  const changeMilestone = (value: number | null) => { revision++; setMilestone(value); };
+  let revision = restored?.revision ?? 0;
+  const saveDraft = () => submission.saveDraft({ title: title(), body: body(), labels: labelNames(), assignees: assigneeSubjects(), milestone: milestone() ?? undefined }, revision);
+  const changeTitle = (value: string) => { revision++; setTitle(value); saveDraft(); };
+  const changeBody = (value: string) => { revision++; setBody(value); saveDraft(); };
+  const changeLabels = (value: string[]) => { revision++; setLabelNames(value); saveDraft(); };
+  const changeAssignees = (value: string[]) => { revision++; setAssigneeSubjects(value); saveDraft(); };
+  const changeMilestone = (value: number | null) => { revision++; setMilestone(value); saveDraft(); };
 
   const repoKey = () => [scope.owner, scope.repo] as const;
   const [labels] = createResource(repoKey, ([o, r]) => issuesApi.labels(o, r));
@@ -72,6 +75,10 @@ export function NewIssueForm(props: { owner: string; repo: string }): JSX.Elemen
     (labels()?.items ?? []).filter((l) => labelNames().includes(l.name));
   const selectedMilestone = () =>
     (milestones()?.items ?? []).find((m) => m.number === milestone()) ?? null;
+  const unlistedLabels = () => labels.loading || labels.error || !labels.latest ? []
+    : labelNames().filter(name => !labels.latest!.items.some(label => label.name === name));
+  const unlistedMilestone = () => milestone() !== null && !milestones.loading && !milestones.error && !!milestones.latest
+    && !milestones.latest.items.some(item => item.number === milestone());
 
   async function submit(e: Event): Promise<void> {
     e.preventDefault();
@@ -171,7 +178,7 @@ export function NewIssueForm(props: { owner: string; repo: string }): JSX.Elemen
             <Show when={submission.unknown()}>
               {(attempt) => (
                 <Banner tone="warning" title="Creation result unknown">
-                  <p>{error()} Retry the original submission for “{attempt().input.title}” to recover its result.</p>
+                  <p>{submission.storageError() ?? error()} Retry the original submission for “{attempt().input.title}” to recover its result.</p>
                   <Button type="button" size="sm" class="mt-2" onClick={() => void retry(attempt())}>Retry original creation</Button>
                 </Banner>
               )}
@@ -179,7 +186,7 @@ export function NewIssueForm(props: { owner: string; repo: string }): JSX.Elemen
             <Show when={created()}>
               {(number) => <Banner tone="success">Issue <A class="text-accent hover:underline" href={`${base()}/issues/${number()}`}>#{number()}</A> was created. Your newer edits remain in this draft.</Banner>}
             </Show>
-            <Show when={!submission.unknown() && error()}>
+            <Show when={!submission.unknown() && (submission.storageError() ?? error())}>
               {(msg) => <Banner tone="danger">{msg()}</Banner>}
             </Show>
 
@@ -210,12 +217,16 @@ export function NewIssueForm(props: { owner: string; repo: string }): JSX.Elemen
               />
               <Show
                 when={selectedLabels().length > 0}
-                fallback={<p class="text-sm text-muted">None yet</p>}
+                fallback={<Show when={labelNames().length === 0}><p class="text-sm text-muted">None yet</p></Show>}
               >
                 <div class="flex flex-wrap gap-1.5">
                   <Index each={selectedLabels()}>{(l) => <LabelChip label={l()} />}</Index>
                 </div>
               </Show>
+              <Index each={unlistedLabels()}>{name => <div class="text-sm text-muted">
+                Saved label “{name()}” is not in the loaded choices.
+                <Button type="button" size="sm" onClick={() => changeLabels(labelNames().filter(value => value !== name()))}>Remove saved label</Button>
+              </div>}</Index>
             </section>
 
             <section class="space-y-2 border-b border-border pb-4">
@@ -250,9 +261,13 @@ export function NewIssueForm(props: { owner: string; repo: string }): JSX.Elemen
                 selected={milestone()}
                 onApply={changeMilestone}
               />
+              <Show when={unlistedMilestone()}><div class="text-sm text-muted">
+                Saved milestone #{milestone()} is not in the loaded choices.
+                <Button type="button" size="sm" onClick={() => changeMilestone(null)}>Clear saved milestone</Button>
+              </div></Show>
               <Show
                 when={selectedMilestone()}
-                fallback={<p class="text-sm text-muted">No milestone</p>}
+                fallback={<Show when={milestone() === null}><p class="text-sm text-muted">No milestone</p></Show>}
               >
                 {(m) => (
                   <span class="inline-flex items-center gap-1.5 text-sm text-fg">

@@ -124,6 +124,7 @@ export interface IssueMilestoneRef {
 }
 
 export interface IssueDto {
+  readonly id: string;
   readonly number: number;
   readonly title: string;
   readonly body: string | null;
@@ -149,6 +150,7 @@ export interface IssueDetails {
 
 export function toIssueDto(row: IssueRow, details: IssueDetails): IssueDto {
   return {
+    id: row.id,
     number: row.number,
     title: row.title,
     body: row.body,

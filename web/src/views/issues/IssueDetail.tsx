@@ -13,6 +13,7 @@ import {
   ErrorBoundary,
   For,
   Index,
+  onCleanup,
   Show,
   Suspense,
   type JSX,
@@ -22,6 +23,8 @@ import { issuesApi } from "../../api/issues.ts";
 import { collaboratorsApi } from "../../api/admin.ts";
 import { ApiError } from "../../api/client.ts";
 import { useSession } from "../../store/session.tsx";
+import { useSubmissionScope } from "../../lib/submission-scope.ts";
+import type { SubmissionContext } from "../../api/issues.ts";
 import {
   Avatar,
   Banner,
@@ -60,6 +63,8 @@ export function IssueDetail(props: {
   const toast = useToast();
   const { confirm } = useConfirmDialog();
   const base = () => `/${props.owner}/${props.repo}`;
+  const submissionScope = useSubmissionScope(() => props.owner, () => props.repo);
+  let retired = false; onCleanup(() => { retired = true; });
 
   const issueKey = () =>
     [props.owner, props.repo, props.number] as [string, string, number];
@@ -117,29 +122,37 @@ export function IssueDetail(props: {
 
   // --- write helpers --------------------------------------------------------
 
-  const [busy, setBusy] = createSignal(false);
+  const [metadataBusy, setBusy] = createSignal(false);
+  const [commentBusy, setCommentBusy] = createSignal(false);
+  const busy = () => metadataBusy() || commentBusy();
 
   async function patchIssue(
     patch: Parameters<typeof issuesApi.update>[3],
     successMsg?: string,
+    capturedContext?: SubmissionContext,
   ): Promise<boolean> {
+    const scope = submissionScope(), target = issue();
+    const context = capturedContext ?? (scope && target ? { repository_id: scope.repositoryId, recovery_scope: scope.recoveryScope, issue_id: target.id } : null);
+    if (retired || !context) { if (!retired) toast.error("Safe issue context is unavailable. Refresh before updating."); return false; }
+    const current = () => !retired && submissionScope()?.repositoryId === context.repository_id
+      && submissionScope()?.recoveryScope === context.recovery_scope && issue()?.id === context.issue_id;
     setBusy(true);
     try {
       const { issue: updated } = await issuesApi.update(
         props.owner,
         props.repo,
         props.number,
-        patch,
+        { ...patch, repository_id: context.repository_id, recovery_scope: context.recovery_scope, issue_id: context.issue_id },
       );
+      if (!current()) return false;
       mutateIssue({ issue: updated });
       if (successMsg) toast.success(successMsg);
       return true;
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Update failed.");
-      void refetchIssue();
+      if (current()) { toast.error(err instanceof ApiError ? err.message : "Update failed."); void refetchIssue(); }
       return false;
     } finally {
-      setBusy(false);
+      if (!retired) setBusy(false);
     }
   }
 
@@ -172,65 +185,64 @@ export function IssueDetail(props: {
   // --- comment composer -----------------------------------------------------
 
   const [commentDraft, setCommentDraft] = createSignal("");
-  const submission = createCommentSubmission();
+  const composerIdentity = createMemo(() => {
+    const scope = submissionScope(), target = issue();
+    return scope && target?.id ? { ...scope, issueId: target.id } : null;
+  }, undefined, { equals: (a, b) => a?.repositoryId === b?.repositoryId && a?.recoveryScope === b?.recoveryScope && a?.issueId === b?.issueId });
+  const submission = createMemo(() => {
+    const context = composerIdentity();
+    return context ? createCommentSubmission({ storage: () => sessionStorage, scope: context.recoveryScope, repositoryId: context.repositoryId, issueId: context.issueId }) : null;
+  });
   let commentDraftRevision = 0;
+  createEffect(() => {
+    const restored = submission()?.restoredForm();
+    commentDraftRevision = restored?.revision ?? 0; setCommentDraft(restored?.body ?? ""); setCommentBusy(false);
+  });
   const updateCommentDraft = (value: string) => {
-    commentDraftRevision += 1;
-    setCommentDraft(value);
+    commentDraftRevision += 1; setCommentDraft(value); submission()?.saveDraft(value, commentDraftRevision);
   };
 
   async function submitComment(closeAfter?: "open" | "closed"): Promise<void> {
-    if (busy() || submission.state()) return;
+    const flow = submission(); if (retired || !flow || busy() || flow.state()) return;
     const bodyText = commentDraft().trim();
-    if (!bodyText) {
-      if (closeAfter) await patchIssue({ state: closeAfter });
-      return;
-    }
-    const attempt = { body: bodyText, revision: commentDraftRevision, closeAfter, idempotencyKey: crypto.randomUUID() };
-    if (submission.begin(attempt)) await sendComment(attempt);
+    if (!bodyText) { if (closeAfter) await patchIssue({ state: closeAfter }); return; }
+    const attempt = { body: bodyText, revision: commentDraftRevision, closeAfter, idempotencyKey: crypto.randomUUID(), context: flow.context };
+    try { if (flow.begin(attempt)) await sendComment(attempt, flow); }
+    catch (err) { toast.error(err instanceof Error ? err.message : "Could not retain this comment before sending."); }
   }
 
-  async function sendComment(attempt: CommentSubmission): Promise<void> {
-    setBusy(true);
+  async function sendComment(attempt: CommentSubmission, flow: ReturnType<typeof createCommentSubmission>): Promise<void> {
+    setCommentBusy(true);
     try {
-      const { comment } = await issuesApi.comment(props.owner, props.repo, props.number, attempt.body, attempt.idempotencyKey);
-      if (!submission.acknowledge(attempt)) return;
+      const { comment } = await issuesApi.comment(props.owner, props.repo, props.number, attempt.body, attempt.idempotencyKey, attempt.context);
+      if (retired || submission() !== flow || !flow.acknowledge(attempt)) return;
       timeline.acknowledge(comment);
-      // An ACK owns the submitted draft, not edits made while it was pending.
       if (commentDraftRevision === attempt.revision) setCommentDraft("");
-      if (attempt.closeAfter) {
-        await patchIssue({ state: attempt.closeAfter });
-      } else {
-        void refetchIssue(); // refresh comment count
-      }
+      if (attempt.closeAfter) await patchIssue({ state: attempt.closeAfter }, undefined, attempt.context);
+      else void refetchIssue();
     } catch (err) {
-      submission.fail(attempt, err);
-      if (submission.unknown()) {
-        // Read actual state for the user's inspection; a body match or an empty
-        // page is not an ACK and never silently unlocks another POST.
-        void loadComments(true);
-        void refetchIssue();
-      } else {
-        toast.error(err instanceof ApiError ? err.message : "Could not add comment.");
-      }
+      if (retired || submission() !== flow) return;
+      flow.fail(attempt, err);
+      if (flow.unknown()) { void loadComments(true); void refetchIssue(); }
+      else toast.error(err instanceof ApiError ? err.message : "Could not add comment.");
     } finally {
-      setBusy(false);
+      if (!retired && submission() === flow) setCommentBusy(false);
     }
   }
 
   function resolveComment(attempt: CommentSubmission): void {
-    if (submission.resolve(attempt) && commentDraftRevision === attempt.revision) setCommentDraft("");
+    if (submission()?.resolve(attempt) && commentDraftRevision === attempt.revision) setCommentDraft("");
   }
 
   async function retryComment(attempt: CommentSubmission): Promise<void> {
+    const flow = submission(); if (!flow) return;
     const ok = await confirm({
       title: "Retry this comment?",
       message: "The original comment may already be posted. Check the conversation before retrying the original comment." +
         (attempt.closeAfter ? ` This will also ${attempt.closeAfter === "closed" ? "close" : "reopen"} the issue after the comment is posted.` : ""),
-      confirmText: "Retry comment",
-      danger: true,
+      confirmText: "Retry comment", danger: true,
     });
-    if (ok && !busy() && submission.retry(attempt)) await sendComment(attempt);
+    if (ok && !retired && submission() === flow && !busy() && flow.retry(attempt)) await sendComment(attempt, flow);
   }
 
   const notFound = () =>
@@ -415,7 +427,9 @@ export function IssueDetail(props: {
                         }
                       >
                         <h2 class="mb-2 text-sm font-semibold text-fg">Add a comment</h2>
-                        <Show when={submission.unknown()}>
+                        <Show when={!submission()}><Banner tone="warning">Safe comment recovery is unavailable. Refresh after the server has been updated.</Banner></Show>
+                        <Show when={submission()?.storageError()}>{message => <Banner tone="danger">{message()}</Banner>}</Show>
+                        <Show when={submission()?.unknown()}>
                           {(attempt) => (
                             <Banner tone="warning" title="Comment result unknown" class="mb-3">
                               <p>Your comment may have been posted. Refresh the conversation or retry this submission.</p>
@@ -438,6 +452,7 @@ export function IssueDetail(props: {
                         </Show>
                         <MarkdownEditor
                           value={commentDraft()}
+                          disabled={!submission()}
                           onInput={updateCommentDraft}
                           placeholder="Leave a comment"
                         />
@@ -446,7 +461,7 @@ export function IssueDetail(props: {
                             when={iss().state === "open"}
                             fallback={
                               <Button
-                                disabled={busy() || !!submission.state()}
+                                disabled={busy() || (!submission() || !!submission()?.state())}
                                 onClick={() => void submitComment("open")}
                               >
                                 <Icons.Refresh class="h-4 w-4" />{" "}
@@ -456,7 +471,7 @@ export function IssueDetail(props: {
                           >
                             <Button
                               variant="danger"
-                              disabled={busy() || !!submission.state()}
+                              disabled={busy() || (!submission() || !!submission()?.state())}
                               onClick={() => void submitComment("closed")}
                             >
                               <Icons.Check class="h-4 w-4" />{" "}
@@ -465,7 +480,7 @@ export function IssueDetail(props: {
                           </Show>
                           <Button
                             variant="primary"
-                            disabled={busy() || !!submission.state() || !commentDraft().trim()}
+                            disabled={busy() || (!submission() || !!submission()?.state()) || !commentDraft().trim()}
                             onClick={() => void submitComment()}
                           >
                             Comment
@@ -611,7 +626,9 @@ function CommentItem(props: {
   const { confirm } = useConfirmDialog();
   const [editing, setEditing] = createSignal(false);
   const [draft, setDraft] = createSignal("");
-  const [busy, setBusy] = createSignal(false);
+  const [metadataBusy, setBusy] = createSignal(false);
+  const [commentBusy, setCommentBusy] = createSignal(false);
+  const busy = () => metadataBusy() || commentBusy();
 
   const begin = () => {
     setDraft(props.comment.body);
