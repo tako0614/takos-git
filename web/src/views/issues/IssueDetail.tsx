@@ -131,6 +131,7 @@ export function IssueDetail(props: {
     successMsg?: string,
     capturedContext?: SubmissionContext,
   ): Promise<boolean> {
+    if (metadataBusy()) return false;
     const scope = submissionScope(), target = issue();
     const context = capturedContext ?? (scope && target ? { repository_id: scope.repositoryId, recovery_scope: scope.recoveryScope, issue_id: target.id } : null);
     if (retired || !context) { if (!retired) toast.error("Safe issue context is unavailable. Refresh before updating."); return false; }
@@ -160,26 +161,36 @@ export function IssueDetail(props: {
 
   const [editingTitle, setEditingTitle] = createSignal(false);
   const [titleDraft, setTitleDraft] = createSignal("");
+  let titleDraftRevision = 0;
+  const updateTitleDraft = (value: string) => { titleDraftRevision += 1; setTitleDraft(value); };
+  const cancelTitleEdit = () => { titleDraftRevision += 1; setEditingTitle(false); };
   const beginEditTitle = () => {
-    setTitleDraft(issue()?.title ?? "");
+    updateTitleDraft(issue()?.title ?? "");
     setEditingTitle(true);
   };
   const saveTitle = async () => {
+    if (busy()) return;
     const t = titleDraft().trim();
     if (!t) return;
-    if (await patchIssue({ title: t })) setEditingTitle(false);
+    const revision = titleDraftRevision;
+    if (await patchIssue({ title: t }) && titleDraftRevision === revision) setEditingTitle(false);
   };
 
   // --- body editing ---------------------------------------------------------
 
   const [editingBody, setEditingBody] = createSignal(false);
   const [bodyDraft, setBodyDraft] = createSignal("");
+  let bodyDraftRevision = 0;
+  const updateBodyDraft = (value: string) => { bodyDraftRevision += 1; setBodyDraft(value); };
+  const cancelBodyEdit = () => { bodyDraftRevision += 1; setEditingBody(false); };
   const beginEditBody = () => {
-    setBodyDraft(issue()?.body ?? "");
+    updateBodyDraft(issue()?.body ?? "");
     setEditingBody(true);
   };
   const saveBody = async () => {
-    if (await patchIssue({ body: bodyDraft() })) setEditingBody(false);
+    if (busy()) return;
+    const revision = bodyDraftRevision;
+    if (await patchIssue({ body: bodyDraft() }) && bodyDraftRevision === revision) setEditingBody(false);
   };
 
   // --- comment composer -----------------------------------------------------
@@ -287,16 +298,16 @@ export function IssueDetail(props: {
                         <TextInput
                           class="flex-1"
                           value={titleDraft()}
-                          onInput={(e) => setTitleDraft(e.currentTarget.value)}
+                          onInput={(e) => updateTitleDraft(e.currentTarget.value)}
                           onKeyDown={(e) => {
                             if (e.key === "Enter") void saveTitle();
-                            if (e.key === "Escape") setEditingTitle(false);
+                            if (e.key === "Escape") cancelTitleEdit();
                           }}
                         />
                         <Button variant="primary" disabled={busy() || !titleDraft().trim()} onClick={saveTitle}>
                           Save
                         </Button>
-                        <Button onClick={() => setEditingTitle(false)}>Cancel</Button>
+                        <Button onClick={cancelTitleEdit}>Cancel</Button>
                       </div>
                     }
                   >
@@ -342,11 +353,11 @@ export function IssueDetail(props: {
                         <div class="ml-[52px] space-y-2">
                           <MarkdownEditor
                             value={bodyDraft()}
-                            onInput={setBodyDraft}
+                            onInput={updateBodyDraft}
                             placeholder="Leave a comment"
                           />
                           <div class="flex justify-end gap-2">
-                            <Button onClick={() => setEditingBody(false)}>Cancel</Button>
+                            <Button onClick={cancelBodyEdit}>Cancel</Button>
                             <Button variant="primary" disabled={busy()} onClick={saveBody}>
                               Save
                             </Button>
