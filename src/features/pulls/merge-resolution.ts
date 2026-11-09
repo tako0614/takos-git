@@ -172,10 +172,12 @@ function buildMergedFileMap(
     const baseEntry = baseMap.get(path);
     const localEntry = localMap.get(path);
     const incomingEntry = incomingMap.get(path);
+    // Absence on both sides is unchanged. Otherwise an addition on one side
+    // incorrectly looks like two changes and disappears from the resolved tree.
     const localChanged =
-      !baseEntry || !localEntry || baseEntry.sha !== localEntry.sha || baseEntry.mode !== localEntry.mode;
+      baseEntry?.sha !== localEntry?.sha || baseEntry?.mode !== localEntry?.mode;
     const incomingChanged =
-      !baseEntry || !incomingEntry || baseEntry.sha !== incomingEntry.sha || baseEntry.mode !== incomingEntry.mode;
+      baseEntry?.sha !== incomingEntry?.sha || baseEntry?.mode !== incomingEntry?.mode;
 
     if (!localChanged && !incomingChanged) {
       if (baseEntry) merged.set(path, { sha: baseEntry.sha, mode: baseEntry.mode });
