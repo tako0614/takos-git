@@ -11,7 +11,7 @@
  * component. All data access is via `issuesApi` (+ best-effort `collaboratorsApi`
  * for assignee candidates); everything renders through the frozen design system.
  */
-import { type JSX } from "solid-js";
+import { createMemo, Show, type JSX } from "solid-js";
 import { useParams } from "@solidjs/router";
 import { useRepo } from "../../app/RepoLayout.tsx";
 import { IssueList } from "./IssueList.tsx";
@@ -28,12 +28,19 @@ export function IssuesView(): JSX.Element {
 export function IssueDetailView(): JSX.Element {
   const repo = useRepo();
   const params = useParams();
+  // Router reuses this route when only its params change. Give each issue its
+  // own state and fixed request scope, including work still awaiting an ACK.
+  const identity = createMemo(() => ({
+    owner: repo.owner(),
+    repo: repo.repo(),
+    number: Number(params.number),
+  }));
   return (
-    <IssueDetail
-      owner={repo.owner()}
-      repo={repo.repo()}
-      number={Number(params.number)}
-    />
+    <Show when={identity()} keyed>
+      {(issue) => (
+        <IssueDetail owner={issue.owner} repo={issue.repo} number={issue.number} />
+      )}
+    </Show>
   );
 }
 
