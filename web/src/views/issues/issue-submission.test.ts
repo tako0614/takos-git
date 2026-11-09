@@ -29,4 +29,19 @@ describe("Issue creation intent custody", () => {
     flow.fail(old, new Error("late")); expect(flow.acknowledge(old)).toBe(false);
     expect(flow.state()?.attempt).toBe(current);
   });
+  test("an auth rejection during recovery cannot discard the uncertain original key", () => {
+    let keys = 0; const flow = createIssueSubmission(() => `key-${++keys}`);
+    const original = flow.begin({ title: "committed before lost response" }, 1)!;
+    flow.fail(original, new TypeError("Lost committed reply"));
+    for (const status of [401, 403, 404, 429]) {
+      expect(flow.retry(original)).toBe(true);
+      flow.fail(original, new ApiError(status, "rejected", "Recovery rejected"));
+      expect(flow.unknown()).toBe(original);
+      expect(flow.begin({ title: "committed before lost response" }, 1)).toBeNull();
+      expect(keys).toBe(1);
+    }
+    expect(flow.retry(original)).toBe(true);
+    expect(flow.acknowledge(original)).toBe(true);
+    expect(flow.begin({ title: "intent after confirmed ACK" }, 2)?.idempotencyKey).toBe("key-2");
+  });
 });

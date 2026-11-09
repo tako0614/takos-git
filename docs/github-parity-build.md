@@ -1050,6 +1050,10 @@ exactly-once. The New Issue form captures one key and input per submission,
 offers explicit same-key recovery after an uncertain reply, preserves newer
 edits, and retires late responses when leaving its Repo. Keys live only in that
 form instance; reload/route departure does not add durable draft or key recovery.
+Once a submission becomes uncertain, a later rejected recovery (including
+temporary loss of authorization) retains that original key: denial of recovery
+does not prove that the earlier creation rolled back. A confirmed response is
+required before the form can submit another intent with a fresh key.
 
 ### 4. Route table
 

@@ -66,4 +66,15 @@ describe("comment submission recovery", () => {
     expect(b.retry(original)).toBe(false);
     expect(b.begin(attempt("other issue"))).toBe(true);
   });
+  test("rejected recovery keeps the original uncertain comment until a confirmed result", () => {
+    const flow = createCommentSubmission(), original = attempt();
+    flow.begin(original); flow.fail(original, new TypeError("Lost committed reply"));
+    expect(flow.retry(original)).toBe(true);
+    flow.fail(original, new ApiError(403, "forbidden", "Temporarily revoked"));
+    expect(flow.unknown()).toBe(original);
+    expect(flow.begin(attempt("same body with a fresh key", 2))).toBe(false);
+    expect(flow.retry(original)).toBe(true);
+    expect(flow.acknowledge(original)).toBe(true);
+    expect(flow.begin(attempt("intent after confirmed ACK", 2))).toBe(true);
+  });
 });

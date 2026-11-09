@@ -1,7 +1,7 @@
 import { createSignal } from "solid-js";
 import { ApiError } from "../api/client.ts";
 
-type SubmissionState<T> = { readonly attempt: T; readonly phase: "sending" | "unknown" };
+type SubmissionState<T> = { readonly attempt: T; readonly phase: "sending" | "unknown"; readonly uncertain: boolean };
 
 /** Own one submitted intent; an ambiguous failure never proves rollback. */
 export function createSubmissionRecovery<T extends object>() {
@@ -13,11 +13,11 @@ export function createSubmissionRecovery<T extends object>() {
     unknown: () => { const current = state(); return current?.phase === "unknown" ? current.attempt : null; },
     begin(attempt: T): boolean {
       if (state()) return false;
-      setState({ attempt, phase: "sending" }); return true;
+      setState({ attempt, phase: "sending", uncertain: false }); return true;
     },
     retry(attempt: T): boolean {
       if (!owns(attempt, "unknown")) return false;
-      setState({ attempt, phase: "sending" }); return true;
+      setState({ attempt, phase: "sending", uncertain: true }); return true;
     },
     acknowledge(attempt: T): boolean {
       if (!owns(attempt, "sending")) return false;
@@ -26,7 +26,9 @@ export function createSubmissionRecovery<T extends object>() {
     fail(attempt: T, error: unknown): void {
       if (!owns(attempt, "sending")) return;
       const rejected = error instanceof ApiError && error.status >= 400 && error.status < 500 && error.status !== 408;
-      setState(rejected ? null : { attempt, phase: "unknown" });
+      // A rejected recovery says nothing about the earlier uncertain commit.
+      const originalRejected = rejected && !state()?.uncertain;
+      setState(originalRejected ? null : { attempt, phase: "unknown", uncertain: true });
     },
     resolve(attempt: T): boolean {
       if (!owns(attempt, "unknown")) return false;

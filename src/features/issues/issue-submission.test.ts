@@ -151,4 +151,22 @@ describe("durable Issue creation through the real router", () => {
       expect((await (await f.send("same-key", input)).json()).issue.number).toBe(1);
     } finally { f.fake.db.close(); }
   });
+  test("temporary authorization loss after an uncertain commit does not invalidate its receipt", async () => {
+    const f = await fixture(); let lose = true;
+    f.env.DB = {
+      prepare: q => f.fake.prepare(q), exec: q => f.fake.exec(q),
+      async batch(statements) { const result = await f.fake.batch(statements); if (lose) { lose = false; throw new Error("lost committed reply"); } return result; },
+    } satisfies D1Database;
+    try {
+      await expect(f.send()).rejects.toThrow("lost committed reply"); f.env.DB = f.fake;
+      await f.db.run("UPDATE repo_collaborators SET role='reader' WHERE principal_id = (SELECT id FROM principals WHERE subject='sub-bob')");
+      expect((await f.send()).status).toBe(403);
+      expect((await f.state()).issues).toHaveLength(1);
+      await f.db.run("UPDATE repo_collaborators SET role='writer' WHERE principal_id = (SELECT id FROM principals WHERE subject='sub-bob')");
+      const recovered = await f.send(); expect(recovered.status).toBe(201);
+      expect(recovered.headers.get("Idempotency-Replayed")).toBe("true");
+      expect((await recovered.json()).issue.number).toBe(1);
+      const state = await f.state(); expect(state.issues).toHaveLength(1); expect(state.counters).toEqual([{ next_value: 2 }]);
+    } finally { f.fake.db.close(); }
+  });
 });
