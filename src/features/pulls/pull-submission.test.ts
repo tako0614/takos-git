@@ -31,6 +31,30 @@ async function fixture() {
 }
 
 describe("durable PR creation through the real router", () => {
+  test("read exposes the actual backing Issue for bound comments without rewriting creation receipts", async () => {
+    const f = await fixture();
+    try {
+      const originalAck = (await (await f.send()).json()).pull_request;
+      const before = await f.db.query("SELECT creation_metadata FROM pull_request_submissions");
+      const state = await f.state(), issueId = state.issues[0].id;
+      const read = await dispatch(f.reg, get(path + "/1", "taksrv_bob_r"), f.env);
+      expect(read.status).toBe(200);
+      expect((await read.json()).pull_request.issueId).toBe(issueId);
+      const comment = (target: string) => {
+        const request = jsonRequest("POST", repoPath + "/issues/1/comments", { body: "Bound PR comment", issue_id: target }, "taksrv_bob_w");
+        request.headers.set("Idempotency-Key", "bound-pr-comment"); return dispatch(f.reg, request, f.env);
+      };
+      expect((await comment("different-issue")).status).toBe(409);
+      expect(await f.db.query("SELECT id FROM issue_comments")).toHaveLength(0);
+      const first = await comment(issueId), replay = await comment(issueId);
+      expect(first.status).toBe(201); expect(replay.status).toBe(201);
+      expect((await first.json()).comment).toEqual((await replay.json()).comment);
+      expect(await f.db.query("SELECT id FROM issue_comments")).toHaveLength(1);
+      expect((await (await f.send()).json()).pull_request).toEqual(originalAck);
+      expect(await f.db.query("SELECT creation_metadata FROM pull_request_submissions")).toEqual(before);
+    } finally { f.fake.db.close(); }
+  });
+
   test("captured repository and browser identity context are checked before receipt replay", async () => {
     const f = await fixture();
     try {

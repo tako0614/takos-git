@@ -162,6 +162,32 @@ fresh operation; tab closure/clearing storage and unsent/cross-device drafts
 remain outside the guarantee. A generic rejected retry still does not prove
 that the original request rolled back.
 
+## PR conversation comment recovery
+
+PR conversations reuse the Issue comment journal and retained-key recovery.
+Read projections expose the actual backing `issueId`; historical write-only PR
+creation ACKs may omit it, without rewriting their retained creation metadata.
+The current caller/repository/backing-Issue context constrains each comment.
+An older server without this read field visibly disables the new composer
+rather than sending an unbound comment.
+
+Original submission and newer draft survive reload or leaving and returning to
+the conversation in the same tab. No automatic POST occurs. Use **Retry original
+comment…** to confirm recovery with the original key; a conversation list match
+alone does not retire that intent. Empty success responses and replies missing
+the submitted comment's ID/body/timestamps remain unknown. An uncertain
+original is retired only by its matching sending attempt's confirmed response
+or authorized tombstone.
+Changed caller/PR and retired responses cannot clear the current draft.
+
+Confirmed comments update the timeline and PR count without replacing the row
+with the first page of an older conversation. **Load more comments** follows the
+existing opaque API cursor, deduplicates acknowledged rows and retains a newer
+ACK that arrives while an older page is pending. Failed page reads preserve the
+loaded rows/cursor for explicit retry. This does not change server pagination,
+review/merge authority or event-delivery guarantees. The same tab-storage and
+unsent/cross-device limits described above apply.
+
 ## Authentication and authorization
 
 認証経路を混ぜない。

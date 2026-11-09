@@ -248,6 +248,8 @@ export interface PrincipalLite {
 }
 
 export interface PullRequestDto {
+  /** Actual backing Issue on read projections; historical creation ACKs may omit it. */
+  readonly issueId?: string;
   readonly mergePending?: { readonly commitSha: string; readonly method: "merge" | "squash" | "rebase"; readonly baseRef: string };
   readonly number: number;
   readonly state: "open" | "closed";

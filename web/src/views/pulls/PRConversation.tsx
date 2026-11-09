@@ -12,6 +12,7 @@ import {
   createSignal,
   ErrorBoundary,
   For,
+  onCleanup,
   Show,
   Suspense,
   type JSX,
@@ -25,6 +26,10 @@ import type {
   ReviewDto,
 } from "../../api/types.ts";
 import { useSession } from "../../store/session.tsx";
+import { useSubmissionScope } from "../../lib/submission-scope.ts";
+import { createCommentSubmission, type CommentSubmission } from "../issues/comment-submission.ts";
+import { createCommentTimeline } from "../issues/comment-timeline.ts";
+import { acknowledgeCommentReceipt } from "./comment-receipt.ts";
 import {
   Avatar,
   Banner,
@@ -36,6 +41,7 @@ import {
   Markdown,
   RelativeTime,
   Textarea,
+  useConfirmDialog,
   useToast,
 } from "../../ui/index.ts";
 import { principalName, reviewStateLabel } from "./shared.tsx";
@@ -144,31 +150,81 @@ function ReviewSummary(props: { reviews: readonly ReviewDto[] }): JSX.Element {
   );
 }
 
-export function PRConversation(props: {
+interface ConversationProps {
   owner: string;
   repo: string;
   pr: PullRequestDto;
   onChanged: () => void;
-}): JSX.Element {
+}
+interface ConversationTarget {
+  owner: string; repo: string; number: number;
+  repositoryId?: string; recoveryScope?: string; issueId?: string;
+}
+
+export function PRConversation(props: ConversationProps): JSX.Element {
+  const scope = useSubmissionScope(() => props.owner, () => props.repo);
+  const target = createMemo(() => ({
+    owner: props.owner, repo: props.repo, number: props.pr.number, issueId: props.pr.issueId,
+    repositoryId: scope()?.repositoryId, recoveryScope: scope()?.recoveryScope,
+  }), undefined, { equals: (a, b) => a?.owner === b.owner && a?.repo === b.repo && a?.number === b.number
+    && a?.issueId === b.issueId && a?.repositoryId === b.repositoryId && a?.recoveryScope === b.recoveryScope });
+  return <Show when={target()} keyed>{identity => <Conversation owner={identity.owner} repo={identity.repo} pr={props.pr} onChanged={props.onChanged} target={identity} />}</Show>;
+}
+
+function Conversation(props: ConversationProps & { target: ConversationTarget }): JSX.Element {
   const session = useSession();
   const toast = useToast();
-  const [draft, setDraft] = createSignal("");
+  const { confirm } = useConfirmDialog();
+  const target = props.target;
+  const flow = target.repositoryId && target.recoveryScope && target.issueId ? createCommentSubmission({
+    storage: () => sessionStorage, scope: target.recoveryScope, repositoryId: target.repositoryId, issueId: target.issueId,
+  }) : null;
+  const restored = flow?.restoredForm();
+  const [draft, setDraft] = createSignal(restored?.body ?? "");
+  let revision = restored?.revision ?? 0, retired = false;
+  onCleanup(() => { retired = true; });
+  const updateDraft = (body: string) => { revision += 1; setDraft(body); flow?.saveDraft(body, revision); };
   const [posting, setPosting] = createSignal(false);
   const [showReview, setShowReview] = createSignal(false);
   const [busy, setBusy] = createSignal(false);
 
-  const key = () => [props.owner, props.repo, props.pr.number] as const;
+  const key = () => [target.owner, target.repo, target.number] as const;
 
   const [reviews, { refetch: refetchReviews }] = createResource(key, ([o, r, n]) =>
     pullsApi.reviews(o, r, n),
   );
-  const [comments, { refetch: refetchComments }] = createResource(key, ([o, r, n]) =>
-    issuesApi.comments(o, r, n),
-  );
+  const commentTimeline = createCommentTimeline();
+  const [loadingMore, setLoadingMore] = createSignal(false);
+  let readGeneration = 0;
+  const [comments, { refetch: refetchComments }] = createResource(key, async ([o, r, n]) => {
+    const read = commentTimeline.beginRead(), generation = ++readGeneration;
+    try {
+      const page = await issuesApi.comments(o, r, n);
+      if (!retired && generation === readGeneration) commentTimeline.accept(read, page, true);
+      return page;
+    } finally { commentTimeline.finishRead(read); }
+  });
+
+  async function loadMoreComments(): Promise<void> {
+    const cursor = commentTimeline.cursor();
+    if (retired || loadingMore() || comments.loading || !cursor) return;
+    const read = commentTimeline.beginRead(), generation = readGeneration;
+    setLoadingMore(true);
+    try {
+      const page = await issuesApi.comments(target.owner, target.repo, target.number, { cursor });
+      if (!retired && generation === readGeneration && commentTimeline.cursor() === cursor) commentTimeline.accept(read, page, false);
+    } catch (err) {
+      if (!retired && generation === readGeneration) toast.error(err instanceof ApiError ? err.message : "Could not load more comments.");
+    } finally {
+      commentTimeline.finishRead(read);
+      if (!retired) setLoadingMore(false);
+    }
+  }
 
   const timeline = createMemo<TimelineEntry[]>(() => {
     const entries: TimelineEntry[] = [];
-    for (const c of comments()?.items ?? []) {
+    comments(); // Preserve resource loading/error handling for the conversation boundary.
+    for (const c of commentTimeline.items()) {
       entries.push({ at: c.createdAt, kind: "comment", comment: c });
     }
     for (const r of reviews()?.items ?? []) {
@@ -181,30 +237,51 @@ export function PRConversation(props: {
   });
 
   const addComment = async () => {
-    if (!draft().trim() || posting()) return;
-    setPosting(true);
-    try {
-      await issuesApi.comment(props.owner, props.repo, props.pr.number, draft().trim());
-      setDraft("");
-      refetchComments();
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Failed to comment.");
-    } finally {
-      setPosting(false);
-    }
+    if (retired || !flow || flow.state() || flow.storageError() || !draft().trim() || posting()) return;
+    const attempt: CommentSubmission = { body: draft().trim(), revision, idempotencyKey: crypto.randomUUID(), context: flow.context };
+    try { if (flow.begin(attempt)) await sendComment(attempt); }
+    catch (err) { if (!retired) toast.error(err instanceof Error ? err.message : "Could not retain this comment before sending."); }
   };
 
-  const toggleState = async () => {
-    if (busy()) return;
-    setBusy(true);
+  async function sendComment(attempt: CommentSubmission): Promise<void> {
+    if (!flow || retired) return;
+    setPosting(true);
     try {
-      if (props.pr.state === "open") await pullsApi.close(props.owner, props.repo, props.pr.number);
-      else await pullsApi.reopen(props.owner, props.repo, props.pr.number);
+      const response = await issuesApi.comment(target.owner, target.repo, target.number, attempt.body, attempt.idempotencyKey, attempt.context);
+      if (retired) return;
+      const comment = acknowledgeCommentReceipt(flow, attempt, response); if (!comment) return;
+      commentTimeline.acknowledge(comment);
+      if (revision === attempt.revision) setDraft("");
+      // The ACK already supplies this row. A first-page refresh could hide it
+      // beyond the loaded cursor range; refresh only the PR's count/state.
       props.onChanged();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Failed to update pull request.");
+      if (retired) return;
+      flow.fail(attempt, err);
+      if (flow.unknown()) { void refetchComments(); props.onChanged(); }
+      else toast.error(err instanceof ApiError ? err.message : "Failed to comment.");
     } finally {
-      setBusy(false);
+      if (!retired) setPosting(false);
+    }
+  }
+
+  async function retryComment(attempt: CommentSubmission): Promise<void> {
+    if (!flow || retired || posting()) return;
+    const ok = await confirm({ title: "Retry the original comment?", message: "Recover the original comment with the same key. Your newer draft will stay in this form.", confirmText: "Retry comment" });
+    if (ok && !retired && !posting() && flow.retry(attempt)) await sendComment(attempt);
+  }
+
+  const toggleState = async () => {
+    if (retired || busy()) return;
+    setBusy(true);
+    try {
+      if (props.pr.state === "open") await pullsApi.close(target.owner, target.repo, target.number);
+      else await pullsApi.reopen(target.owner, target.repo, target.number);
+      if (!retired) props.onChanged();
+    } catch (err) {
+      if (!retired) toast.error(err instanceof ApiError ? err.message : "Failed to update pull request.");
+    } finally {
+      if (!retired) setBusy(false);
     }
   };
 
@@ -243,6 +320,13 @@ export function PRConversation(props: {
               )}
             </For>
           </div>
+          <Show when={commentTimeline.cursor()}>
+            <div class="flex justify-center">
+              <Button onClick={() => void loadMoreComments()} disabled={loadingMore() || comments.loading}>
+                {loadingMore() ? "Loading comments…" : "Load more comments"}
+              </Button>
+            </div>
+          </Show>
         </Suspense>
       </ErrorBoundary>
 
@@ -275,11 +359,20 @@ export function PRConversation(props: {
         </Show>
 
         <Box class="p-4">
+          <Show when={!flow}><Banner tone="warning">Safe PR comment recovery is unavailable. Refresh after the server has been updated.</Banner></Show>
+          <Show when={flow?.storageError()}>{message => <Banner tone="danger">{message()}</Banner>}</Show>
+          <Show when={flow?.unknown()}>{attempt => <Banner tone="warning" title="Comment result is not confirmed">
+            Check the conversation or recover the original submission. A new comment will not be sent while its result is unknown.
+            <div class="mt-2 flex flex-wrap gap-2">
+              <Button size="sm" onClick={() => void refetchComments()}>Refresh conversation</Button>
+              <Button size="sm" onClick={() => void retryComment(attempt())}>Retry original comment…</Button>
+            </div>
+          </Banner>}</Show>
           <Textarea
             rows={4}
             placeholder="Leave a comment"
             value={draft()}
-            onInput={(e) => setDraft(e.currentTarget.value)}
+            onInput={(e) => updateDraft(e.currentTarget.value)}
           />
           <div class="mt-3 flex flex-wrap items-center justify-end gap-2">
             <Show when={!showReview() && props.pr.state === "open"}>
@@ -292,7 +385,7 @@ export function PRConversation(props: {
                 <Icons.X class="h-4 w-4" /> Close pull request
               </Show>
             </Button>
-            <Button variant="primary" onClick={addComment} disabled={!draft().trim() || posting()}>
+            <Button variant="primary" onClick={addComment} disabled={!flow || !!flow.state() || !!flow.storageError() || !draft().trim() || posting()}>
               {posting() ? "Commenting…" : "Comment"}
             </Button>
           </div>
