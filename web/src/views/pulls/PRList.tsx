@@ -120,6 +120,7 @@ function NewPullDialog(props: {
   repo: string;
   defaultBase: string;
   onClose: () => void;
+  onCreated: () => void;
 }): JSX.Element {
   const navigate = useNavigate();
   const toast = useToast();
@@ -160,6 +161,7 @@ function NewPullDialog(props: {
     try {
       const { pull } = await pullsApi.create(scope.owner, scope.repo, attempt.input);
       if (retired || !submission.acknowledge(attempt)) return;
+      props.onCreated();
       if (props.open && epoch === viewEpoch && revision === attempt.revision) {
         toast.success(`Opened pull request #${pull.number}`);
         close();
@@ -294,10 +296,8 @@ export function PRList(): JSX.Element {
           owner={scope.owner}
           repo={scope.repo}
           defaultBase={repo.detail()?.defaultBranch ?? "main"}
-          onClose={() => {
-            setShowNew(false);
-            refetch();
-          }}
+          onClose={() => setShowNew(false)}
+          onCreated={() => void refetch()}
         />}
       </Show>
 

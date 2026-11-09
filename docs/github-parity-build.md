@@ -1176,6 +1176,8 @@ The Web PR list keeps each repository's creation state separate. A delayed
 creation response cannot navigate or close a different repository's form. If
 the dialog was closed/reopened or edited while saving, a confirmed creation is
 linked without discarding the current draft. Rejected input stays editable.
+Only a confirmed creation refreshes the list; closing the dialog neither
+substitutes for that confirmation nor starts a redundant list request.
 An ambiguous response blocks fresh submissions until the user checks the
 original PR list and explicitly allows another creation. This API has no
 creation receipt: a list match does not prove which request created a PR, and
