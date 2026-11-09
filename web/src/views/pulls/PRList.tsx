@@ -18,7 +18,6 @@ import { A, useNavigate } from "@solidjs/router";
 import { useRepo } from "../../app/RepoLayout.tsx";
 import { pullsApi } from "../../api/pulls.ts";
 import { ApiError } from "../../api/client.ts";
-import { createSubmissionRecovery } from "../../lib/submission-recovery.ts";
 import type { PullRequestDto } from "../../api/types.ts";
 import { useSession } from "../../store/session.tsx";
 import {
@@ -40,6 +39,7 @@ import {
   useToast,
 } from "../../ui/index.ts";
 import { PrStateIcon, prDisplayState, principalName } from "./shared.tsx";
+import { createPullSubmission, type PullSubmission } from "./pull-submission.ts";
 
 type StateFilter = "open" | "closed" | "all";
 
@@ -134,10 +134,7 @@ function NewPullDialog(props: {
   const [draft, setDraft] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
   const [created, setCreated] = createSignal<number | null>(null);
-  const submission = createSubmissionRecovery<{
-    input: Parameters<typeof pullsApi.create>[2];
-    revision: number;
-  }>();
+  const submission = createPullSubmission();
   let retired = false, revision = 0, viewEpoch = 0;
   onCleanup(() => { retired = true; });
   const busy = () => submission.state()?.phase === "sending";
@@ -148,18 +145,19 @@ function NewPullDialog(props: {
 
   const submit = async () => {
     if (!canSubmit()) return;
-    const attempt = { input: {
-      title: title().trim(),
-      body: body().trim() || undefined,
-      base: base().trim(),
-      head: head().trim(),
-      draft: draft(),
-    }, revision };
-    if (!submission.begin(attempt)) return;
-    const epoch = viewEpoch;
-    setError(null); setCreated(null);
     try {
-      const { pull } = await pullsApi.create(scope.owner, scope.repo, attempt.input);
+      const attempt = submission.begin({ title: title().trim(), body: body().trim() || undefined, base: base().trim(), head: head().trim(), draft: draft() }, revision);
+      if (attempt) { setCreated(null); await send(attempt); }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not prepare this submission.");
+    }
+  };
+
+  async function send(attempt: PullSubmission): Promise<void> {
+    const epoch = viewEpoch;
+    setError(null);
+    try {
+      const { pull } = await pullsApi.create(scope.owner, scope.repo, attempt.input, attempt.idempotencyKey);
       if (retired || !submission.acknowledge(attempt)) return;
       props.onCreated();
       if (props.open && epoch === viewEpoch && revision === attempt.revision) {
@@ -174,14 +172,12 @@ function NewPullDialog(props: {
       submission.fail(attempt, err);
       setError(err instanceof ApiError ? err.message : "We could not confirm whether the pull request was created.");
     }
-  };
+  }
 
-  async function allowAnotherCreation(): Promise<void> {
-    const attempt = submission.unknown();
-    if (!attempt || retired) return;
+  async function retryOriginal(attempt: PullSubmission): Promise<void> {
     const epoch = viewEpoch;
-    const ok = await confirm({ title: "Allow another PR creation?", message: `Check the pull requests in ${scope.owner}/${scope.repo} for “${attempt.input.title}” first. The earlier request may still complete. Another creation can produce a duplicate; there is no automatic retry. Your form edits remain here.`, confirmText: "Allow another creation" });
-    if (ok && !retired && props.open && epoch === viewEpoch && submission.resolve(attempt)) setError(null);
+    const ok = await confirm({ title: "Retry original PR creation?", message: `Recover the result for “${attempt.input.title}” in ${scope.owner}/${scope.repo} using its original submission key. Your newer edits remain here.`, confirmText: "Retry original" });
+    if (ok && !retired && props.open && epoch === viewEpoch && !busy() && submission.retry(attempt)) await send(attempt);
   }
 
   return (
@@ -201,11 +197,11 @@ function NewPullDialog(props: {
     >
       <div class="space-y-3">
         <Show when={submission.unknown()}>
-          <Banner tone="warning" title="Creation result unknown">
-            <p>{error()} Check the original repository before creating another PR; the earlier request may have succeeded.</p>
+          {(attempt) => <Banner tone="warning" title="Creation result unknown">
+            <p>{error()} Retry the original submission for “{attempt().input.title}” to recover its result. Your newer edits remain here.</p>
             <A class="text-accent hover:underline" href={pullsHref} target="_blank" rel="noopener noreferrer">Check original pull requests</A>
-            <Button size="sm" class="ml-2" onClick={() => void allowAnotherCreation()}>Allow another creation</Button>
-          </Banner>
+            <Button size="sm" class="ml-2" onClick={() => void retryOriginal(attempt())}>Retry original creation</Button>
+          </Banner>}
         </Show>
         <Show when={!submission.unknown() && error()}>
           {(message) => <Banner tone="danger">{message()}</Banner>}

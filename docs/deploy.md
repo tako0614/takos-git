@@ -159,6 +159,18 @@ Repair forward to receipt-aware code without deleting receipts or ledger rows.
 New Issue keys are retained only in the current form, including an explicit
 retry of its captured input after a lost reply; reload does not restore them.
 
+Migration `0007` additively introduces `pull_request_submissions`; applied
+`0001`–`0006` are immutable. Shared allocation, Issue, PR and receipt use one
+transaction. No table rebuild, data wipe or foreign-key disablement is needed.
+Retain receipts after individual PR deletion; parent Repo/principal deletion
+retires their scope. The retained projection contains initial principal/Git-tip
+metadata but no raw request key or title/body. It is not current Git authority.
+Older writers can read and perform unkeyed writes against the additive schema,
+but cannot honor PR creation keys. Use receipt-aware code on all writers before
+depending on replay safety; repair forward rather than deleting receipts or
+ledger rows. The client retains keys only in its current form, not across
+reload. Source/local migration tests do not qualify a live database or rollout.
+
 ## 3. Attach the Actions runner container (Actions only)
 
 The provider can't bind a container image, so finish it with wrangler, reading the

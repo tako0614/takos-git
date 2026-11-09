@@ -1181,10 +1181,26 @@ the dialog was closed/reopened or edited while saving, a confirmed creation is
 linked without discarding the current draft. Rejected input stays editable.
 Only a confirmed creation refreshes the list; closing the dialog neither
 substitutes for that confirmation nor starts a redundant list request.
-An ambiguous response blocks fresh submissions until the user checks the
-original PR list and explicitly allows another creation. This API has no
-creation receipt: a list match does not prove which request created a PR, and
-another creation can produce a duplicate. There is no automatic retry.
+An ambiguous response blocks fresh submissions. An explicit retry keeps the
+original payload and Idempotency-Key, recovering its retained creation result
+without another PR. Newer form edits remain separate. There is no automatic
+retry; reloading does not restore a lost key. Only the authorized receipt
+handler's explicit `410 submission_deleted` releases a removed original for
+a fresh intent. A list match alone is not a creation receipt.
+
+`POST …/pulls` accepts an optional visible-ASCII Idempotency-Key (1–255 bytes).
+The key is scoped to the resolved Repo and current principal record. Normalized
+title/body/head/base/draft intent must match: changed intent is409, a deleted
+original is410. Omitted base remains an omission in intent, so a later default
+change cannot retarget a retry. Existing branch prefixes normalize as usual.
+Allocation, Issue, PR and receipt commit in one D1 batch. Individual deletion
+keeps the receipt; Repo/principal deletion cascades its scope. Raw keys and
+title/body are not duplicated in it. A write-only replay returns the initial
+creation projection, including original Git-tip/profile metadata, rather than
+later edits; read-capable callers receive current state. Authorization/CSRF
+still run before receipt lookup. Unkeyed requests remain independent creates.
+Opened events are emitted only for an acknowledged new creation; delivery is
+advisory and a process lost after commit may omit it, not replay it as a new PR.
 
 | Method | Path | Auth | Purpose | Prov. |
 | --- | --- | --- | --- | --- |

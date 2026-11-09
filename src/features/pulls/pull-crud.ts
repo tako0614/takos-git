@@ -9,7 +9,7 @@
  */
 
 import { pendingMerge } from "./merge-projection.ts";
-import { parsePagination } from "../../contract/v1.ts";
+import { parsePagination, SCOPES } from "../../contract/v1.ts";
 import type { RouteContext } from "../../router.ts";
 import { readRepoRefs } from "../../git/refs-store.ts";
 import { repositoryObjectStore } from "../../git/repo-object-store.ts";
@@ -20,13 +20,12 @@ import { isValidRefName } from "../../git/refs-store.ts";
 import { json, errorResponse } from "../repos/http.ts";
 import type { RepoAccess } from "../repos/identity.ts";
 import {
-  allocateSharedNumber,
   findPullRequest,
-  findPullRequestById,
   listPullRequests,
   shapePullRequest,
 } from "./read-model.ts";
 import { emitRepoEvent } from "./events.ts";
+import { createPullRequestSubmission, getPullRequestSubmission, type PullSubmissionInput, type PullSubmissionResult } from "./submissions.ts";
 import {
   isAuthorOrMaintainer,
   prReadHandler,
@@ -72,66 +71,41 @@ async function handleOpen(ctx: RouteContext, access: RepoAccess): Promise<Respon
 
   const headRef = shortBranch(body.head ?? body.head_branch);
   if (!headRef) return errorResponse(422, "invalid_head", "A valid head branch is required.");
-  const baseRef = shortBranch(body.base ?? body.base_branch) ?? access.repo.defaultBranch;
+  const requestedBase = shortBranch(body.base ?? body.base_branch);
+  const input: PullSubmissionInput = { title, body: typeof body.body === "string" ? body.body : null, head: headRef, base: requestedBase, draft: body.draft === true };
+  const key = ctx.request.headers.get("Idempotency-Key");
+  if (key !== null && !/^[\x21-\x7e]{1,255}$/u.test(key)) return errorResponse(400, "invalid_idempotency_key", "Idempotency-Key must contain 1–255 visible ASCII characters.");
+  const repo = repoKey(access);
+  const baseRef = requestedBase ?? access.repo.defaultBranch;
+  const respond = async (result: PullSubmissionResult): Promise<Response> => {
+    if (result.outcome === "conflict") return errorResponse(409, "idempotency_conflict", "This submission key was already used for a different PR.");
+    if (result.outcome === "deleted") return errorResponse(410, "submission_deleted", "The original PR was removed. Retrying cannot recreate it.");
+    // A write-only retry may recover its own initial ACK, never later edits.
+    let dto = result.pull;
+    if (key !== null && access.auth.scopes.has(SCOPES.hostingRead)) {
+      const current = await findPullRequest(db, access.repo.id, dto.number);
+      if (!current) return errorResponse(410, "submission_deleted", "The original PR was removed.");
+      dto = await shapePullRequest(db, ctx.env.BUCKET, repo, current, false);
+    }
+    if (result.outcome === "created") await emitRepoEvent({ type: "pull_request.opened", repo, actorId: access.auth.principal.id, payload: { number: result.pull.number, title, headRef, baseRef, draft: input.draft } });
+    return json({ pull_request: dto }, 201, result.outcome === "replayed" ? { "Idempotency-Replayed": "true" } : undefined);
+  };
+  if (key !== null) {
+    const previous = await getPullRequestSubmission(db, access.repo.id, access.auth.principal.id, key, input);
+    if (previous) return respond(previous);
+  }
   if (!baseRef) return errorResponse(422, "invalid_base", "A valid base branch is required.");
   if (headRef === baseRef) {
     return errorResponse(422, "identical_branches", "Head and base branches must differ.");
   }
 
-  const repo = repoKey(access);
   const refs = await readRepoRefs(ctx.env.BUCKET, repo);
   const head = refs.refs.find((r) => r.name === `refs/heads/${headRef}`);
   const base = refs.refs.find((r) => r.name === `refs/heads/${baseRef}`);
   if (!head) return errorResponse(422, "head_not_found", `Head branch '${headRef}' does not exist.`);
   if (!base) return errorResponse(422, "base_not_found", `Base branch '${baseRef}' does not exist.`);
 
-  const bodyText = typeof body.body === "string" ? body.body : null;
-  const draft = body.draft === true ? 1 : 0;
-  const now = db.now();
-  const number = await allocateSharedNumber(db, access.repo.id);
-  const authorId = access.auth.principal.id === "anon" ? null : access.auth.principal.id;
-
-  const issueId = db.id();
-  await db.run(
-    `INSERT INTO issues (id, repo_id, number, title, body, state, author_id, is_pull_request, comment_count, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, 'open', ?, 1, 0, ?, ?)`,
-    [issueId, access.repo.id, number, title, bodyText, authorId, now, now],
-  );
-  const prId = db.id();
-  await db.run(
-    `INSERT INTO pull_requests
-       (id, issue_id, repo_id, head_repo_id, head_ref, head_sha, base_repo_id, base_ref, base_sha,
-        merge_base_sha, mergeable, draft, merged, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unknown', ?, 0, ?, ?)`,
-    [
-      prId,
-      issueId,
-      access.repo.id,
-      access.repo.id, // head lives in this repo (same-repo PRs in this MVP)
-      headRef,
-      head.sha,
-      access.repo.id,
-      baseRef,
-      base.sha,
-      null,
-      draft,
-      now,
-      now,
-    ],
-  );
-
-  const resolved = await findPullRequestById(db, prId);
-  if (!resolved) return errorResponse(500, "create_failed", "Failed to load created pull request.");
-
-  await emitRepoEvent({
-    type: "pull_request.opened",
-    repo,
-    actorId: authorId ?? "anon",
-    payload: { number, title, headRef, baseRef, draft: draft === 1 },
-  });
-
-  const dto = await shapePullRequest(db, ctx.env.BUCKET, repo, resolved, false);
-  return json({ pull_request: dto }, 201);
+  return respond(await createPullRequestSubmission(db, ctx.env.BUCKET, repo, access.repo.id, access.auth.principal.id, key, input, { headRef, headSha: head.sha, baseRef, baseSha: base.sha }));
 }
 
 // --- list ------------------------------------------------------------------

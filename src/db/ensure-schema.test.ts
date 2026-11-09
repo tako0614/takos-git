@@ -50,6 +50,8 @@ describe("ensureSchema", () => {
       .toEqual({ version: "0005" });
     expect(await db.queryOne("SELECT version FROM schema_migrations WHERE version = '0006'"))
       .toEqual({ version: "0006" });
+    expect(await db.queryOne("SELECT version FROM schema_migrations WHERE version = '0007'"))
+      .toEqual({ version: "0007" });
   });
 
   test("is idempotent — re-applying does not throw or duplicate", async () => {
@@ -71,6 +73,7 @@ describe("ensureSchema", () => {
       "0004",
       "0005",
       "0006",
+      "0007",
     ]);
   });
 
@@ -136,6 +139,7 @@ describe("ensureSchema", () => {
       "0004",
       "0005",
       "0006",
+      "0007",
     ]);
   });
 
@@ -157,7 +161,7 @@ describe("ensureSchema", () => {
     await ensureSchema(fake);
     for (let n = 0; n < tables.length - 1; n++) expect(await db.query(`SELECT * FROM ${tables[n]}`)).toEqual(before[n]);
     expect((await db.query<{ version: string }>("SELECT version FROM schema_migrations ORDER BY version")).map(r => r.version))
-      .toEqual(["0001", "0002", "0003", "0004", "0005", "0006"]);
+      .toEqual(["0001", "0002", "0003", "0004", "0005", "0006", "0007"]);
     expect(await db.query("SELECT * FROM issue_comment_submissions")).toEqual([]);
     expect(await db.query("PRAGMA foreign_key_check")).toEqual([]);
     // The old unkeyed writer's SQL continues to work after the additive change.
@@ -187,6 +191,34 @@ describe("ensureSchema", () => {
     for (let n = 0; n < tables.length; n++) expect(await db.query(`SELECT * FROM ${tables[n]}`)).toEqual(before[n]);
     expect(await db.query("SELECT * FROM issue_submissions")).toEqual([]);
     expect(await db.query("PRAGMA foreign_key_check")).toEqual([]);
+  });
+
+  test("0007 preserves populated0006 and both older submission receipts", async () => {
+    resetSchemaCacheForTests();
+    const { migrations } = await import("./migration-sql.ts");
+    const previous = migrations.filter(m => m.version <= "0006").map(m => `${m.sql}\nINSERT INTO schema_migrations (version,applied_at) VALUES ('${m.version}',1);`).join("\n");
+    const fake = createFakeD1(previous), db = createDbClient(fake);
+    try {
+      await db.batch([
+        { sql: "INSERT INTO principals (id,subject,kind,created_at,updated_at) VALUES ('p','legacy','user',1,1)" },
+        { sql: "INSERT INTO owners (id,login,type,principal_id,created_at,updated_at) VALUES ('o','legacy','user','p',1,1)" },
+        { sql: "INSERT INTO repositories (id,owner_id,name,storage_key,created_at,updated_at) VALUES ('r','o','repo','legacy/repo',1,1)" },
+        { sql: "INSERT INTO issues (id,repo_id,number,title,is_pull_request,created_at,updated_at) VALUES ('i','r',1,'legacy PR',1,1,1)" },
+        { sql: "INSERT INTO pull_requests (id,issue_id,repo_id,head_repo_id,head_ref,head_sha,base_repo_id,base_ref,base_sha,created_at,updated_at) VALUES ('pr','i','r','r','feature','old-head','r','main','old-base',1,1)" },
+        { sql: "INSERT INTO repo_counters (repo_id,scope,next_value) VALUES ('r','issue',2)" },
+      ]);
+      const { createCommentSubmission, createIssueSubmission } = await import("../features/issues/store.ts");
+      await createCommentSubmission(db, "i", "p", "old comment", "old-comment-key");
+      await createIssueSubmission(db, "r", { title: "old Issue", body: "keep", authorId: "p", milestoneId: null, labelIds: [], assigneeIds: [] }, "old-issue-key", { title: "old Issue", body: "keep", labels: [], assignees: [], milestone: null });
+      const tables = ["principals", "owners", "repositories", "issues", "pull_requests", "repo_counters", "issue_comments", "issue_comment_submissions", "issue_submissions"];
+      const before = await Promise.all(tables.map(t => db.query(`SELECT * FROM ${t}`)));
+      const schema = await db.query("SELECT name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY name");
+      await ensureSchema(fake);
+      for (let n = 0; n < tables.length; n++) expect(await db.query(`SELECT * FROM ${tables[n]}`)).toEqual(before[n]);
+      expect(await db.query("SELECT name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' AND name!='pull_request_submissions' ORDER BY name")).toEqual(schema);
+      expect(await db.query("SELECT * FROM pull_request_submissions")).toEqual([]);
+      expect(await db.query("PRAGMA foreign_key_check")).toEqual([]);
+    } finally { fake.db.close(); }
   });
 
   test("caches per isolate — second call does not re-apply", async () => {
