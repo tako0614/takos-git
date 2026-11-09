@@ -46,6 +46,8 @@ describe("ensureSchema", () => {
       `SELECT version FROM schema_migrations WHERE version = '0004'`,
     );
     expect(deletionLedger?.version).toBe("0004");
+    expect(await db.queryOne("SELECT version FROM schema_migrations WHERE version = '0005'"))
+      .toEqual({ version: "0005" });
   });
 
   test("is idempotent — re-applying does not throw or duplicate", async () => {
@@ -65,6 +67,7 @@ describe("ensureSchema", () => {
       "0002",
       "0003",
       "0004",
+      "0005",
     ]);
   });
 
@@ -128,7 +131,36 @@ describe("ensureSchema", () => {
       "0002",
       "0003",
       "0004",
+      "0005",
     ]);
+  });
+
+  test("additively upgrades populated0004 without changing legacy rows or FK behavior", async () => {
+    resetSchemaCacheForTests();
+    const { migrations } = await import("./migration-sql.ts");
+    const previous = migrations.filter(m => m.version <= "0004").map(m =>
+      `${m.sql}\nINSERT INTO schema_migrations (version, applied_at) VALUES ('${m.version}', 1);`).join("\n");
+    const fake = createFakeD1(previous), db = createDbClient(fake);
+    await db.batch([
+      { sql: "INSERT INTO principals (id, subject, kind, created_at, updated_at) VALUES ('p','legacy','user',1,1)" },
+      { sql: "INSERT INTO owners (id, login, type, principal_id, created_at, updated_at) VALUES ('o','legacy','user','p',1,1)" },
+      { sql: "INSERT INTO repositories (id, owner_id, name, storage_key, created_at, updated_at) VALUES ('r','o','repo','legacy/repo',1,1)" },
+      { sql: "INSERT INTO issues (id, repo_id, number, title, comment_count, created_at, updated_at) VALUES ('i','r',1,'existing',1,1,1)" },
+      { sql: "INSERT INTO issue_comments (id, issue_id, author_id, body, created_at, updated_at) VALUES ('c','i','p','keep this',1,1)" },
+    ]);
+    const tables = ["principals", "owners", "repositories", "issues", "issue_comments", "schema_migrations"];
+    const before = await Promise.all(tables.map(t => db.query(`SELECT * FROM ${t}`)));
+    await ensureSchema(fake);
+    for (let n = 0; n < tables.length - 1; n++) expect(await db.query(`SELECT * FROM ${tables[n]}`)).toEqual(before[n]);
+    expect((await db.query<{ version: string }>("SELECT version FROM schema_migrations ORDER BY version")).map(r => r.version))
+      .toEqual(["0001", "0002", "0003", "0004", "0005"]);
+    expect(await db.query("SELECT * FROM issue_comment_submissions")).toEqual([]);
+    expect(await db.query("PRAGMA foreign_key_check")).toEqual([]);
+    // The old unkeyed writer's SQL continues to work after the additive change.
+    await db.run("INSERT INTO issue_comments (id, issue_id, author_id, body, created_at, updated_at) VALUES ('new','i','p','legacy write',2,2)");
+    expect((await db.query("SELECT id FROM issue_comments"))).toHaveLength(2);
+    await db.run("DELETE FROM issues WHERE id = 'i'");
+    expect(await db.query("SELECT id FROM issue_comments")).toEqual([]);
   });
 
   test("caches per isolate — second call does not re-apply", async () => {

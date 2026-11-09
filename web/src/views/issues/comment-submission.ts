@@ -2,6 +2,7 @@ import { createSignal } from "solid-js";
 import { ApiError } from "../../api/client.ts";
 
 export interface CommentSubmission {
+  readonly idempotencyKey: string;
   readonly body: string;
   readonly revision: number;
   readonly closeAfter?: "open" | "closed";

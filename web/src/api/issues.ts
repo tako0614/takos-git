@@ -53,8 +53,8 @@ export const issuesApi = {
     return api.patch(`${repoPath(owner, repo)}/issues/${number}`, patch);
   },
 
-  comment(owner: string, repo: string, number: number, body: string): Promise<{ comment: IssueCommentDto }> {
-    return api.post(`${repoPath(owner, repo)}/issues/${number}/comments`, { body });
+  comment(owner: string, repo: string, number: number, body: string, idempotencyKey?: string): Promise<{ comment: IssueCommentDto }> {
+    return api.post(`${repoPath(owner, repo)}/issues/${number}/comments`, { body }, undefined, { idempotencyKey });
   },
 };
 

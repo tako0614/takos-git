@@ -186,14 +186,14 @@ export function IssueDetail(props: {
       if (closeAfter) await patchIssue({ state: closeAfter });
       return;
     }
-    const attempt = { body: bodyText, revision: commentDraftRevision, closeAfter };
+    const attempt = { body: bodyText, revision: commentDraftRevision, closeAfter, idempotencyKey: crypto.randomUUID() };
     if (submission.begin(attempt)) await sendComment(attempt);
   }
 
   async function sendComment(attempt: CommentSubmission): Promise<void> {
     setBusy(true);
     try {
-      const { comment } = await issuesApi.comment(props.owner, props.repo, props.number, attempt.body);
+      const { comment } = await issuesApi.comment(props.owner, props.repo, props.number, attempt.body, attempt.idempotencyKey);
       if (!submission.acknowledge(attempt)) return;
       timeline.acknowledge(comment);
       // An ACK owns the submitted draft, not edits made while it was pending.
@@ -224,10 +224,10 @@ export function IssueDetail(props: {
 
   async function retryComment(attempt: CommentSubmission): Promise<void> {
     const ok = await confirm({
-      title: "Post this comment again?",
-      message: "The original comment may already be posted. Sending it again can create a duplicate. Check the conversation before posting the original comment again." +
+      title: "Retry this comment?",
+      message: "The original comment may already be posted. Check the conversation before retrying the original comment." +
         (attempt.closeAfter ? ` This will also ${attempt.closeAfter === "closed" ? "close" : "reopen"} the issue after the comment is posted.` : ""),
-      confirmText: "Post again",
+      confirmText: "Retry comment",
       danger: true,
     });
     if (ok && !busy() && submission.retry(attempt)) await sendComment(attempt);
@@ -418,7 +418,7 @@ export function IssueDetail(props: {
                         <Show when={submission.unknown()}>
                           {(attempt) => (
                             <Banner tone="warning" title="Comment result unknown" class="mb-3">
-                              <p>Your comment may have been posted. Check the conversation before sending it again.</p>
+                              <p>Your comment may have been posted. Refresh the conversation or retry this submission.</p>
                               <Show when={attempt().closeAfter}>
                                 <p>Also check whether the issue still needs to be closed or reopened.</p>
                               </Show>
@@ -431,7 +431,7 @@ export function IssueDetail(props: {
                                   Refresh comments
                                 </Button>
                                 <Button size="sm" onClick={() => resolveComment(attempt())}>Comment is already posted</Button>
-                                <Button size="sm" onClick={() => void retryComment(attempt())}>Post original again…</Button>
+                                <Button size="sm" onClick={() => void retryComment(attempt())}>Retry original comment…</Button>
                               </div>
                             </Banner>
                           )}

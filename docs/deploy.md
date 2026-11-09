@@ -133,6 +133,17 @@ idempotently on its first D1-backed request. Call `GET /api/v1/ping` and verify 
 non-500 response; no separate `wrangler d1 migrations apply` step is part of the
 Capsule install.
 
+Migration `0005` additively introduces `issue_comment_submissions`; applied
+`0001`–`0004` remain immutable. Its receipt and comment/count mutation commit in
+one D1 batch. Keep receipts when deleting individual comments so a delayed retry
+cannot resurrect deleted content. Parent Issue/principal removal cascades the
+corresponding receipts. No table rebuild, data wipe, or foreign-key disablement
+is required. Older runtime code can still read and perform unkeyed writes after
+this additive migration, but cannot provide keyed replay safety: repair forward
+to receipt-aware code rather than deleting the table or migration ledger. The
+browser retains its submission key only in the current Issue component; this
+does not add persistent drafts or recovery of keys lost on reload.
+
 ## 3. Attach the Actions runner container (Actions only)
 
 The provider can't bind a container image, so finish it with wrangler, reading the

@@ -19,6 +19,7 @@ import { csrfGuard, requireRepoAccess, type RepoAccess } from "../repos/identity
 import { buildEvent, emitDomainEvent } from "./events.ts";
 import {
   createComment,
+  createCommentSubmission,
   deleteComment,
   getCommentInRepo,
   getIssueRowByNumber,
@@ -75,8 +76,22 @@ const createCommentHandler: Route["handler"] = async (ctx) => {
   if (!text || !isValidCommentBody(text)) {
     return errorResponse(400, "invalid_body", "A non-empty comment body is required.");
   }
-  const comment = await createComment(access.db, issue.id, access.auth.principal.id, text);
-  emitDomainEvent(
+  const key = ctx.request.headers.get("Idempotency-Key");
+  if (key !== null && !/^[\x21-\x7e]{1,255}$/u.test(key)) {
+    return errorResponse(400, "invalid_idempotency_key", "Idempotency-Key must contain 1–255 visible ASCII characters.");
+  }
+  const result = key === null
+    ? { outcome: "created" as const, comment: await createComment(access.db, issue.id, access.auth.principal.id, text) }
+    : await createCommentSubmission(access.db, issue.id, access.auth.principal.id, text, key);
+  if (result.outcome === "conflict") return errorResponse(409, "idempotency_conflict", "This submission key was already used for different comment content.");
+  if (result.outcome === "deleted") return errorResponse(410, "submission_deleted", "The original comment was deleted. Retrying cannot recreate it.");
+  const { comment } = result;
+  // Write-only automation may recover its own submitted data, but replay must
+  // not become a contents.read channel for a later edit by another writer.
+  const responseComment = result.outcome === "replayed" && !access.auth.scopes.has(SCOPES.hostingRead)
+    ? { ...comment, body: text, updatedAt: comment.createdAt }
+    : comment;
+  if (result.outcome === "created") emitDomainEvent(
     ctx.scope,
     buildEvent({
       type: "issue.commented",
@@ -90,7 +105,7 @@ const createCommentHandler: Route["handler"] = async (ctx) => {
       payload: { commentId: comment.id },
     }),
   );
-  return json({ comment }, 201);
+  return json({ comment: responseComment }, 201, result.outcome === "replayed" ? { "Idempotency-Replayed": "true" } : undefined);
 };
 
 /** `PATCH …/issues/comments/:id` — edit (author or maintainer). */
