@@ -18,6 +18,14 @@ import type {
   TreeResponse,
 } from "./types.ts";
 
+export interface RepositoryCreateInput {
+  readonly owner: string;
+  readonly name: string;
+  readonly description?: string;
+  readonly visibility?: Visibility;
+  readonly defaultBranch?: string;
+}
+
 export const reposApi = {
   /** `GET /api/v1/repos` — repos visible to the session (cursor). */
   list(params: { limit?: number; cursor?: string | null } = {}, signal?: AbortSignal): Promise<Page<RepositoryDto>> {
@@ -73,7 +81,7 @@ export const reposApi = {
   // --- writes (M2 seam) -----------------------------------------------------
 
   /** `POST /api/v1/repos` — create a repo. */
-  create(input: { owner: string; name: string; description?: string; visibility?: Visibility; defaultBranch?: string }): Promise<{ repository: RepoDetail }> {
+  create(input: RepositoryCreateInput): Promise<{ repository: RepoDetail }> {
     return api.post("/api/v1/repos", input);
   },
 

@@ -4,6 +4,7 @@ import { actionsApi } from "./actions.ts";
 import { webhooksApi } from "./admin.ts";
 import { issuesApi } from "./issues.ts";
 import { pullsApi } from "./pulls.ts";
+import { reposApi } from "./repos.ts";
 
 const realFetch = globalThis.fetch;
 
@@ -39,6 +40,15 @@ afterEach(() => {
 });
 
 describe("SPA route contract", () => {
+  test("repository creation and explicit readback use the captured namespace/configuration", async () => {
+    const requests = captureFetch([{ repository: { owner: "alice", name: "one" } }, { repository: { owner: "alice", name: "one" } }]);
+    const input = { owner: "alice", name: "one", description: "work", visibility: "private" as const, defaultBranch: "trunk" };
+    await reposApi.create(input); await reposApi.get(input.owner, input.name);
+    expect(requests).toEqual([
+      { method: "POST", path: "/api/v1/repos", body: input },
+      { method: "GET", path: "/api/v1/repos/alice/one", body: null },
+    ]);
+  });
   test("Issue creation retries keep their key and all original triage input", async () => {
     const requests = captureFetch([{ issue: { number: 1 } }, { issue: { number: 1 } }]);
     const input = { title: "original", body: "body", labels: ["bug"], assignees: ["bob"], milestone: 1 };
