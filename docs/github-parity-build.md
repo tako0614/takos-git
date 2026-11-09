@@ -1011,7 +1011,7 @@ The implemented Issue-comment create route (`POST …/issues/:number/comments`)
 accepts an optional key of 1–255 visible ASCII characters. Keep the same key and
 normalized body when retrying an uncertain submission. Its durable D1 receipt is
 scoped to the current principal record and Issue: the same key/body returns the
-same comment identity in its current edited state, with `201` and
+same comment identity, with `201` and
 `Idempotency-Replayed: true`, without incrementing the count or emitting another
 comment-created event. Different content under that key returns `409
 idempotency_conflict`; replay after deletion returns `410 submission_deleted`
@@ -1019,7 +1019,10 @@ and cannot recreate the comment. Comment deletion retains the receipt; removal
 of its parent Issue or principal retires that scope. Receipts store key/body
 hashes and the comment ID, not their raw content. Unkeyed legacy calls remain
 distinct intentional creates. This is not a durable event-delivery guarantee or
-a receipt implementation for every other POST endpoint.
+a receipt implementation for every other POST endpoint. Read-capable browser
+callers receive the comment's current edited state. A write-only automation
+credential receives its own original submitted body and creation timestamp,
+not later edits it lacks `contents.read` authority to fetch.
 
 ### 4. Route table
 

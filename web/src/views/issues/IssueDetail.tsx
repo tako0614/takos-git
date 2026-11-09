@@ -225,7 +225,7 @@ export function IssueDetail(props: {
   async function retryComment(attempt: CommentSubmission): Promise<void> {
     const ok = await confirm({
       title: "Retry this comment?",
-      message: "Retry the original comment. If it was already posted, the existing comment will be returned." +
+      message: "The original comment may already be posted. Check the conversation before retrying the original comment." +
         (attempt.closeAfter ? ` This will also ${attempt.closeAfter === "closed" ? "close" : "reopen"} the issue after the comment is posted.` : ""),
       confirmText: "Retry comment",
       danger: true,

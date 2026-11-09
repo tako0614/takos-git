@@ -86,6 +86,11 @@ const createCommentHandler: Route["handler"] = async (ctx) => {
   if (result.outcome === "conflict") return errorResponse(409, "idempotency_conflict", "This submission key was already used for different comment content.");
   if (result.outcome === "deleted") return errorResponse(410, "submission_deleted", "The original comment was deleted. Retrying cannot recreate it.");
   const { comment } = result;
+  // Write-only automation may recover its own submitted data, but replay must
+  // not become a contents.read channel for a later edit by another writer.
+  const responseComment = result.outcome === "replayed" && !access.auth.scopes.has(SCOPES.hostingRead)
+    ? { ...comment, body: text, updatedAt: comment.createdAt }
+    : comment;
   if (result.outcome === "created") emitDomainEvent(
     ctx.scope,
     buildEvent({
@@ -100,7 +105,7 @@ const createCommentHandler: Route["handler"] = async (ctx) => {
       payload: { commentId: comment.id },
     }),
   );
-  return json({ comment }, 201, result.outcome === "replayed" ? { "Idempotency-Replayed": "true" } : undefined);
+  return json({ comment: responseComment }, 201, result.outcome === "replayed" ? { "Idempotency-Replayed": "true" } : undefined);
 };
 
 /** `PATCH …/issues/comments/:id` — edit (author or maintainer). */

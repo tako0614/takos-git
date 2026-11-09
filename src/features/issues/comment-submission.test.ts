@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createDbClient, type D1Database } from "../../db/client.ts";
-import { makeEnv, jsonRequest } from "../repos/testkit.ts";
+import { makeEnv, jsonRequest, get } from "../repos/testkit.ts";
 import { dispatch, router, setupRepo } from "./harness.ts";
 import { setDomainEventSink } from "./events.ts";
 
@@ -50,14 +50,20 @@ describe("durable comment submissions through the real router", () => {
     } finally { f.fake.db.close(); }
   });
 
-  test("replay returns the current edited comment without replacing it", async () => {
+  test("write-only replay cannot read a later edit; an authorized read still sees it", async () => {
     const f = await fixture();
     try {
       const id = (await (await f.send()).json()).comment.id;
       const edit = await dispatch(f.reg, jsonRequest("PATCH", `${root}/comments/${id}`, { body: "edited" }, "taksrv_bob_w"), f.env);
       expect(edit.status).toBe(200);
       const replay = await f.send(); expect(replay.status).toBe(201);
-      expect((await replay.json()).comment).toMatchObject({ id, body: "edited" });
+      const returned = (await replay.json()).comment;
+      expect(returned).toMatchObject({ id, body: "original" });
+      expect(returned.updatedAt).toBe(returned.createdAt);
+      expect((await dispatch(f.reg, get(`${root}/1/comments`, "taksrv_bob_w"), f.env)).status).toBe(401);
+      const read = await dispatch(f.reg, get(`${root}/1/comments`, "taksrv_bob_r"), f.env);
+      expect(read.status).toBe(200);
+      expect((await read.json()).comments[0]).toMatchObject({ id, body: "edited" });
       expect((await f.state()).comments).toHaveLength(1);
     } finally { f.fake.db.close(); }
   });
