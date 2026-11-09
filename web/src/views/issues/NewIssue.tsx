@@ -7,6 +7,7 @@
 import {
   createResource,
   createSignal,
+  onCleanup,
   Index,
   Show,
   type JSX,
@@ -23,16 +24,22 @@ import {
   Field,
   Icons,
   TextInput,
+  useConfirmDialog,
   useToast,
 } from "../../ui/index.ts";
 import { LabelChip, MarkdownEditor } from "./parts.tsx";
 import { AssigneeEditor, LabelEditor, MilestoneEditor } from "./pickers.tsx";
+import { createIssueSubmission, type IssueSubmission } from "./issue-submission.ts";
 
 export function NewIssueForm(props: { owner: string; repo: string }): JSX.Element {
   const session = useSession();
   const toast = useToast();
   const navigate = useNavigate();
-  const base = () => `/${props.owner}/${props.repo}`;
+  const { confirm } = useConfirmDialog();
+  const scope = { owner: props.owner, repo: props.repo };
+  const base = () => `/${scope.owner}/${scope.repo}`;
+  let retired = false;
+  onCleanup(() => { retired = true; });
 
   const [title, setTitle] = createSignal("");
   const [body, setBody] = createSignal("");
@@ -41,8 +48,16 @@ export function NewIssueForm(props: { owner: string; repo: string }): JSX.Elemen
   const [milestone, setMilestone] = createSignal<number | null>(null);
   const [submitting, setSubmitting] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
+  const [created, setCreated] = createSignal<number | null>(null);
+  const submission = createIssueSubmission();
+  let revision = 0;
+  const changeTitle = (value: string) => { revision++; setTitle(value); };
+  const changeBody = (value: string) => { revision++; setBody(value); };
+  const changeLabels = (value: string[]) => { revision++; setLabelNames(value); };
+  const changeAssignees = (value: string[]) => { revision++; setAssigneeSubjects(value); };
+  const changeMilestone = (value: number | null) => { revision++; setMilestone(value); };
 
-  const repoKey = () => [props.owner, props.repo] as const;
+  const repoKey = () => [scope.owner, scope.repo] as const;
   const [labels] = createResource(repoKey, ([o, r]) => issuesApi.labels(o, r));
   const [milestones] = createResource(repoKey, ([o, r]) => issuesApi.milestones(o, r));
   const [collaborators] = createResource(repoKey, async ([o, r]) => {
@@ -60,28 +75,49 @@ export function NewIssueForm(props: { owner: string; repo: string }): JSX.Elemen
 
   async function submit(e: Event): Promise<void> {
     e.preventDefault();
+    if (retired || submitting() || submission.state()) return;
     const t = title().trim();
     if (!t) {
       setError("A title is required.");
       return;
     }
-    setSubmitting(true);
-    setError(null);
     try {
-      const { issue } = await issuesApi.create(props.owner, props.repo, {
+      const attempt = submission.begin({
         title: t,
         body: body().trim() ? body() : undefined,
         labels: labelNames().length ? labelNames() : undefined,
         assignees: assigneeSubjects().length ? assigneeSubjects() : undefined,
         milestone: milestone() ?? undefined,
-      });
-      toast.success(`Opened issue #${issue.number}`);
-      navigate(`${base()}/issues/${issue.number}`);
+      }, revision);
+      if (attempt) { setCreated(null); await send(attempt); }
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Could not create the issue.");
-    } finally {
-      setSubmitting(false);
+      setError(err instanceof Error ? err.message : "Could not prepare this submission.");
     }
+  }
+
+  async function send(attempt: IssueSubmission): Promise<void> {
+    setSubmitting(true); setError(null);
+    try {
+      const { issue } = await issuesApi.create(scope.owner, scope.repo, attempt.input, attempt.idempotencyKey);
+      if (retired || !submission.acknowledge(attempt)) return;
+      if (revision === attempt.revision) {
+        toast.success(`Created issue #${issue.number}`);
+        navigate(`${base()}/issues/${issue.number}`);
+      } else {
+        setCreated(issue.number);
+      }
+    } catch (err) {
+      if (retired) return;
+      submission.fail(attempt, err);
+      setError(err instanceof ApiError ? err.message : "We could not confirm the creation result.");
+    } finally {
+      if (!retired) setSubmitting(false);
+    }
+  }
+
+  async function retry(attempt: IssueSubmission): Promise<void> {
+    const ok = await confirm({ title: "Retry the original Issue?", message: `Recover the creation result for “${attempt.input.title}”. Your newer edits will stay in this form.`, confirmText: "Retry original" });
+    if (ok && !retired && !submitting() && submission.retry(attempt)) await send(attempt);
   }
 
   return (
@@ -118,7 +154,7 @@ export function NewIssueForm(props: { owner: string; repo: string }): JSX.Elemen
                 id="issue-title"
                 value={title()}
                 placeholder="Title"
-                onInput={(e) => setTitle(e.currentTarget.value)}
+                onInput={(e) => changeTitle(e.currentTarget.value)}
               />
             </Field>
 
@@ -126,13 +162,24 @@ export function NewIssueForm(props: { owner: string; repo: string }): JSX.Elemen
               <MarkdownEditor
                 id="issue-body"
                 value={body()}
-                onInput={setBody}
+                onInput={changeBody}
                 placeholder="Leave a comment"
                 rows={10}
               />
             </Field>
 
-            <Show when={error()}>
+            <Show when={submission.unknown()}>
+              {(attempt) => (
+                <Banner tone="warning" title="Creation result unknown">
+                  <p>{error()} Retry the original submission for “{attempt().input.title}” to recover its result.</p>
+                  <Button type="button" size="sm" class="mt-2" onClick={() => void retry(attempt())}>Retry original creation</Button>
+                </Banner>
+              )}
+            </Show>
+            <Show when={created()}>
+              {(number) => <Banner tone="success">Issue <A class="text-accent hover:underline" href={`${base()}/issues/${number()}`}>#{number()}</A> was created. Your newer edits remain in this draft.</Banner>}
+            </Show>
+            <Show when={error() && !submission.unknown()}>
               {(msg) => <Banner tone="danger">{msg()}</Banner>}
             </Show>
 
@@ -146,7 +193,7 @@ export function NewIssueForm(props: { owner: string; repo: string }): JSX.Elemen
               <Button
                 type="submit"
                 variant="primary"
-                disabled={submitting() || !title().trim()}
+                disabled={submitting() || !!submission.state() || !title().trim()}
               >
                 <Icons.Check class="h-4 w-4" /> Submit new issue
               </Button>
@@ -159,7 +206,7 @@ export function NewIssueForm(props: { owner: string; repo: string }): JSX.Elemen
                 all={labels()?.items ?? []}
                 loading={labels.loading}
                 selected={labelNames()}
-                onApply={setLabelNames}
+                onApply={changeLabels}
               />
               <Show
                 when={selectedLabels().length > 0}
@@ -177,7 +224,7 @@ export function NewIssueForm(props: { owner: string; repo: string }): JSX.Elemen
                 loading={collaborators.loading}
                 selected={assigneeSubjects()}
                 allowManual
-                onApply={setAssigneeSubjects}
+                onApply={changeAssignees}
               />
               <Show
                 when={assigneeSubjects().length > 0}
@@ -201,7 +248,7 @@ export function NewIssueForm(props: { owner: string; repo: string }): JSX.Elemen
                 all={milestones()?.items ?? []}
                 loading={milestones.loading}
                 selected={milestone()}
-                onApply={setMilestone}
+                onApply={changeMilestone}
               />
               <Show
                 when={selectedMilestone()}

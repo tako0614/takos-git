@@ -19,6 +19,14 @@ export interface IssueListFilter {
   readonly cursor?: string | null;
 }
 
+export interface IssueCreateInput {
+  readonly title: string;
+  readonly body?: string;
+  readonly labels?: readonly string[];
+  readonly assignees?: readonly string[];
+  readonly milestone?: number;
+}
+
 export const issuesApi = {
   list(owner: string, repo: string, filter: IssueListFilter = {}, signal?: AbortSignal): Promise<Page<IssueDto>> {
     const { limit, cursor, ...rest } = filter;
@@ -45,8 +53,8 @@ export const issuesApi = {
 
   // --- writes ---------------------------------------------------------------
 
-  create(owner: string, repo: string, input: { title: string; body?: string; labels?: string[]; assignees?: string[]; milestone?: number }): Promise<{ issue: IssueDto }> {
-    return api.post(`${repoPath(owner, repo)}/issues`, input);
+  create(owner: string, repo: string, input: IssueCreateInput, idempotencyKey?: string): Promise<{ issue: IssueDto }> {
+    return api.post(`${repoPath(owner, repo)}/issues`, input, undefined, { idempotencyKey });
   },
 
   update(owner: string, repo: string, number: number, patch: Partial<{ title: string; body: string; state: "open" | "closed"; labels: string[]; assignees: string[]; milestone: number | null }>): Promise<{ issue: IssueDto }> {

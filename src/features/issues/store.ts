@@ -527,17 +527,19 @@ export async function listIssues(
 // Issues — write
 // ============================================================================
 
-export async function createIssue(
-  db: DbClient,
-  repoId: string,
-  input: {
+export interface IssueCreateInput {
     title: string;
     body: string | null;
     authorId: string;
     milestoneId: string | null;
     labelIds: readonly string[];
     assigneeIds: readonly string[];
-  },
+}
+
+export async function createIssue(
+  db: DbClient,
+  repoId: string,
+  input: IssueCreateInput,
 ): Promise<IssueDto> {
   const id = db.id();
   const now = db.now();
@@ -561,6 +563,101 @@ export async function createIssue(
   }
   const dto = await getIssueDto(db, repoId, number);
   return dto as IssueDto;
+}
+
+export interface IssueSubmissionInput {
+  readonly title: string;
+  readonly body: string | null;
+  readonly labels: readonly string[];
+  readonly assignees: readonly string[];
+  readonly milestone: number | null;
+}
+
+export type IssueSubmissionResult =
+  | { readonly outcome: "created" | "replayed"; readonly issue: IssueDto }
+  | { readonly outcome: "conflict" }
+  | { readonly outcome: "deleted" };
+
+function issueIntent(input: IssueSubmissionInput): string {
+  return JSON.stringify({ title: input.title, body: input.body,
+    labels: [...new Set(input.labels)].sort(), assignees: [...new Set(input.assignees)].sort(),
+    milestone: input.milestone });
+}
+
+/** Recover before revalidating references that can disappear after commit. */
+export async function getIssueSubmission(
+  db: DbClient, repoId: string, authorId: string, key: string, input: IssueSubmissionInput,
+): Promise<IssueSubmissionResult | null> {
+  const keyHash = await submissionHash(key), requestHash = await submissionHash(issueIntent(input));
+  const receipt = await db.queryOne<{ request_hash: string; issue_id: string; issue_number: number; created_at: number; creation_metadata: string }>(
+    `SELECT request_hash, issue_id, issue_number, created_at, creation_metadata FROM issue_submissions
+      WHERE repo_id = ? AND principal_id = ? AND key_hash = ?`, [repoId, authorId, keyHash],
+  );
+  if (!receipt) return null;
+  if (receipt.request_hash !== requestHash) return { outcome: "conflict" };
+  if (!await db.queryOne("SELECT id FROM issues WHERE id = ? AND repo_id = ?", [receipt.issue_id, repoId])) return { outcome: "deleted" };
+  const details: IssueDetails = JSON.parse(receipt.creation_metadata);
+  return { outcome: "replayed", issue: {
+    number: receipt.issue_number, title: input.title, body: input.body,
+    state: "open", stateReason: null, ...details, isPullRequest: false, commentCount: 0,
+    createdAt: receipt.created_at, updatedAt: receipt.created_at, closedAt: null,
+  } };
+}
+
+async function issueCreationDetails(db: DbClient, repoId: string, input: IssueCreateInput): Promise<IssueDetails> {
+  // JSON membership keeps each query below D1's bind ceiling even for a long
+  // valid triage list. These are actual referenced rows, never auth evidence.
+  const labels = await db.query<LabelRow>(
+    `SELECT ${LABEL_COLUMNS} FROM labels WHERE repo_id = ? AND id IN (SELECT value FROM json_each(?))
+      ORDER BY name COLLATE NOCASE ASC`, [repoId, JSON.stringify([...new Set(input.labelIds)])],
+  );
+  const people = await db.query<PrincipalRow>(
+    "SELECT id, subject, display_name FROM principals WHERE id IN (SELECT value FROM json_each(?)) ORDER BY subject ASC",
+    [JSON.stringify([...new Set([input.authorId, ...input.assigneeIds])])],
+  );
+  const assignees = new Set(input.assigneeIds), milestones = await milestoneRefs(db, [input.milestoneId]);
+  return {
+    author: toPrincipalRef(people.find(p => p.id === input.authorId) ?? null),
+    assignees: people.filter(p => assignees.has(p.id)).map(p => toPrincipalRef(p)!),
+    labels: labels.map(toLabelDto), milestone: input.milestoneId ? milestones.get(input.milestoneId) ?? null : null,
+  };
+}
+
+/** Allocation, Issue, associations and receipt commit or roll back together. */
+export async function createIssueSubmission(
+  db: DbClient, repoId: string, input: IssueCreateInput, key: string, intent: IssueSubmissionInput,
+): Promise<IssueSubmissionResult> {
+  const keyHash = await submissionHash(key), requestHash = await submissionHash(issueIntent(intent));
+  const scope = [repoId, input.authorId, keyHash], id = db.id(), now = db.now();
+  const metadata = JSON.stringify(await issueCreationDetails(db, repoId, input));
+  const absent = `NOT EXISTS (SELECT 1 FROM issue_submissions WHERE repo_id = ? AND principal_id = ? AND key_hash = ?)`;
+  const results = await db.batch([
+    {
+      sql: `INSERT INTO repo_counters (repo_id, scope, next_value) SELECT ?, 'issue', 2 WHERE ${absent}
+        ON CONFLICT (repo_id, scope) DO UPDATE SET next_value = next_value + 1`,
+      params: [repoId, ...scope],
+    },
+    {
+      sql: `INSERT INTO issues (id, repo_id, number, title, body, state, author_id, milestone_id, is_pull_request, comment_count, created_at, updated_at)
+        SELECT ?, ?, (SELECT next_value - 1 FROM repo_counters WHERE repo_id = ? AND scope = 'issue'), ?, ?, 'open', ?, ?, 0, 0, ?, ? WHERE ${absent}`,
+      params: [id, repoId, repoId, input.title, input.body, input.authorId, input.milestoneId, now, now, ...scope],
+    },
+    ...[...new Set(input.labelIds)].map(labelId => ({
+      sql: `INSERT INTO issue_labels (issue_id, label_id) SELECT ?, ? WHERE ${absent}`, params: [id, labelId, ...scope],
+    })),
+    ...[...new Set(input.assigneeIds)].map(principalId => ({
+      sql: `INSERT INTO issue_assignees (issue_id, principal_id) SELECT ?, ? WHERE ${absent}`, params: [id, principalId, ...scope],
+    })),
+    {
+      sql: `INSERT INTO issue_submissions (repo_id, principal_id, key_hash, request_hash, issue_id, issue_number, created_at, creation_metadata)
+        SELECT ?, ?, ?, ?, ?, number, ?, ? FROM issues WHERE id = ? AND repo_id = ?
+        ON CONFLICT (repo_id, principal_id, key_hash) DO NOTHING`,
+      params: [repoId, input.authorId, keyHash, requestHash, id, now, metadata, id, repoId],
+    },
+  ]);
+  const result = await getIssueSubmission(db, repoId, input.authorId, key, intent);
+  if (!result) throw new Error("Missing committed Issue submission receipt");
+  return result.outcome === "replayed" && results[1]?.meta.changes === 1 ? { ...result, outcome: "created" } : result;
 }
 
 async function touchIssue(db: DbClient, issueId: string, at: number): Promise<void> {

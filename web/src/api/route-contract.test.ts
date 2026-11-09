@@ -39,6 +39,16 @@ afterEach(() => {
 });
 
 describe("SPA route contract", () => {
+  test("Issue creation retries keep their key and all original triage input", async () => {
+    const requests = captureFetch([{ issue: { number: 1 } }, { issue: { number: 1 } }]);
+    const input = { title: "original", body: "body", labels: ["bug"], assignees: ["bob"], milestone: 1 };
+    await issuesApi.create("alice", "web", input, "issue-intent-key");
+    await issuesApi.create("alice", "web", input, "issue-intent-key");
+    expect(requests.map(r => r.idempotencyKey)).toEqual(["issue-intent-key", "issue-intent-key"]);
+    expect(requests.map(r => r.body)).toEqual([input, input]);
+    expect(requests.every(r => r.method === "POST" && r.path === "/api/v1/repos/alice/web/issues")).toBe(true);
+  });
+
   test("a comment retry preserves its captured key without leaking it into another write", async () => {
     const requests = captureFetch([{ comment: { id: "one" } }, { comment: { id: "one" } }, { issue: { number: 2 } }]);
     await issuesApi.comment("alice", "web", 1, "original", "captured-key");

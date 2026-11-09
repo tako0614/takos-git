@@ -1024,6 +1024,33 @@ callers receive the comment's current edited state. A write-only automation
 credential receives its own original submitted body and creation timestamp,
 not later edits it lacks `contents.read` authority to fetch.
 
+Issue creation (`POST …/issues`) also accepts the optional 1–255-character
+visible-ASCII key. Its receipt is scoped to Repo and current principal record.
+The normalized title/body, milestone number, and deduplicated/sorted label-name
+and assignee-subject sets identify the intent; set order and repetition do not
+change it. Keep their original values on retry. Allocation from the shared
+Issue/PR counter, the Issue, its label/assignee links, and the receipt commit in
+one D1 batch. A replay returns `201` with `Idempotency-Replayed: true`, without
+allocating another number or emitting another issue-opened event. Changed
+intent returns `409 idempotency_conflict`. Removing the Issue retains its
+receipt and makes replay return `410 submission_deleted`; removal of the Repo
+or principal retires that scope. Authorization and input syntax are checked
+before receipt lookup. A committed retry does not require deleted or renamed
+triage references to resolve again.
+
+The Issue receipt retains key/request digests, original Issue ID/number/time,
+and a creation snapshot of the actual author, labels (including descriptions),
+assignees, and milestone metadata until that scope is removed. It does not
+retain the raw key or title/body. A write-only caller receives the original
+creation projection, reconstructing title/body from its matching request;
+later Issue/profile/triage edits and activity are not disclosed through replay.
+Verified read-capable callers receive the Issue's current state. Unkeyed calls
+remain independent creates. Event delivery across process failure is not
+exactly-once. The New Issue form captures one key and input per submission,
+offers explicit same-key recovery after an uncertain reply, preserves newer
+edits, and retires late responses when leaving its Repo. Keys live only in that
+form instance; reload/route departure does not add durable draft or key recovery.
+
 ### 4. Route table
 
 Auth column = required Interface-OAuth scope ceiling **/** minimum repo role. "browser" reads carry full ceiling bounded by role. `PORT` = adapt existing Takos handler (rewrite `:repoId`→`:owner/:repo`, sever `accounts`/`Space` FK, drop Takos RPC types); `NEW` = build fresh.
