@@ -1184,7 +1184,12 @@ substitutes for that confirmation nor starts a redundant list request.
 An ambiguous response blocks fresh submissions. An explicit retry keeps the
 original payload and Idempotency-Key, recovering its retained creation result
 without another PR. Newer form edits remain separate. There is no automatic
-retry; reloading does not restore a lost key. Only the authorized receipt
+retry. The pending original and newer form are saved before dispatch in this
+tab's sessionStorage and restore as unknown across reload/navigation. A confirmed
+ACK clears only its saved key. Corrupt, unavailable or unretained storage fails
+closed before a fresh POST; the tab must retain that storage for recovery.
+Closing the tab/clearing storage and other forms' unsent drafts are outside this
+custody. Only the authorized receipt
 handler's explicit `410 submission_deleted` releases a removed original for
 a fresh intent. A list match alone is not a creation receipt.
 
@@ -1198,7 +1203,13 @@ keeps the receipt; Repo/principal deletion cascades its scope. Raw keys and
 title/body are not duplicated in it. A write-only replay returns the initial
 creation projection, including original Git-tip/profile metadata, rather than
 later edits; read-capable callers receive current state. Authorization/CSRF
-still run before receipt lookup. Unkeyed requests remain independent creates.
+still run before receipt lookup. The optional captured `repository_id` and
+browser `recovery_scope` must match the resolved metadata ID and current
+server-computed sign-in context; mismatches are409 `submission_context_changed`
+before replay/write. Repository DTOs expose stable `id`; session reads expose
+only the non-authorizing context digest, never an auth token. The Web journal
+uses both to separate callers and recreated repositories. Unkeyed/unbound API
+requests remain independent compatible creates.
 Opened events are emitted only for an acknowledged new creation; delivery is
 advisory and a process lost after commit may omit it, not replay it as a new PR.
 

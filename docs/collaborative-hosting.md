@@ -104,7 +104,26 @@ cannot use it to read later owner edits, profile changes or activity; current
 read authority still enables the ordinary R2-derived projection. Individual
 PR deletion retains this tombstone; Repo/principal retirement cascades its scope.
 The Web form keeps its original key/payload during explicit recovery and keeps
-newer edits intact. Reload-persistent custody is not implemented.
+newer edits intact. Before dispatch, it stores the pending original key/input
+and current form in this tab's `sessionStorage`. Reload or leaving and returning
+to the route restores an unknown result; it never automatically posts. A
+confirmed ACK or typed deletion clears only that attempt. Corrupt/unavailable
+storage refuses a fresh submission rather than overwriting an uncertain one.
+Closing the tab or clearing its storage loses this recovery; ordinary unsent
+forms and Issue/comment submissions do not gain persistent drafts here.
+
+`GET /api/auth/session` adds a non-authorizing `recoveryScope` digest of the
+configured issuer/client/Capsule/Workspace context and current subject. No
+cookie, bearer, client/session secret or profile is stored in the journal.
+Repository DTOs include their stable metadata `id`. Journals are separated by
+that ID and the caller context; a different caller or recreated path does not
+recover another form's input. The captured `repository_id` and `recovery_scope`
+are also sent with PR creation. After existing authentication/CSRF, the handler
+checks both before receipt lookup or writes and returns409
+`submission_context_changed` on mismatch. This also covers a cookie switch
+after the page loaded. These optional checks grant no authority and leave old
+unbound API callers compatible. Updated Web creation requires both server
+metadata fields, so partial old-server rollout is visibly unavailable.
 
 ## Authentication and authorization
 

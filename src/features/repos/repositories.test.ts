@@ -103,9 +103,12 @@ describe("repository CRUD via router + ACL", () => {
       tokens,
     );
     expect(res.status).toBe(201);
-    expect(await res.json()).toMatchObject({
+    const created = await res.json();
+    expect(created).toMatchObject({
       repository: { owner: "alice", name: "web", fullName: "alice/web", visibility: "private" },
     });
+    const metadata = await handle.db.queryOne<{ id: string }>("SELECT id FROM repositories WHERE name='web'");
+    expect(created.repository.id).toBe(metadata!.id);
     // R2 refs-doc exists, and the owner row is bound to the creating principal.
     expect(await repoExists(handle.bucket, "alice/web")).toBe(true);
     const owner = await handle.db.queryOne<{ type: string; principal_id: string | null }>(

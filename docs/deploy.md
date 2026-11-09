@@ -168,8 +168,17 @@ metadata but no raw request key or title/body. It is not current Git authority.
 Older writers can read and perform unkeyed writes against the additive schema,
 but cannot honor PR creation keys. Use receipt-aware code on all writers before
 depending on replay safety; repair forward rather than deleting receipts or
-ledger rows. The client retains keys only in its current form, not across
-reload. Source/local migration tests do not qualify a live database or rollout.
+ledger rows. PR recovery now retains the pending key, original input and newer
+form in the current tab's sessionStorage before dispatch. Reload/route return
+restores unknown, with explicit retry only; closing the tab or clearing storage
+loses custody. No auth token or secret is copied into it. Browser storage must
+be available; corruption or failed retention refuses a new submission.
+The updated Web also requires Repository DTO `id` and session `recoveryScope`;
+serve the updated API and Web together. Captured repository/caller contexts
+are checked server-side before receipt/write even if a path/cookie changed
+after the page loaded. They are custody constraints, not authorization grants.
+No additional migration is needed. Source/local tests do not qualify a live
+database or rollout.
 
 ## 3. Attach the Actions runner container (Actions only)
 

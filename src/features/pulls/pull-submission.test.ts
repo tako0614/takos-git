@@ -31,6 +31,20 @@ async function fixture() {
 }
 
 describe("durable PR creation through the real router", () => {
+  test("captured repository and browser identity context are checked before receipt replay", async () => {
+    const f = await fixture();
+    try {
+      const repo = await f.db.queryOne<{ id: string }>("SELECT id FROM repositories WHERE name='web'");
+      expect((await f.send("same-key", { ...original, repository_id: repo!.id })).status).toBe(201);
+      for (const patch of [{ repository_id: "different-repository" }, { recovery_scope: "different-browser-context" }]) {
+        const response = await f.send("same-key", { ...original, ...patch });
+        expect(response.status).toBe(409);
+        expect((await response.json()).error.code).toBe("submission_context_changed");
+      }
+      const state = await f.state(); expect(state.issues).toHaveLength(1); expect(state.pulls).toHaveLength(1); expect(state.counters).toEqual([{ next_value: 2 }]);
+    } finally { f.fake.db.close(); }
+  });
+
   test("same retained key and a fresh router return one PR and one event", async () => {
     const f = await fixture(); let opened = 0; setRepoEventSink(e => { if (e.type === "pull_request.opened") opened++; });
     try {

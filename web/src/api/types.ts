@@ -24,6 +24,8 @@ export interface SessionUser {
 export type SessionState =
   | {
       readonly authenticated: true;
+      /** Non-authorizing app/caller custody tag; contains no OAuth/session token. */
+      readonly recoveryScope: string;
       readonly user: SessionUser;
       readonly capsuleId: string | null;
       readonly appRole: "owner" | "member" | null;

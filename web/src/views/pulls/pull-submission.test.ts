@@ -3,6 +3,30 @@ import { ApiError } from "../../api/client.ts";
 import { createPullSubmission } from "./pull-submission.ts";
 
 describe("PR creation intent custody", () => {
+  test("a fresh document restores the original unknown intent and newer form without another key", () => {
+    const values = new Map<string, string>();
+    const storage = { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { values.set(key, value); }, removeItem: (key: string) => { values.delete(key); } };
+    const options = { storage: () => storage, scope: "A".repeat(43), repositoryId: "repo-a" };
+    let keys = 0;
+    const first = createPullSubmission(() => `key-${++keys}`, options);
+    const original = first.begin({ title: "original", base: "main", head: "feature" }, 1)!;
+    first.fail(original, new TypeError("Lost committed response"));
+    const restored = createPullSubmission(() => `key-${++keys}`, options);
+    expect(restored.unknown()?.idempotencyKey).toBe("key-1");
+    expect(restored.begin({ title: "another", base: "main", head: "feature" }, 2)).toBeNull();
+    expect(keys).toBe(1);
+    expect(restored.retry(restored.unknown()!)).toBe(true);
+    expect(restored.acknowledge(restored.state()!.attempt)).toBe(true);
+    expect(values.size).toBe(0);
+  });
+
+  test("saving recovery must succeed before an attempt can reach the network", () => {
+    const storage = { getItem: () => null, setItem: () => { throw new Error("Quota exceeded"); }, removeItem: () => {} };
+    const flow = createPullSubmission(() => "key", { storage: () => storage, scope: "A".repeat(43), repositoryId: "repo-a" });
+    expect(() => flow.begin({ title: "original", base: "main", head: "feature" }, 0)).toThrow();
+    expect(flow.state()).toBeNull();
+  });
+
   test("unknown submission retains its key and original branches through newer form edits", () => {
     let keys = 0; const flow = createPullSubmission(() => `key-${++keys}`);
     const input = { title: "original", body: "body", base: "main", head: "feature", draft: true };
