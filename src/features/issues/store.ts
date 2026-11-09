@@ -10,6 +10,7 @@
  */
 
 import type { DbClient } from "../../db/index.ts";
+import { submissionHash } from "../../db/submission-hash.ts";
 import {
   toCommentDto,
   toIssueDto,
@@ -812,11 +813,6 @@ type CommentSubmissionResult =
   | { readonly outcome: "created" | "replayed"; readonly comment: IssueCommentDto }
   | { readonly outcome: "conflict" }
   | { readonly outcome: "deleted" };
-
-async function submissionHash(value: string): Promise<string> {
-  const bytes = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)));
-  return Array.from(bytes, byte => byte.toString(16).padStart(2, "0")).join("");
-}
 
 /** One transaction owns the row, count and receipt, even after a lost reply. */
 export async function createCommentSubmission(

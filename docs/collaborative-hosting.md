@@ -87,6 +87,25 @@ merge baseと片側の両方にpathがない場合、その側は「変更なし
 片側だけの追加、合意した追加、非競合の削除やfile mode変更も保持する。競合pathの未解決拒否と
 明示的な削除／content解消は従来どおりで、textの自動diff3やrename推論を新たに導入しない。
 
+## PR creation recovery
+
+An optional `Idempotency-Key` binds a PR creation intent to the current
+Repository/principal record. The shared number, Issue row, PR row and durable
+receipt commit atomically. Retry the captured original key and payload after
+an uncertain response; changed intent returns409 and a removed original410,
+without allocating or resurrecting a PR. Unkeyed writes still create separate
+PRs. Replay checks current authorization and does not repeat Git writes or
+opened events. Event delivery remains advisory across a lost commit reply.
+
+The receipt retains a creation projection from the actual original branch tips
+and principal metadata, without another copy of its title/body or raw key. It
+is a creation ACK, not the authority for current Git state. A write-only caller
+cannot use it to read later owner edits, profile changes or activity; current
+read authority still enables the ordinary R2-derived projection. Individual
+PR deletion retains this tombstone; Repo/principal retirement cascades its scope.
+The Web form keeps its original key/payload during explicit recovery and keeps
+newer edits intact. Reload-persistent custody is not implemented.
+
 ## Authentication and authorization
 
 認証経路を混ぜない。

@@ -73,8 +73,8 @@ export const pullsApi = {
 
   // --- writes ---------------------------------------------------------------
 
-  create(owner: string, repo: string, input: { title: string; body?: string; head: string; base: string; draft?: boolean }): Promise<{ pull: PullRequestDto }> {
-    return api.post<PullEnvelope>(`${repoPath(owner, repo)}/pulls`, input).then(unwrapPull);
+  create(owner: string, repo: string, input: { title: string; body?: string; head: string; base: string; draft?: boolean }, idempotencyKey?: string): Promise<{ pull: PullRequestDto }> {
+    return api.post<PullEnvelope>(`${repoPath(owner, repo)}/pulls`, input, undefined, { idempotencyKey }).then(unwrapPull);
   },
 
   update(owner: string, repo: string, number: number, patch: Partial<{ title: string; body: string; base: string }>): Promise<{ pull: PullRequestDto }> {
