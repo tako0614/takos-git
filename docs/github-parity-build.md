@@ -1061,6 +1061,19 @@ Auth column = required Interface-OAuth scope ceiling **/** minimum repo role. "b
 
 #### 4.1 Repository CRUD, visibility, settings
 
+The Web home `New` dialog calls the existing repository-create route with an
+explicit owner namespace/name, optional description/visibility/default branch,
+and defaults of `private`/`main`. Namespace ownership, Org-admin membership,
+app membership and CSRF remain server checks. An acknowledged creation opens
+the returned repository only while its original form is current. Closing and
+reopening keeps the draft in that Home instance; newer edits and retired Home
+responses cannot trigger stale navigation. An uncertain response keeps the
+original configuration and offers explicit readback of that exact owner/name
+and a confirmed retry of the original create. A found repository is not proof
+that this request created it; a failed/404 read does not prove rollback. No
+automatic POST/retry, overwrite, durable creation receipt or reload-persistent
+draft is added by this Web integration.
+
 | Method | Path | Auth (scope / role) | Purpose | Prov. |
 | --- | --- | --- | --- | --- |
 | GET | `/api/v1/repos` | hosting.read / — | List visible repos (cursor) | exists (`forge-api.ts:486`) |

@@ -24,6 +24,7 @@ import {
   RelativeTime,
   VisibilityBadge,
 } from "../../ui/index.ts";
+import { NewRepository } from "./NewRepository.tsx";
 
 /** One repository row in the dashboard list. */
 function RepoRow(props: { repo: RepositoryDto }): JSX.Element {
@@ -62,10 +63,11 @@ function RepoRow(props: { repo: RepositoryDto }): JSX.Element {
 /** Home dashboard: repositories visible to the current session. */
 export function HomeView(): JSX.Element {
   const session = useSession();
+  const [creating, setCreating] = createSignal(false);
   const [cursor, setCursor] = createSignal<string | null>(null);
   // Source must be an object (always truthy): a bare null cursor would make
   // createResource treat the source as "no fetch" and never load the list.
-  const [data] = createResource(
+  const [data, { refetch }] = createResource(
     () => ({ cursor: cursor() }),
     (s) => reposApi.list({ cursor: s.cursor ?? undefined }),
   );
@@ -75,11 +77,15 @@ export function HomeView(): JSX.Element {
       <div class="mb-5 flex items-center justify-between">
         <h1 class="text-xl font-semibold">Repositories</h1>
         <Show when={session.authenticated()}>
-          <Button variant="primary" disabled title="Create repo — Phase 4b (POST /api/v1/repos)">
+          <Button variant="primary" onClick={() => setCreating(true)}>
             <Icons.Plus class="h-4 w-4" /> New
           </Button>
         </Show>
       </div>
+
+      <Show when={session.authenticated()}>
+        <NewRepository open={creating()} onClose={() => setCreating(false)} onCreated={() => { setCursor(null); void refetch(); }} />
+      </Show>
 
       <Show when={session.state() && !session.authenticated() && session.configured()}>
         <Banner
@@ -105,7 +111,7 @@ export function HomeView(): JSX.Element {
               <EmptyState
                 icon={<Icons.Database class="h-8 w-8" />}
                 title="No repositories yet"
-                description="Repositories you can access will appear here. Create one from the CLI (git push) or the API."
+                description="Repositories you can access will appear here. Use New to create one after signing in."
               />
             }
           >
