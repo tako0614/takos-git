@@ -192,6 +192,13 @@ export interface PerformMergeParams {
   readonly method: MergeMethod;
   readonly commitMessage: string;
   readonly actor: MergeActor;
+  /** The exact base/head used by the caller's merge-protection evaluation. */
+  readonly checkedRefs: CheckedMergeRefs;
+}
+
+export interface CheckedMergeRefs {
+  readonly baseSha: string;
+  readonly headSha: string;
 }
 
 /**
@@ -210,6 +217,9 @@ export async function performMerge(params: PerformMergeParams): Promise<MergeRes
   if (!baseRecord || !headRecord) return fail(404, "branch_not_found", "Head or base branch no longer exists.");
   const baseSha = baseRecord.sha;
   const headSha = headRecord.sha;
+  if (baseSha !== params.checkedRefs.baseSha || headSha !== params.checkedRefs.headSha) {
+    return fail(409, "ref_conflict", "Head or base changed after merge checks. Reload before continuing.");
+  }
 
   // Already merged: head is an ancestor of base — no ref change, mark merged.
   if (await isAncestor(objects, headSha, baseSha)) {

@@ -87,6 +87,7 @@ export async function commitMerge(input: {
     mutateRefs(current) {
       if (current.pendingMerges?.[pr.id] || Object.keys(current.pendingMerges ?? {}).length >= 128) return null;
       if (current.refs.find(r => r.name === `refs/heads/${receipt.baseRef}`)?.sha !== receipt.baseSha) return null;
+      if (current.refs.find(r => r.name === `refs/heads/${receipt.headRef}`)?.sha !== receipt.headSha) return null;
       return { ...current,
         refs: current.refs.map(r => r.name === `refs/heads/${receipt.baseRef}` ? { ...r, sha: receipt.commitSha } : r),
         pendingMerges: { ...current.pendingMerges, [pr.id]: receipt },

@@ -21,7 +21,7 @@ import { mergeTrees3Way } from "../../git/merge.ts";
 import { decodeBlobContent } from "../../git/text-diff.ts";
 import type { GitSignature } from "../../git/git-objects.ts";
 import type { PullRequestRow } from "./dto.ts";
-import { type MergeActor, type MergeFailure, type MergeResult } from "./merge.ts";
+import { type CheckedMergeRefs, type MergeActor, type MergeFailure, type MergeResult } from "./merge.ts";
 
 function fail(
   status: number,
@@ -198,6 +198,7 @@ export interface ResolveParams {
   readonly resolutions: Resolution[];
   readonly commitMessage: string;
   readonly actor: MergeActor;
+  readonly checkedRefs: CheckedMergeRefs;
 }
 
 export async function resolveConflictsAndMerge(params: ResolveParams): Promise<MergeResult> {
@@ -211,6 +212,9 @@ export async function resolveConflictsAndMerge(params: ResolveParams): Promise<M
   if (!baseRecord || !headRecord) return fail(404, "branch_not_found", "Head or base branch no longer exists.");
   const baseSha = baseRecord.sha;
   const headSha = headRecord.sha;
+  if (baseSha !== params.checkedRefs.baseSha || headSha !== params.checkedRefs.headSha) {
+    return fail(409, "ref_conflict", "Head or base changed after merge checks. Reload before continuing.");
+  }
 
   const mergeBase = await findMergeBase(objects, baseSha, headSha);
   if (!mergeBase) return fail(409, "no_merge_base", "No common ancestor found.");
