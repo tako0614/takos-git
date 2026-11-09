@@ -254,6 +254,13 @@ function NewPullDialog(props: {
 export function PRList(): JSX.Element {
   const repo = useRepo();
   const identity = createMemo(() => ({ owner: repo.owner(), repo: repo.repo() }));
+  const currentDetail = () => {
+    // `latest` can still describe the previous repo while this route loads.
+    const detail = repo.detail();
+    // Repository lookup uses NOCASE for these ASCII path segments.
+    return detail && detail.owner.toLowerCase() === repo.owner().toLowerCase()
+      && detail.name.toLowerCase() === repo.repo().toLowerCase() ? detail : undefined;
+  };
   const session = useSession();
   const [filter, setFilter] = createSignal<StateFilter>("open");
   const [cursor, setCursor] = createSignal<string | null>(null);
@@ -290,12 +297,12 @@ export function PRList(): JSX.Element {
 
   return (
     <div>
-      <Show when={session.authenticated() && identity()} keyed>
+      <Show when={session.authenticated() && currentDetail() && identity()} keyed>
         {(scope) => <NewPullDialog
           open={showNew()}
           owner={scope.owner}
           repo={scope.repo}
-          defaultBase={repo.detail()?.defaultBranch ?? "main"}
+          defaultBase={currentDetail()?.defaultBranch ?? "main"}
           onClose={() => setShowNew(false)}
           onCreated={() => void refetch()}
         />}
@@ -309,7 +316,7 @@ export function PRList(): JSX.Element {
             {filterButton("all", "All", <Icons.MessageSquare class="h-4 w-4" />)}
           </div>
           <Show when={session.authenticated()}>
-            <Button variant="primary" size="sm" onClick={() => setShowNew(true)}>
+            <Button variant="primary" size="sm" disabled={!currentDetail()} onClick={() => setShowNew(true)}>
               <Icons.Plus class="h-4 w-4" /> New pull request
             </Button>
           </Show>
