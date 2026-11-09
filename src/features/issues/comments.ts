@@ -27,13 +27,12 @@ import {
   updateComment,
 } from "./store.ts";
 import {
-  decodeOffsetCursor,
-  encodeOffsetCursor,
   parseNumberParam,
   readJson,
   readLimit,
   str,
 } from "./common.ts";
+import { decodeCommentCursor, encodeCommentCursor } from "./comment-cursor.ts";
 
 function isAuthorOrMaintainer(access: RepoAccess, authorId: string | null): boolean {
   return (
@@ -51,9 +50,12 @@ const listCommentsHandler: Route["handler"] = async (ctx) => {
   const issue = await getIssueRowByNumber(access.db, access.repo.id, number);
   if (!issue) return errorResponse(404, "not_found", "Not Found");
   const limit = readLimit(ctx.url);
-  const offset = decodeOffsetCursor(ctx.url.searchParams.get("cursor"));
-  const result = await listComments(access.db, issue.id, limit, offset);
-  const nextCursor = result.hasMore ? encodeOffsetCursor(offset + limit) : null;
+  const cursor = decodeCommentCursor(ctx.url.searchParams.get("cursor"));
+  const result = await listComments(access.db, issue.id, limit,
+    cursor.kind === "offset" ? cursor.offset : 0,
+    cursor.kind === "after" ? cursor.after : undefined);
+  const last = result.comments[result.comments.length - 1];
+  const nextCursor = result.hasMore && last ? encodeCommentCursor(last) : null;
   return json(paginatedBody("comments", result.comments, nextCursor));
 };
 
