@@ -711,13 +711,24 @@ export async function createComment(
   return toCommentDto(row as IssueCommentRow, author.get(authorId) ?? null);
 }
 
+export interface CommentPosition {
+  readonly createdAt: number;
+  readonly id: string;
+}
+
 export async function listComments(
   db: DbClient,
   issueId: string,
   limit: number,
   offset: number,
+  after?: CommentPosition,
 ): Promise<{ comments: IssueCommentDto[]; hasMore: boolean }> {
-  const rows = await db.query<IssueCommentRow>(
+  const rows = after ? await db.query<IssueCommentRow>(
+    `SELECT ${COMMENT_COLUMNS} FROM issue_comments
+      WHERE issue_id = ? AND (created_at > ? OR (created_at = ? AND id > ?))
+      ORDER BY created_at ASC, id ASC LIMIT ?`,
+    [issueId, after.createdAt, after.createdAt, after.id, limit + 1],
+  ) : await db.query<IssueCommentRow>(
     `SELECT ${COMMENT_COLUMNS} FROM issue_comments WHERE issue_id = ?
       ORDER BY created_at ASC, id ASC LIMIT ? OFFSET ?`,
     [issueId, limit + 1, offset],
