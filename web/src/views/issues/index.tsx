@@ -47,5 +47,6 @@ export function IssueDetailView(): JSX.Element {
 /** `/:owner/:repo/issues/new` — open a new issue. */
 export function NewIssueView(): JSX.Element {
   const repo = useRepo();
-  return <NewIssueForm owner={repo.owner()} repo={repo.repo()} />;
+  const identity = createMemo(() => ({ owner: repo.owner(), repo: repo.repo() }));
+  return <Show when={identity()} keyed>{scope => <NewIssueForm owner={scope.owner} repo={scope.repo} />}</Show>;
 }

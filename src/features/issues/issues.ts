@@ -22,6 +22,10 @@ import { csrfGuard, requireRepoAccess, type RepoAccess } from "../repos/identity
 import { buildEvent, emitDomainEvent } from "./events.ts";
 import {
   createIssue,
+  createIssueSubmission,
+  getIssueSubmission,
+  type IssueSubmissionInput,
+  type IssueSubmissionResult,
   getIssueDto,
   getIssueRowByNumber,
   getMilestoneRowByNumber,
@@ -111,6 +115,36 @@ const openIssueHandler: Route["handler"] = async (ctx) => {
     return errorResponse(400, "invalid_title", "A non-empty title is required.");
   }
   const issueBody = typeof body.body === "string" ? body.body : null;
+  const requestedLabels = body.labels === undefined ? [] : strArray(body.labels);
+  if (requestedLabels === null) return errorResponse(400, "invalid_labels", "labels must be an array of names.");
+  const requestedAssignees = body.assignees === undefined ? [] : strArray(body.assignees);
+  if (requestedAssignees === null) return errorResponse(400, "invalid_assignees", "assignees must be an array.");
+  if (body.milestone != null && typeof body.milestone !== "number") return errorResponse(400, "invalid_milestone", "milestone must be a number.");
+  const intent: IssueSubmissionInput = {
+    title, body: issueBody, labels: requestedLabels, assignees: requestedAssignees,
+    milestone: typeof body.milestone === "number" ? body.milestone : null,
+  };
+  const key = ctx.request.headers.get("Idempotency-Key");
+  if (key !== null && !/^[\x21-\x7e]{1,255}$/u.test(key)) return errorResponse(400, "invalid_idempotency_key", "Idempotency-Key must contain 1–255 visible ASCII characters.");
+
+  const respond = async (result: IssueSubmissionResult): Promise<Response> => {
+    if (result.outcome === "conflict") return errorResponse(409, "idempotency_conflict", "This submission key was already used for a different Issue.");
+    if (result.outcome === "deleted") return errorResponse(410, "submission_deleted", "The original Issue was removed. Retrying cannot recreate it.");
+    // Recovery is not a new read channel for a write-only automation token.
+    const issue = key !== null && access.auth.scopes.has(SCOPES.hostingRead)
+      ? await getIssueDto(access.db, access.repo.id, result.issue.number) : result.issue;
+    if (!issue) return errorResponse(410, "submission_deleted", "The original Issue was removed.");
+    if (result.outcome === "created") emitDomainEvent(ctx.scope, buildEvent({
+      type: "issue.opened", repoId: access.repo.id, owner: ctx.params.owner, repo: ctx.params.repo,
+      issueNumber: issue.number, actorSubject: access.auth.principal.subject,
+      actorId: access.auth.principal.id, at: access.db.now(), payload: { title },
+    }));
+    return json({ issue }, 201, result.outcome === "replayed" ? { "Idempotency-Replayed": "true" } : undefined);
+  };
+  if (key !== null) {
+    const previous = await getIssueSubmission(access.db, access.repo.id, access.auth.principal.id, key, intent);
+    if (previous) return respond(previous);
+  }
 
   // milestone (optional, by number)
   let milestoneId: string | null = null;
@@ -127,11 +161,7 @@ const openIssueHandler: Route["handler"] = async (ctx) => {
   // labels (optional, by name)
   let labelIds: string[] = [];
   if (body.labels !== undefined) {
-    const names = strArray(body.labels);
-    if (names === null) {
-      return errorResponse(400, "invalid_labels", "labels must be an array of names.");
-    }
-    const resolved = await resolveLabelIds(access.db, access.repo.id, names);
+    const resolved = await resolveLabelIds(access.db, access.repo.id, requestedLabels);
     if (resolved.missing.length > 0) {
       return errorResponse(400, "unknown_label", "Unknown label.", {
         labels: resolved.missing,
@@ -143,14 +173,10 @@ const openIssueHandler: Route["handler"] = async (ctx) => {
   // assignees (optional, by subject)
   let assigneeIds: string[] = [];
   if (body.assignees !== undefined) {
-    const subjects = strArray(body.assignees);
-    if (subjects === null) {
-      return errorResponse(400, "invalid_assignees", "assignees must be an array.");
-    }
     const resolved = await resolveAssignees(
       access.db,
       currentIssuer(ctx),
-      subjects,
+      requestedAssignees,
     );
     if (resolved.missing.length > 0) {
       return errorResponse(400, "unknown_assignee", "Unknown assignee.", {
@@ -160,30 +186,17 @@ const openIssueHandler: Route["handler"] = async (ctx) => {
     assigneeIds = resolved.ids;
   }
 
-  const issue = await createIssue(access.db, access.repo.id, {
+  const input = {
     title,
     body: issueBody,
     authorId: access.auth.principal.id,
     milestoneId,
     labelIds,
     assigneeIds,
-  });
-
-  emitDomainEvent(
-    ctx.scope,
-    buildEvent({
-      type: "issue.opened",
-      repoId: access.repo.id,
-      owner: ctx.params.owner,
-      repo: ctx.params.repo,
-      issueNumber: issue.number,
-      actorSubject: access.auth.principal.subject,
-      actorId: access.auth.principal.id,
-      at: access.db.now(),
-      payload: { title: issue.title },
-    }),
-  );
-  return json({ issue }, 201);
+  };
+  return respond(key === null
+    ? { outcome: "created", issue: await createIssue(access.db, access.repo.id, input) }
+    : await createIssueSubmission(access.db, access.repo.id, input, key, intent));
 };
 
 /** `GET …/issues/:number` — single issue. */

@@ -144,6 +144,21 @@ to receipt-aware code rather than deleting the table or migration ledger. The
 browser retains its submission key only in the current Issue component; this
 does not add persistent drafts or recovery of keys lost on reload.
 
+Migration `0006` adds `issue_submissions`; applied `0001`–`0005` remain
+byte-for-byte immutable. The shared Issue/PR number allocation, Issue,
+label/assignee links, and receipt commit atomically. Individual Issue deletion
+keeps the receipt to prevent delayed recreation; Repo/principal deletion
+cascades its scope. The receipt includes initial author/triage metadata (label
+descriptions included), but no raw request key or Issue title/body. This
+creation snapshot is retained even when those references change or disappear.
+It lets a write-only caller recover its own original result without acquiring
+read authority over later edits. Read-capable callers receive current state.
+No existing table rebuild or destructive apply is needed. Old runtime code's
+unkeyed writes remain compatible; it cannot provide keyed Issue replay safety.
+Repair forward to receipt-aware code without deleting receipts or ledger rows.
+New Issue keys are retained only in the current form, including an explicit
+retry of its captured input after a lost reply; reload does not restore them.
+
 ## 3. Attach the Actions runner container (Actions only)
 
 The provider can't bind a container image, so finish it with wrangler, reading the
