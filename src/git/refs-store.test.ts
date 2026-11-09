@@ -7,10 +7,35 @@ import {
   readRepoRefs,
   readRepoRefsSnapshot,
   writeRepoRefs,
+  writeRepoRefsSnapshot,
 } from "./refs-store.ts";
 import { repositoryObjectStore } from "./repo-object-store.ts";
 
 const REPO = "space_test/project";
+
+test("snapshot writes return their own receipt and reject a stale ETag", async () => {
+  const bucket = new MemoryBucket();
+  expect(await createRepo(bucket, REPO)).toBe(true);
+  const before = await readRepoRefsSnapshot(bucket, REPO);
+  const doc = {
+    refs: [{ name: "refs/heads/main", sha: "1".repeat(40) }],
+    defaultBranch: "main",
+  };
+
+  const written = await writeRepoRefsSnapshot(bucket, REPO, doc, before!.etag);
+
+  expect(written).not.toBeNull();
+  expect(written?.doc).toEqual(doc);
+  expect(written?.etag).toBe((await readRepoRefsSnapshot(bucket, REPO))?.etag);
+  expect(written?.etag).not.toBe(before!.etag);
+  expect(await writeRepoRefsSnapshot(
+    bucket,
+    REPO,
+    { refs: [], defaultBranch: null },
+    before!.etag,
+  )).toBeNull();
+  expect(await readRepoRefsSnapshot(bucket, REPO)).toEqual(written);
+});
 
 test("repository creation and ref replacement use R2 conditional writes", async () => {
   const bucket = new MemoryBucket();

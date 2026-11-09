@@ -110,21 +110,35 @@ export async function readRepoRefsSnapshot(
   }
 }
 
+/** Return the document and ETag from this write, without a racy readback. */
+export async function writeRepoRefsSnapshot(
+  bucket: ObjectStoreBinding,
+  repo: string,
+  doc: RefsDoc,
+  expectedEtag?: string,
+): Promise<RefsSnapshot | null> {
+  if (!isValidRepoName(repo)) throw new Error(`invalid repo name: ${repo}`);
+  const serialized = JSON.stringify(doc);
+  // Keep the receipt tied to the bytes sent, even if the caller changes its
+  // draft while the conditional put is in flight.
+  const writtenDoc = JSON.parse(serialized) as RefsDoc;
+  const written = await bucket.put(
+    refsKey(repo),
+    new TextEncoder().encode(serialized),
+    expectedEtag === undefined
+      ? undefined
+      : { onlyIf: { etagMatches: expectedEtag } },
+  );
+  return written === null ? null : { doc: writtenDoc, etag: written.etag };
+}
+
 export async function writeRepoRefs(
   bucket: ObjectStoreBinding,
   repo: string,
   doc: RefsDoc,
   expectedEtag?: string,
 ): Promise<boolean> {
-  if (!isValidRepoName(repo)) throw new Error(`invalid repo name: ${repo}`);
-  const written = await bucket.put(
-    refsKey(repo),
-    new TextEncoder().encode(JSON.stringify(doc)),
-    expectedEtag === undefined
-      ? undefined
-      : { onlyIf: { etagMatches: expectedEtag } },
-  );
-  return written !== null;
+  return (await writeRepoRefsSnapshot(bucket, repo, doc, expectedEtag)) !== null;
 }
 
 export async function repoExists(

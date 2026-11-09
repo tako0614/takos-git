@@ -8,12 +8,33 @@ import {
   type RefsDoc,
 } from "./refs-store.ts";
 import { revalidateRefPointer, writeRefsWithMetadata } from "./two-phase.ts";
+import type { ObjectStoreObjectHead } from "./types.ts";
 
 const REPO = "acme/web";
 const FORCED_SHA = "b".repeat(40);
 
 function mainDoc(sha: string): RefsDoc {
   return { refs: [{ name: "refs/heads/main", sha }], defaultBranch: "main" };
+}
+
+class ObservedBucket extends MemoryBucket {
+  afterPut?: (receipt: ObjectStoreObjectHead) => void | Promise<void>;
+  failReads = false;
+
+  override async put(...args: Parameters<MemoryBucket["put"]>) {
+    const receipt = await super.put(...args);
+    if (receipt && this.afterPut) {
+      const observe = this.afterPut;
+      this.afterPut = undefined;
+      await observe(receipt);
+    }
+    return receipt;
+  }
+
+  override async get(key: string) {
+    if (this.failReads) throw new Error("post-commit read unavailable");
+    return super.get(key);
+  }
 }
 
 describe("two-phase — R2 is authoritative, D1 pointers are advisory", () => {
@@ -45,6 +66,137 @@ describe("two-phase — R2 is authoritative, D1 pointers are advisory", () => {
 });
 
 describe("two-phase — ETag CAS commit point", () => {
+  test("binds the result and projection to its own write before a later writer", async () => {
+    const bucket = new ObservedBucket();
+    await seedRepo(bucket, { repo: REPO, content: "initial\n" });
+    const first = mainDoc("a".repeat(40));
+    const later = mainDoc("b".repeat(40));
+    let actualReceipt: ObjectStoreObjectHead | undefined;
+    let projected: unknown;
+    bucket.afterPut = async (receipt) => {
+      actualReceipt = receipt;
+      const concurrent = await writeRefsWithMetadata(bucket, {
+        repo: REPO,
+        mutateRefs: () => later,
+      });
+      expect(concurrent.status).toBe("committed");
+    };
+
+    const result = await writeRefsWithMetadata(bucket, {
+      repo: REPO,
+      mutateRefs: () => first,
+      projectMetadata: async (committed) => {
+        projected = committed;
+      },
+    });
+
+    expect(result.status).toBe("committed");
+    if (result.status !== "committed") throw new Error("write did not commit");
+    expect(result.refs).toEqual(first);
+    expect(result.etag).toBe(actualReceipt!.etag);
+    expect(projected).toEqual({ refs: first, etag: actualReceipt!.etag });
+    expect((await readRepoRefsSnapshot(bucket, REPO))?.doc).toEqual(later);
+  });
+
+  test("a post-commit GET failure cannot hide an acknowledged write", async () => {
+    const bucket = new ObservedBucket();
+    await seedRepo(bucket, { repo: REPO, content: "initial\n" });
+    const next = mainDoc(FORCED_SHA);
+    let actualReceipt: ObjectStoreObjectHead | undefined;
+    let projected = 0;
+    bucket.afterPut = (receipt) => {
+      actualReceipt = receipt;
+      bucket.failReads = true;
+    };
+
+    const result = await writeRefsWithMetadata(bucket, {
+      repo: REPO,
+      mutateRefs: () => next,
+      projectMetadata: async () => {
+        projected++;
+      },
+    });
+
+    expect(result.status).toBe("committed");
+    if (result.status !== "committed") throw new Error("write did not commit");
+    expect(result.refs).toEqual(next);
+    expect(result.etag).toBe(actualReceipt!.etag);
+    expect(projected).toBe(1);
+    bucket.failReads = false;
+    expect((await readRepoRefsSnapshot(bucket, REPO))?.doc).toEqual(next);
+  });
+
+  test("retains the serialized write when the caller changes its draft in flight", async () => {
+    const bucket = new ObservedBucket();
+    await seedRepo(bucket, { repo: REPO, content: "initial\n" });
+    const draft = {
+      refs: [{ name: "refs/heads/main", sha: FORCED_SHA }],
+      defaultBranch: "main",
+    };
+    const written = structuredClone(draft);
+    bucket.afterPut = () => {
+      draft.refs[0].sha = "c".repeat(40);
+    };
+
+    const result = await writeRefsWithMetadata(bucket, {
+      repo: REPO,
+      mutateRefs: () => draft,
+    });
+
+    expect(result.status).toBe("committed");
+    if (result.status !== "committed") throw new Error("write did not commit");
+    expect(result.refs).toEqual(written);
+    expect((await readRepoRefsSnapshot(bucket, REPO))?.doc).toEqual(written);
+    expect(draft).not.toEqual(written);
+  });
+
+  test("a lost put acknowledgement remains unknown and does not project metadata", async () => {
+    const bucket = new ObservedBucket();
+    await seedRepo(bucket, { repo: REPO, content: "initial\n" });
+    const error = new Error("put acknowledgement lost");
+    let projected = 0;
+    bucket.afterPut = () => {
+      throw error;
+    };
+
+    await expect(writeRefsWithMetadata(bucket, {
+      repo: REPO,
+      mutateRefs: () => mainDoc(FORCED_SHA),
+      projectMetadata: async () => {
+        projected++;
+      },
+    })).rejects.toBe(error);
+
+    expect(projected).toBe(0);
+    expect((await readRepoRefsSnapshot(bucket, REPO))?.doc).toEqual(
+      mainDoc(FORCED_SHA),
+    );
+  });
+
+  test("an aborted mutation performs no write or metadata projection", async () => {
+    const bucket = new ObservedBucket();
+    await seedRepo(bucket, { repo: REPO, content: "initial\n" });
+    const before = await readRepoRefsSnapshot(bucket, REPO);
+    let puts = 0;
+    let projected = 0;
+    bucket.afterPut = () => {
+      puts++;
+    };
+
+    const result = await writeRefsWithMetadata(bucket, {
+      repo: REPO,
+      mutateRefs: () => null,
+      projectMetadata: async () => {
+        projected++;
+      },
+    });
+
+    expect(result.status).toBe("aborted");
+    expect(puts).toBe(0);
+    expect(projected).toBe(0);
+    expect(await readRepoRefsSnapshot(bucket, REPO)).toEqual(before);
+  });
+
   test("commits the R2 ref then projects D1 metadata", async () => {
     const bucket = new MemoryBucket();
     await seedRepo(bucket, { repo: REPO, content: "a\n" });
