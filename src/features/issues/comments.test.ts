@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { get, jsonRequest, makeEnv } from "../repos/testkit.ts";
 import { dispatch, router, setupRepo } from "./harness.ts";
 import { createDbClient } from "../../db/client.ts";
-import { createComment, deleteComment, listComments } from "./store.ts";
+import { createComment, deleteComment, getIssueRowByNumber, listComments } from "./store.ts";
 
 async function openIssue(reg: ReturnType<typeof router>, env: Parameters<typeof dispatch>[2]): Promise<void> {
   await dispatch(reg, jsonRequest("POST", "/api/v1/repos/alice/web/issues", { title: "topic" }, "taksrv_bob_w"), env);
@@ -21,7 +21,7 @@ describe("issue comments", () => {
       expect(response.status).toBe(201);
     }
     const all = await dispatch(reg, get(`${path}?limit=100`, "taksrv_bob_r"), env);
-    return { reg, env, all: (await all.json()).comments as { id: string; body: string }[] };
+    return { reg, env, all: (await all.json()).comments as { id: string; body: string; createdAt: number }[] };
   }
   async function read(f: Awaited<ReturnType<typeof fixture>>, cursor: string | null = null, limit = 2) {
     const query = new URLSearchParams({ limit: String(limit), ...(cursor ? { cursor } : {}) });
@@ -50,9 +50,12 @@ describe("issue comments", () => {
     const f = await fixture(3);
     const first = await read(f);
     await dispatch(f.reg, jsonRequest("DELETE", `/api/v1/repos/alice/web/issues/comments/${first.comments[0].id}`, undefined, "taksrv_bob_w"), f.env);
-    const created = await dispatch(f.reg, jsonRequest("POST", path, { body: "later" }, "taksrv_bob_w"), f.env);
-    expect(created.status).toBe(201);
-    const appended = (await created.json()).comment;
+    // Pin "later" through the store's supported clock: real-time POSTs can
+    // share a millisecond, where the contract orders random ULIDs by id.
+    const db = createDbClient(f.env.DB!, { now: () => f.all[2].createdAt + 1 });
+    const issue = await getIssueRowByNumber(db, (await db.queryOne<{ id: string }>("SELECT id FROM repositories"))!.id, 1);
+    const author = await db.queryOne<{ id: string }>("SELECT id FROM principals WHERE subject = ?", ["sub-bob"]);
+    const appended = await createComment(db, issue!.id, author!.id, "later");
     const next = await read(f, first.nextCursor);
     expect(next.comments.map((c: { id: string }) => c.id)).toEqual([f.all[2].id, appended.id]);
     expect(next.nextCursor).toBeNull();
