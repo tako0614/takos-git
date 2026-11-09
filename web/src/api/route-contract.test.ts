@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 
 import { actionsApi } from "./actions.ts";
 import { webhooksApi } from "./admin.ts";
+import { issuesApi } from "./issues.ts";
 import { pullsApi } from "./pulls.ts";
 
 const realFetch = globalThis.fetch;
@@ -35,6 +36,37 @@ afterEach(() => {
 });
 
 describe("SPA route contract", () => {
+  test("issue filters survive first-page limit and later-page cursor", async () => {
+    const requests = captureFetch([
+      { issues: [], nextCursor: "next" },
+      { issues: [], nextCursor: null },
+    ]);
+    await issuesApi.list("alice", "web", { state: "closed", limit: 1 });
+    await issuesApi.list("alice", "web", { state: "closed", limit: 1, cursor: "next/page" });
+
+    for (const request of requests) {
+      const url = new URL(request.path, "https://fixture.example");
+      expect(url.searchParams.get("state")).toBe("closed");
+      expect(url.searchParams.get("limit")).toBe("1");
+    }
+    expect(new URL(requests[1].path, "https://fixture.example").searchParams.get("cursor")).toBe("next/page");
+  });
+
+  test("issue filter values containing delimiters stay literal during pagination", async () => {
+    const requests = captureFetch([{ issues: [], nextCursor: null }]);
+    await issuesApi.list("alice", "web", {
+      state: "closed", label: "bug & regression?", assignee: "person:1", milestone: 2,
+      limit: 3, cursor: "offset/next?label=other&limit=999",
+    });
+    const url = new URL(requests[0].path, "https://fixture.example");
+    expect(url.searchParams.get("state")).toBe("closed");
+    expect(url.searchParams.get("label")).toBe("bug & regression?");
+    expect(url.searchParams.get("assignee")).toBe("person:1");
+    expect(url.searchParams.get("milestone")).toBe("2");
+    expect(url.searchParams.get("limit")).toBe("3");
+    expect(url.searchParams.get("cursor")).toBe("offset/next?label=other&limit=999");
+  });
+
   test("merge, resolve and explicit status recovery preserve the committed-but-pending receipt", async () => {
     const pull = { number: 7, state: "open", merged: false };
     const receipt = { pull_request: pull, merge_commit: "c".repeat(40), metadata_pending: true };
