@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 
 import { actionsApi } from "./actions.ts";
 import { webhooksApi } from "./admin.ts";
+import { pullsApi } from "./pulls.ts";
 
 const realFetch = globalThis.fetch;
 
@@ -34,6 +35,75 @@ afterEach(() => {
 });
 
 describe("SPA route contract", () => {
+  test("pull lists decode the worker envelope without corrupting filter pagination", async () => {
+    const pull = { number: 7, title: "Visible PR", state: "open", merged: false };
+    const requests = captureFetch([{ pull_requests: [pull], nextCursor: "next" }]);
+
+    const result = await pullsApi.list("alice", "web", {
+      state: "open", limit: 1, cursor: "before",
+    });
+
+    expect(result.items).toEqual([pull]);
+    expect(result.nextCursor).toBe("next");
+    const url = new URL(requests[0].path, "https://fixture.example");
+    expect(url.searchParams.get("state")).toBe("open");
+    expect(url.searchParams.get("limit")).toBe("1");
+    expect(url.searchParams.get("cursor")).toBe("before");
+  });
+
+  test("pull filters and pagination share one query string", async () => {
+    const requests = captureFetch([{ pull_requests: [], nextCursor: null }]);
+    await pullsApi.list("alice", "web", { state: "closed", limit: 2, cursor: "a/b" });
+
+    const url = new URL(requests[0].path, "https://fixture.example");
+    expect(url.searchParams.get("state")).toBe("closed");
+    expect(url.searchParams.get("limit")).toBe("2");
+    expect(url.searchParams.get("cursor")).toBe("a/b");
+  });
+
+  test("pull detail and lifecycle writes expose the pull expected by views", async () => {
+    const pull = { number: 7, title: "Existing PR", state: "open", merged: false };
+    const requests = captureFetch(Array.from({ length: 5 }, () => ({ pull_request: pull })));
+    const results = [
+      await pullsApi.get("alice", "web", 7),
+      await pullsApi.create("alice", "web", { title: pull.title, head: "feature", base: "main" }),
+      await pullsApi.update("alice", "web", 7, { title: "Edited PR" }),
+      await pullsApi.close("alice", "web", 7),
+      await pullsApi.reopen("alice", "web", 7),
+    ];
+
+    for (const result of results) expect(result.pull).toEqual(pull);
+    expect(requests.map(r => [r.method, r.path])).toEqual([
+      ["GET", "/api/v1/repos/alice/web/pulls/7"],
+      ["POST", "/api/v1/repos/alice/web/pulls"],
+      ["PATCH", "/api/v1/repos/alice/web/pulls/7"],
+      ["POST", "/api/v1/repos/alice/web/pulls/7/close"],
+      ["POST", "/api/v1/repos/alice/web/pulls/7/reopen"],
+    ]);
+  });
+
+  test("pull merge sends the user's message using the worker contract", async () => {
+    const pull = { number: 7, state: "closed", merged: true };
+    const requests = captureFetch([{ pull_request: pull, merge_commit: "a".repeat(40) }]);
+
+    const result = await pullsApi.merge("alice", "web", 7, {
+      method: "squash", commitMessage: "Keep this exact message",
+    });
+
+    expect(requests[0].body).toEqual({ method: "squash", commit_message: "Keep this exact message" });
+    expect(result.pull).toEqual(pull);
+    expect(result.mergeCommit).toBe("a".repeat(40));
+  });
+
+  test("pull merge combines a supplied title and body without dropping either", async () => {
+    const requests = captureFetch([{ pull_request: { number: 7 }, merge_commit: "b".repeat(40) }]);
+    await pullsApi.merge("alice", "web", 7, {
+      method: "merge", commitTitle: "Subject", commitMessage: "Body line one\nBody line two",
+    });
+
+    expect(requests[0].body).toEqual({ method: "merge", commit_message: "Subject\n\nBody line one\nBody line two" });
+  });
+
   test("webhook operations use the worker's /webhooks routes and envelopes", async () => {
     const webhook = {
       id: "hook-1",
