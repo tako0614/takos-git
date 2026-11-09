@@ -4,10 +4,12 @@
  * and a "New pull request" dialog wired to `pullsApi.create`.
  */
 import {
+  createMemo,
   createResource,
   createSignal,
   ErrorBoundary,
   For,
+  onCleanup,
   Show,
   Suspense,
   type JSX,
@@ -16,6 +18,7 @@ import { A, useNavigate } from "@solidjs/router";
 import { useRepo } from "../../app/RepoLayout.tsx";
 import { pullsApi } from "../../api/pulls.ts";
 import { ApiError } from "../../api/client.ts";
+import { createSubmissionRecovery } from "../../lib/submission-recovery.ts";
 import type { PullRequestDto } from "../../api/types.ts";
 import { useSession } from "../../store/session.tsx";
 import {
@@ -33,6 +36,7 @@ import {
   RelativeTime,
   TextInput,
   Textarea,
+  useConfirmDialog,
   useToast,
 } from "../../ui/index.ts";
 import { PrStateIcon, prDisplayState, principalName } from "./shared.tsx";
@@ -119,47 +123,74 @@ function NewPullDialog(props: {
 }): JSX.Element {
   const navigate = useNavigate();
   const toast = useToast();
+  const { confirm } = useConfirmDialog();
+  const scope = { owner: props.owner, repo: props.repo };
+  const pullsHref = `/${encodeURIComponent(scope.owner)}/${encodeURIComponent(scope.repo)}/pulls`;
   const [title, setTitle] = createSignal("");
   const [base, setBase] = createSignal(props.defaultBase);
   const [head, setHead] = createSignal("");
   const [body, setBody] = createSignal("");
   const [draft, setDraft] = createSignal(false);
-  const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
+  const [created, setCreated] = createSignal<number | null>(null);
+  const submission = createSubmissionRecovery<{
+    input: Parameters<typeof pullsApi.create>[2];
+    revision: number;
+  }>();
+  let retired = false, revision = 0, viewEpoch = 0;
+  onCleanup(() => { retired = true; });
+  const busy = () => submission.state()?.phase === "sending";
+  const close = () => { viewEpoch++; props.onClose(); };
+  function change<T>(setter: (value: T) => unknown, value: T): void { revision++; setter(value); }
 
-  const canSubmit = () => title().trim() && base().trim() && head().trim() && !busy();
+  const canSubmit = () => !retired && title().trim() && base().trim() && head().trim() && !submission.state();
 
   const submit = async () => {
     if (!canSubmit()) return;
-    setBusy(true);
-    setError(null);
+    const attempt = { input: {
+      title: title().trim(),
+      body: body().trim() || undefined,
+      base: base().trim(),
+      head: head().trim(),
+      draft: draft(),
+    }, revision };
+    if (!submission.begin(attempt)) return;
+    const epoch = viewEpoch;
+    setError(null); setCreated(null);
     try {
-      const { pull } = await pullsApi.create(props.owner, props.repo, {
-        title: title().trim(),
-        body: body().trim() || undefined,
-        base: base().trim(),
-        head: head().trim(),
-        draft: draft(),
-      });
-      toast.success(`Opened pull request #${pull.number}`);
-      props.onClose();
-      navigate(`/${props.owner}/${props.repo}/pulls/${pull.number}`);
+      const { pull } = await pullsApi.create(scope.owner, scope.repo, attempt.input);
+      if (retired || !submission.acknowledge(attempt)) return;
+      if (props.open && epoch === viewEpoch && revision === attempt.revision) {
+        toast.success(`Opened pull request #${pull.number}`);
+        close();
+        navigate(`${pullsHref}/${pull.number}`);
+      } else {
+        setCreated(pull.number);
+      }
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Failed to open pull request.");
-    } finally {
-      setBusy(false);
+      if (retired) return;
+      submission.fail(attempt, err);
+      setError(err instanceof ApiError ? err.message : "We could not confirm whether the pull request was created.");
     }
   };
+
+  async function allowAnotherCreation(): Promise<void> {
+    const attempt = submission.unknown();
+    if (!attempt || retired) return;
+    const epoch = viewEpoch;
+    const ok = await confirm({ title: "Allow another PR creation?", message: `Check the pull requests in ${scope.owner}/${scope.repo} for “${attempt.input.title}” first. The earlier request may still complete. Another creation can produce a duplicate; there is no automatic retry. Your form edits remain here.`, confirmText: "Allow another creation" });
+    if (ok && !retired && props.open && epoch === viewEpoch && submission.resolve(attempt)) setError(null);
+  }
 
   return (
     <Dialog
       open={props.open}
-      onClose={props.onClose}
+      onClose={close}
       title="Open a pull request"
       size="lg"
       footer={
         <>
-          <Button onClick={props.onClose} disabled={busy()}>Cancel</Button>
+          <Button onClick={close}>Cancel</Button>
           <Button variant="primary" onClick={submit} disabled={!canSubmit()}>
             {busy() ? "Creating…" : "Create pull request"}
           </Button>
@@ -167,36 +198,48 @@ function NewPullDialog(props: {
       }
     >
       <div class="space-y-3">
-        <Show when={error()}>
-          <Banner tone="danger">{error()}</Banner>
+        <Show when={submission.unknown()}>
+          <Banner tone="warning" title="Creation result unknown">
+            <p>{error()} Check the original repository before creating another PR; the earlier request may have succeeded.</p>
+            <A class="text-accent hover:underline" href={pullsHref} target="_blank" rel="noopener noreferrer">Check original pull requests</A>
+            <Button size="sm" class="ml-2" onClick={() => void allowAnotherCreation()}>Allow another creation</Button>
+          </Banner>
+        </Show>
+        <Show when={!submission.unknown() && error()}>
+          {(message) => <Banner tone="danger">{message()}</Banner>}
+        </Show>
+        <Show when={created()}>
+          {(number) => <Banner tone="success">Pull request <A class="text-accent hover:underline" href={`${pullsHref}/${number()}`}>#{number()}</A> was created. Your form edits remain here.</Banner>}
         </Show>
         <div class="grid grid-cols-2 gap-3">
-          <Field label="Base branch" required>
+          <Field label="Base branch" required for="pull-base">
             <TextInput
+              id="pull-base"
               value={base()}
-              onInput={(e) => setBase(e.currentTarget.value)}
+              onInput={(e) => change(setBase, e.currentTarget.value)}
               placeholder="main"
             />
           </Field>
-          <Field label="Compare (head) branch" required>
+          <Field label="Compare (head) branch" required for="pull-head">
             <TextInput
+              id="pull-head"
               value={head()}
-              onInput={(e) => setHead(e.currentTarget.value)}
+              onInput={(e) => change(setHead, e.currentTarget.value)}
               placeholder="feature-branch"
             />
           </Field>
         </div>
-        <Field label="Title" required>
-          <TextInput value={title()} onInput={(e) => setTitle(e.currentTarget.value)} />
+        <Field label="Title" required for="pull-title">
+          <TextInput id="pull-title" value={title()} onInput={(e) => change(setTitle, e.currentTarget.value)} />
         </Field>
-        <Field label="Description">
-          <Textarea rows={5} value={body()} onInput={(e) => setBody(e.currentTarget.value)} />
+        <Field label="Description" for="pull-body">
+          <Textarea id="pull-body" rows={5} value={body()} onInput={(e) => change(setBody, e.currentTarget.value)} />
         </Field>
         <label class="flex items-center gap-2 text-sm text-fg">
           <input
             type="checkbox"
             checked={draft()}
-            onChange={(e) => setDraft(e.currentTarget.checked)}
+            onChange={(e) => change(setDraft, e.currentTarget.checked)}
             class="tg-focus h-4 w-4 rounded border-border"
           />
           Create as draft
@@ -208,6 +251,7 @@ function NewPullDialog(props: {
 
 export function PRList(): JSX.Element {
   const repo = useRepo();
+  const identity = createMemo(() => ({ owner: repo.owner(), repo: repo.repo() }));
   const session = useSession();
   const [filter, setFilter] = createSignal<StateFilter>("open");
   const [cursor, setCursor] = createSignal<string | null>(null);
@@ -244,17 +288,17 @@ export function PRList(): JSX.Element {
 
   return (
     <div>
-      <Show when={session.authenticated()}>
-        <NewPullDialog
+      <Show when={session.authenticated() && identity()} keyed>
+        {(scope) => <NewPullDialog
           open={showNew()}
-          owner={repo.owner()}
-          repo={repo.repo()}
+          owner={scope.owner}
+          repo={scope.repo}
           defaultBase={repo.detail()?.defaultBranch ?? "main"}
           onClose={() => {
             setShowNew(false);
             refetch();
           }}
-        />
+        />}
       </Show>
 
       <Box>
