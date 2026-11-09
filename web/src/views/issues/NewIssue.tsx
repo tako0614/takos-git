@@ -179,7 +179,7 @@ export function NewIssueForm(props: { owner: string; repo: string }): JSX.Elemen
             <Show when={created()}>
               {(number) => <Banner tone="success">Issue <A class="text-accent hover:underline" href={`${base()}/issues/${number()}`}>#{number()}</A> was created. Your newer edits remain in this draft.</Banner>}
             </Show>
-            <Show when={error() && !submission.unknown()}>
+            <Show when={!submission.unknown() && error()}>
               {(msg) => <Banner tone="danger">{msg()}</Banner>}
             </Show>
 
