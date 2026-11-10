@@ -53,6 +53,21 @@ boundary として維持する。D1 はすでに利用できる metadata plane �
 暗黙に D1 へ二重化しない。metadata operation と ref update をまたぐ処理は retryable state machine として
 明示する。D1 を無効にした deploy は、per-repository ACL を適用せず scope-only の互換動作へ縮退する。
 
+### Default branch settings and recovery
+
+`PATCH /api/v1/repos/:owner/:repo` の `defaultBranch` は、現在の R2 refs document にある branch を選ぶ。
+同じ refs ETag CAS で default HEAD を確定してから D1 の settings を反映するため、通常 clone、
+ref 指定のないコード閲覧、repository detail/list が同じ既定 branch を使う。
+存在しない branch は404 `branch_not_found`、CAS競合は409 `ref_update_conflict`とし、D1 settingsを変更しない。
+repo.admin ACL、hosting.admin scope、browser CSRF は既存のまま適用する。
+
+R2確定後のD1反映失敗は、確定したdefault branchとHTTP202 `metadata_pending: true`を返す。
+既定branchの読取はR2を優先し、同じ明示PATCHでD1反映を再試行できる。R2のACK喪失は成功扱いにせず、
+fresh GET/cloneで現在値を確認してから本人が再試行する。自動再送やrefのrollbackはしない。
+後続writerが既定branchを変えた場合も、先の応答は自分のCASを表し、fresh GETは現在のR2値を返す。
+通常pushで選択branchを削除した場合は、refs documentが選んだ残りの既定branchを読取へ反映する。
+まだbranchのない空repoでは、読取DTOに作成時のconfigured default名を保つ。設定PATCHでbranchは作らない。
+
 ### Committed merge status recovery
 
 PR merge / squash / rebase / conflict resolution は、実行結果の commit・元 head/base・method・actor・時刻を
