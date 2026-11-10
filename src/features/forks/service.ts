@@ -528,6 +528,9 @@ export async function syncFork(
   const result = await writeRefsWithMetadata(bucket, {
     repo: fork.storageKey,
     mutateRefs: (current) => {
+      // Object copy can outlive another push. CAS protects this fresh snapshot,
+      // so also retain the branch tip used for the fast-forward check above.
+      if ((findBranch(current, branch)?.sha ?? null) !== forkTip) return null;
       const others = current.refs.filter(
         (ref) => ref.name !== `refs/heads/${branch}`,
       );
@@ -545,7 +548,7 @@ export async function syncFork(
     },
   });
 
-  if (result.status === "conflict") return { ok: false, code: "conflict" };
+  if (result.status === "conflict" || result.status === "aborted") return { ok: false, code: "conflict" };
   if (result.status !== "committed") return { ok: false, code: "advance_failed" };
 
   let commitsSynced = 0;

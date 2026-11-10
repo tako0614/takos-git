@@ -70,6 +70,14 @@ refを省略したActions discovery/dispatch、baseを省略した新規PR、bra
 明示refと保存済みPR submissionのACKはその元の値を保ち、write-only ACK回復はR2再読取を前提にしない。
 まだbranchのない空repoでは、読取DTOに作成時のconfigured default名を保つ。設定PATCHでbranchは作らない。
 
+### Upstream sync and concurrent pushes
+
+forkの`POST /api/v1/repos/:owner/:repo/sync`はfast-forwardだけを受け付ける。
+object copy中に対象branchが別writerによって更新・削除・作成された場合は、最初の判定に使ったSHAと
+確定時のSHAを比較して409 `conflict`を返す。そのwriterのrefs／D1 projectionを上書きせず、sync eventも送らない。
+現在のbranchを確認して明示再試行する。新しい履歴が分岐していれば409 `diverged`となり、自動force更新はしない。
+対象外branchや既定branch名だけの変更は保持して同期できる。snapshot取得後の競合は既存ETag CASで拒否する。
+
 ### Committed merge status recovery
 
 PR merge / squash / rebase / conflict resolution は、実行結果の commit・元 head/base・method・actor・時刻を
