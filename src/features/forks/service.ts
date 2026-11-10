@@ -401,7 +401,7 @@ export async function forkRepository(
 
     const fork = await getRepoById(db, forkRow.id);
     if (!fork) throw new Error("fork row vanished after provision");
-    return { ok: true, fork, objectsCopied };
+    return { ok: true, fork: { ...fork, defaultBranch: result.refs.defaultBranch ?? fork.defaultBranch }, objectsCopied };
   } catch {
     // Roll back the half-provisioned fork: remove R2 objects/refs then the D1
     // row (cascades repo_forks). The parent is untouched.

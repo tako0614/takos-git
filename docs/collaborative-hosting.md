@@ -69,6 +69,8 @@ fresh GET/cloneで現在値を確認してから本人が再試行する。自�
 refを省略したActions discovery/dispatch、baseを省略した新規PR、branchを省略したfork syncも同じR2既定値を使う。
 明示refと保存済みPR submissionのACKはその元の値を保ち、write-only ACK回復はR2再読取を前提にしない。
 まだbranchのない空repoでは、読取DTOに作成時のconfigured default名を保つ。設定PATCHでbranchは作らない。
+fork作成のACKは、その作成が確定したrefs receiptの既定branchを返し、作成後のR2再読取を前提にしない。
+fork一覧とnetworkは、閲覧を許可された各repositoryの現在のR2既定値を返す。後続writerが変更した場合は作成ACKとfresh読取が異なることがある。
 
 ### Upstream sync and concurrent pushes
 
