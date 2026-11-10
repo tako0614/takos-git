@@ -82,7 +82,7 @@ async function handleOpen(ctx: RouteContext, access: RepoAccess): Promise<Respon
   const key = ctx.request.headers.get("Idempotency-Key");
   if (key !== null && !/^[\x21-\x7e]{1,255}$/u.test(key)) return errorResponse(400, "invalid_idempotency_key", "Idempotency-Key must contain 1–255 visible ASCII characters.");
   const repo = repoKey(access);
-  const baseRef = requestedBase ?? access.repo.defaultBranch;
+  let baseRef = requestedBase;
   const respond = async (result: PullSubmissionResult): Promise<Response> => {
     if (result.outcome === "conflict") return errorResponse(409, "idempotency_conflict", "This submission key was already used for a different PR.");
     if (result.outcome === "deleted") return errorResponse(410, "submission_deleted", "The original PR was removed. Retrying cannot recreate it.");
@@ -100,12 +100,13 @@ async function handleOpen(ctx: RouteContext, access: RepoAccess): Promise<Respon
     const previous = await getPullRequestSubmission(db, access.repo.id, access.auth.principal.id, key, input);
     if (previous) return respond(previous);
   }
+  const refs = await readRepoRefs(ctx.env.BUCKET, repo);
+  baseRef = requestedBase ?? refs.defaultBranch ?? access.repo.defaultBranch;
   if (!baseRef) return errorResponse(422, "invalid_base", "A valid base branch is required.");
   if (headRef === baseRef) {
     return errorResponse(422, "identical_branches", "Head and base branches must differ.");
   }
 
-  const refs = await readRepoRefs(ctx.env.BUCKET, repo);
   const head = refs.refs.find((r) => r.name === `refs/heads/${headRef}`);
   const base = refs.refs.find((r) => r.name === `refs/heads/${baseRef}`);
   if (!head) return errorResponse(422, "head_not_found", `Head branch '${headRef}' does not exist.`);

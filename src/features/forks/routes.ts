@@ -25,6 +25,7 @@ import {
 import type { DbClient } from "../../db/index.ts";
 import type { Route, RouteContext, RouteRegistry } from "../../router.ts";
 import { errorResponse, json } from "../repos/http.ts";
+import { readRepositoryDefaultBranch } from "../repos/repositories.ts";
 import {
   csrfGuard,
   requireRepoAccess,
@@ -336,7 +337,9 @@ const syncHandler: Route["handler"] = async (ctx) => {
   const body = await readJson(ctx.request);
   if (!body) return errorResponse(400, "invalid_body", "Invalid request body.");
   const requested = str(body.branch) ?? str(body.ref);
-  const branch = requested ?? first.repo.defaultBranch;
+  const branch = requested ?? await readRepositoryDefaultBranch(
+    ctx.env.BUCKET, `${first.repo.ownerLogin}/${first.repo.name}`, first.repo.defaultBranch,
+  );
   if (!isValidBranchSegment(branch)) {
     return errorResponse(400, "invalid_branch", "Invalid branch name.");
   }

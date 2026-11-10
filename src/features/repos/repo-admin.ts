@@ -30,6 +30,8 @@ import {
   isValidRepoNameSegment,
   isValidVisibility,
   provisionRepo,
+  readRepositoryDto,
+  setRepoDefaultBranch,
   toRepositoryDto,
   updateRepo,
 } from "./repositories.ts";
@@ -211,9 +213,21 @@ const patchRepoHandler: Route["handler"] = async (ctx) => {
     }
     input.isArchived = body.archived;
   }
+  if (input.defaultBranch !== undefined) {
+    const result = await setRepoDefaultBranch(ctx.env.BUCKET, ctx.db!, access.repo.id, {
+      ...input, defaultBranch: input.defaultBranch,
+    });
+    if (result.status === "absent") return errorResponse(404, "not_found", "Not Found");
+    if (result.status === "branch_not_found") return errorResponse(404, "branch_not_found", "Branch not found.");
+    if (result.status === "conflict") return errorResponse(409, "ref_update_conflict", "Repository refs changed concurrently; retry.");
+    return json({
+      repository: toRepositoryDto(result.repo, originBase(ctx)),
+      ...(result.metadataPending ? { metadata_pending: true } : {}),
+    }, result.metadataPending ? 202 : 200);
+  }
   const updated = await updateRepo(ctx.db!, access.repo.id, input);
   if (!updated) return errorResponse(404, "not_found", "Not Found");
-  return json({ repository: toRepositoryDto(updated, originBase(ctx)) });
+  return json({ repository: await readRepositoryDto(ctx.env.BUCKET, updated, originBase(ctx)) });
 };
 
 /** `DELETE /api/v1/repos/:owner/:repo` — tombstone + quarantine (owner). */

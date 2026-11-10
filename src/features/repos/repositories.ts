@@ -3,7 +3,7 @@
  * and settings. Git objects/refs stay authoritative in R2; the D1 row is the
  * ACL/identity record keyed by the same `<owner>/<name>`.
  *
- * Creation and deletion are the cross-store writes: R2 refs-doc is the atomic
+ * Creation, deletion and default HEAD are cross-store writes: the R2 refs-doc is the atomic
  * boundary (created/removed first), the D1 row is the metadata follow-up. An
  * empty just-created repo carries no objects, so a failed D1 insert safely rolls
  * back its empty R2 refs-doc (no ref advance, no data loss).
@@ -21,6 +21,7 @@ import {
   deleteRepo,
   readRepoRefs,
 } from "../../git/refs-store.ts";
+import { writeRefsWithMetadata } from "../../git/two-phase.ts";
 import {
   cleanupQuarantinedRepository,
   quarantineRepository,
@@ -146,6 +147,24 @@ export function toRepositoryDto(row: RepoRow, originBase: string): RepositoryDto
     updatedAt: row.updatedAt,
     pushedAt: row.pushedAt,
   };
+}
+
+/** Default HEAD is ref state; an empty repo still exposes its configured name. */
+export async function readRepositoryDefaultBranch(
+  bucket: ObjectStoreBinding,
+  storageKey: string,
+  configured: string,
+): Promise<string> {
+  return (await readRepoRefs(bucket, storageKey)).defaultBranch ?? configured;
+}
+
+export async function readRepositoryDto(
+  bucket: ObjectStoreBinding,
+  row: RepoRow,
+  originBase: string,
+): Promise<RepositoryDto> {
+  const defaultBranch = await readRepositoryDefaultBranch(bucket, row.storageKey, row.defaultBranch);
+  return { ...toRepositoryDto(row, originBase), defaultBranch };
 }
 
 export async function getRepoRow(
@@ -287,6 +306,43 @@ export async function updateRepo(
     params,
   );
   return getRepoRowById(db, repoId);
+}
+
+type DefaultBranchUpdate =
+  | { readonly status: "updated"; readonly repo: RepoRow; readonly metadataPending: boolean }
+  | { readonly status: "absent" }
+  | { readonly status: "branch_not_found" }
+  | { readonly status: "conflict" };
+
+/** Commit the selected existing HEAD through the same refs CAS as Git writes. */
+export async function setRepoDefaultBranch(
+  bucket: ObjectStoreBinding,
+  db: DbClient,
+  repoId: string,
+  input: UpdateRepoInput & { readonly defaultBranch: string },
+): Promise<DefaultBranchUpdate> {
+  const row = await getRepoRowById(db, repoId);
+  if (!row) return { status: "absent" };
+  const patch = { ...input }, branch = patch.defaultBranch;
+  let projected: RepoRow | undefined;
+  const result = await writeRefsWithMetadata(bucket, {
+    repo: row.storageKey,
+    mutateRefs: current => current.refs.some(ref => ref.name === `refs/heads/${branch}`)
+      ? { ...current, defaultBranch: branch } : null,
+    projectMetadata: async () => {
+      const updated = await updateRepo(db, row.id, patch);
+      if (!updated) throw Error("Repository metadata is unavailable after the refs commit.");
+      projected = updated;
+    },
+  });
+  if (result.status === "aborted") return { status: "branch_not_found" };
+  if (result.status !== "committed") return { status: result.status };
+  // The response acknowledges this CAS, even if a later writer has since won.
+  return {
+    status: "updated",
+    repo: { ...(projected ?? row), defaultBranch: branch },
+    metadataPending: "metadataDeferred" in result,
+  };
 }
 
 const REPOSITORY_QUARANTINE_MS = 10 * 60_000;
@@ -572,7 +628,7 @@ export async function processRepositoryDeletionQueue(
 export async function repoRefCounts(
   bucket: ObjectStoreBinding,
   storageKey: string,
-): Promise<{ branchCount: number; tagCount: number }> {
+): Promise<{ branchCount: number; tagCount: number; defaultBranch: string | null }> {
   const refs = await readRepoRefs(bucket, storageKey);
   let branchCount = 0;
   let tagCount = 0;
@@ -580,7 +636,7 @@ export async function repoRefCounts(
     if (ref.name.startsWith("refs/heads/")) branchCount += 1;
     else if (ref.name.startsWith("refs/tags/")) tagCount += 1;
   }
-  return { branchCount, tagCount };
+  return { branchCount, tagCount, defaultBranch: refs.defaultBranch };
 }
 
 export interface RepoListPage {

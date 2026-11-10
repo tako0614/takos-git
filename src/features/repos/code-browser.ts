@@ -44,6 +44,7 @@ import {
   cloneUrlFor,
   getRepoRow,
   listReadableRepos,
+  readRepositoryDto,
   repoRefCounts,
   toRepositoryDto,
 } from "./repositories.ts";
@@ -188,7 +189,7 @@ async function handleInfo(ctx: RouteContext, access: RepoAccess): Promise<Respon
   if (!row) return errorResponse(404, "not_found", "Not Found");
   const counts = await repoRefCounts(ctx.env.BUCKET, row.storageKey);
   const dto: RepositoryDto = toRepositoryDto(row, originBase(ctx));
-  return json({ repository: { ...dto, ...counts } });
+  return json({ repository: { ...dto, ...counts, defaultBranch: counts.defaultBranch ?? row.defaultBranch } });
 }
 
 async function handleBranches(ctx: RouteContext, access: RepoAccess): Promise<Response> {
@@ -588,7 +589,7 @@ export const listReposHandler: Route["handler"] = async (ctx) => {
   const page = await listReadableRepos(ctx.db!, identity.principal, { limit, cursor });
   const base = originBase(ctx);
   return json({
-    repositories: page.repos.map((repo) => toRepositoryDto(repo, base)),
+    repositories: await Promise.all(page.repos.map(repo => readRepositoryDto(ctx.env.BUCKET, repo, base))),
     nextCursor: page.nextCursor,
   });
 };
