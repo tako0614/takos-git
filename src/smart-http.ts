@@ -495,18 +495,11 @@ export async function handleReceivePack(
     return receiveResponse(receive.commands, "repository not found");
   const current = snapshot.doc;
   const currentRefs = new Map(current.refs.map((ref) => [ref.name, ref.sha]));
+  // delete-refs advertises server support; clients do not echo it. Deletions
+  // still pass the same old-SHA, per-ref authorization and atomic refs CAS.
   for (const command of receive.commands) {
     if ((currentRefs.get(command.name) ?? ZERO_OID) !== command.oldSha) {
       return receiveResponse(receive.commands, "stale ref value");
-    }
-    if (
-      command.newSha === ZERO_OID &&
-      !receive.capabilities.has("delete-refs")
-    ) {
-      return receiveResponse(
-        receive.commands,
-        "delete-refs capability required",
-      );
     }
   }
 
