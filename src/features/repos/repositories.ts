@@ -150,13 +150,21 @@ export function toRepositoryDto(row: RepoRow, originBase: string): RepositoryDto
 }
 
 /** Default HEAD is ref state; an empty repo still exposes its configured name. */
+export async function readRepositoryDefaultBranch(
+  bucket: ObjectStoreBinding,
+  storageKey: string,
+  configured: string,
+): Promise<string> {
+  return (await readRepoRefs(bucket, storageKey)).defaultBranch ?? configured;
+}
+
 export async function readRepositoryDto(
   bucket: ObjectStoreBinding,
   row: RepoRow,
   originBase: string,
 ): Promise<RepositoryDto> {
-  const refs = await readRepoRefs(bucket, row.storageKey);
-  return { ...toRepositoryDto(row, originBase), defaultBranch: refs.defaultBranch ?? row.defaultBranch };
+  const defaultBranch = await readRepositoryDefaultBranch(bucket, row.storageKey, row.defaultBranch);
+  return { ...toRepositoryDto(row, originBase), defaultBranch };
 }
 
 export async function getRepoRow(

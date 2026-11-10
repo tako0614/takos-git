@@ -7,6 +7,12 @@ import { handleInfoRefs, handleReceivePack } from "../../smart-http.ts";
 import { concatBytes } from "../../git/sha1.ts";
 import { PKT_FLUSH, pktLineString } from "../../git/pack-common.ts";
 import { readRepoRefsSnapshot, writeRepoRefs } from "../../git/refs-store.ts";
+import { putBlob, putCommit } from "../../git/object-store.ts";
+import { buildTreeFromPaths } from "../../git/tree-ops.ts";
+import { repositoryObjectStore } from "../../git/repo-object-store.ts";
+import { FILE_MODES } from "../../git/git-objects.ts";
+import { registerActionsRoutes } from "../actions/routes.ts";
+import { registerPullRoutes } from "../pulls/routes.ts";
 import { registerRepoRoutes } from "./routes.ts";
 import { get, interfaceUserInfoFetch, jsonRequest, makeEnv } from "./testkit.ts";
 
@@ -17,11 +23,22 @@ const tokens = interfaceUserInfoFetch({
   [ADMIN]: { scope: "source.git.hosting.admin", subject: "default-owner" },
   [READ]: { scope: "source.git.hosting.read", subject: "default-owner" },
   taksrv_default_create: { scope: "source.git.hosting.write", subject: "default-owner" },
+  taksrv_default_smart_write: { scope: "source.git.smart_http.write", subject: "default-owner" },
 });
 
 class ObservedBucket extends MemoryBucket {
+  failRefReads = false;
+  refusedRefReads = 0;
   beforeRefsPut?: () => void | Promise<void>;
   afterRefsPut?: () => void | Promise<void>;
+
+  override async get(key: string) {
+    if (this.failRefReads && key.startsWith("git/v2/refs/")) {
+      this.refusedRefReads++;
+      throw Error("refs temporarily unavailable");
+    }
+    return super.get(key);
+  }
 
   override async put(...args: Parameters<MemoryBucket["put"]>) {
     if (args[0].startsWith("git/v2/refs/") && this.beforeRefsPut) {
@@ -44,6 +61,8 @@ async function fixture(empty = false) {
   const env = { ...handle.env, BUCKET: bucket };
   const registry = new RouteRegistry();
   registerRepoRoutes(registry);
+  registerActionsRoutes(registry);
+  registerPullRoutes(registry);
   const dispatch = async (request: Request) => {
     const response = await registry.handle({ request, env, interfaceUserInfoFetch: tokens });
     if (!response) throw Error("route not handled");
@@ -83,6 +102,45 @@ async function defaults(fx: Awaited<ReturnType<typeof fixture>>, branch: string)
   const code = await fx.dispatch(get(`${URL}/commits?limit=1`, READ));
   expect(code.status).toBe(200);
   expect((await code.json()).branch).toBe(branch);
+}
+
+async function workflowBranches(fx: Awaited<ReturnType<typeof fixture>>) {
+  const current = (await readRepoRefsSnapshot(fx.bucket, REPO))!;
+  const objects = repositoryObjectStore(fx.bucket, REPO);
+  const refs = [];
+  for (const branch of ["main", "next"]) {
+    const content = `name: ${branch}\non: workflow_dispatch\njobs:\n  verify:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo ${branch}\n`;
+    const blob = await putBlob(objects, new TextEncoder().encode(content));
+    const tree = await buildTreeFromPaths(objects, [{ path: `.github/workflows/${branch}.yml`, sha: blob, mode: FILE_MODES.REGULAR_FILE }]);
+    const signature = { name: "Fixture", email: "fixture@example.test", timestamp: 1_700_000_000, tzOffset: "+0000" };
+    const sha = await putCommit(objects, { tree, parents: [current.doc.refs[0].sha], author: signature, committer: signature, message: branch });
+    refs.push({ name: `refs/heads/${branch}`, sha });
+  }
+  await writeRepoRefs(fx.bucket, REPO, { ...current.doc, refs }, current.etag);
+  return refs;
+}
+
+async function defaultConsumers(fx: Awaited<ReturnType<typeof fixture>>, branch: string, head: string, sha: string) {
+  const workflows = await fx.dispatch(get(`${URL}/actions/workflows`, READ));
+  const workflowBody = await workflows.json();
+  const dispatched = await fx.dispatch(jsonRequest("POST", `${URL}/actions/runs`, {
+    workflow: `.github/workflows/${branch}.yml`,
+  }, "taksrv_default_smart_write"));
+  const dispatchedBody = await dispatched.json();
+  const pull = await fx.dispatch(jsonRequest("POST", `${URL}/pulls`, {
+    title: "Use the committed default", head,
+  }, "taksrv_default_create"));
+  const pullBody = await pull.json();
+  expect({
+    workflowsStatus: workflows.status,
+    paths: workflowBody.workflows.map((workflow: { path: string }) => workflow.path),
+    dispatchStatus: dispatched.status, runRef: dispatchedBody.run?.ref, runSha: dispatchedBody.run?.sha,
+    pullStatus: pull.status, baseRef: pullBody.pull_request?.base.ref, baseSha: pullBody.pull_request?.base.sha,
+  }).toEqual({
+    workflowsStatus: 200, paths: [`.github/workflows/${branch}.yml`],
+    dispatchStatus: 201, runRef: `refs/heads/${branch}`, runSha: sha,
+    pullStatus: 201, baseRef: branch, baseSha: sha,
+  });
 }
 
 describe("repository default branch is an authoritative refs setting", () => {
@@ -203,5 +261,43 @@ describe("repository default branch is an authoritative refs setting", () => {
     const list = await fx.dispatch(get("/api/v1/repos", READ));
     expect((await list.json()).repositories[0].defaultBranch).toBe("main");
     expect((await fx.patch({ defaultBranch: "missing" })).status).toBe(404);
+  });
+
+  test("Actions and omitted PR base follow R2 after the D1 default projection fails", async () => {
+    const fx = await fixture();
+    const refs = await workflowBranches(fx);
+    await fx.db.run("CREATE TRIGGER reject_default_projection BEFORE UPDATE OF default_branch ON repositories BEGIN SELECT RAISE(ABORT, 'projection unavailable'); END");
+    expect((await fx.patch({ defaultBranch: "next" })).status).toBe(202);
+    expect((await fx.metadata())!.default_branch).toBe("main");
+    await defaultConsumers(fx, "next", "main", refs.find(ref => ref.name === "refs/heads/next")!.sha);
+  });
+
+  test("Actions and omitted PR base ignore an older metadata projection finishing last", async () => {
+    const fx = await fixture();
+    const refs = await workflowBranches(fx);
+    fx.bucket.afterRefsPut = async () => { expect((await fx.patch({ defaultBranch: "main" })).status).toBe(200); };
+    expect((await fx.patch({ defaultBranch: "next" })).status).toBe(200);
+    expect((await fx.metadata())!.default_branch).toBe("next");
+    await defaultConsumers(fx, "main", "next", refs.find(ref => ref.name === "refs/heads/main")!.sha);
+  });
+
+  test("write-only saved PR ACK recovery still precedes any default-branch R2 read", async () => {
+    const fx = await fixture();
+    await workflowBranches(fx);
+    expect((await fx.patch({ defaultBranch: "next" })).status).toBe(200);
+    const request = () => {
+      const value = jsonRequest("POST", `${URL}/pulls`, { title: "Original ACK", head: "main" }, "taksrv_default_create");
+      value.headers.set("Idempotency-Key", "default-branch-original-ack");
+      return value;
+    };
+    const created = await fx.dispatch(request());
+    expect(created.status).toBe(201);
+    const acknowledged = await created.json();
+    fx.bucket.failRefReads = true;
+    const replayed = await fx.dispatch(request());
+    expect(replayed.status).toBe(201);
+    expect(replayed.headers.get("Idempotency-Replayed")).toBe("true");
+    expect(await replayed.json()).toEqual(acknowledged);
+    expect(fx.bucket.refusedRefReads).toBe(0);
   });
 });

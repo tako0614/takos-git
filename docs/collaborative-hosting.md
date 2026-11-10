@@ -66,6 +66,8 @@ R2確定後のD1反映失敗は、確定したdefault branchとHTTP202 `metadata
 fresh GET/cloneで現在値を確認してから本人が再試行する。自動再送やrefのrollbackはしない。
 後続writerが既定branchを変えた場合も、先の応答は自分のCASを表し、fresh GETは現在のR2値を返す。
 通常pushで選択branchを削除した場合は、refs documentが選んだ残りの既定branchを読取へ反映する。
+refを省略したActions discovery/dispatch、baseを省略した新規PR、branchを省略したfork syncも同じR2既定値を使う。
+明示refと保存済みPR submissionのACKはその元の値を保ち、write-only ACK回復はR2再読取を前提にしない。
 まだbranchのない空repoでは、読取DTOに作成時のconfigured default名を保つ。設定PATCHでbranchは作らない。
 
 ### Committed merge status recovery

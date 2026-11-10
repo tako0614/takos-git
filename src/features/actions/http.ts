@@ -25,6 +25,7 @@ import { readRepoRefs } from "../../git/refs-store.ts";
 import type { ObjectStoreBinding } from "../../git/types.ts";
 import type { RouteContext } from "../../router.ts";
 import { errorResponse, json } from "../repos/http.ts";
+import { readRepositoryDefaultBranch } from "../repos/repositories.ts";
 import {
   csrfGuard,
   requireRepoAccess,
@@ -138,7 +139,8 @@ async function listWorkflowsHandler(ctx: RouteContext): Promise<Response> {
   );
   const cachedByPath = new Map(cached.map((row) => [row.path, row]));
 
-  const branch = ctx.url.searchParams.get("branch") || access.repo.defaultBranch;
+  const branch = ctx.url.searchParams.get("branch") ||
+    await readRepositoryDefaultBranch(ctx.env.BUCKET, repoKey(access), access.repo.defaultBranch);
   const objects = objectsFor(ctx, access);
   let paths: string[] = [...cachedByPath.keys()];
   const sha = await resolveBranchSha(ctx.env.BUCKET, repoKey(access), branch);
@@ -338,7 +340,7 @@ async function dispatchRunHandler(ctx: RouteContext): Promise<Response> {
   const branch =
     typeof branchRaw === "string" && branchRaw.length > 0
       ? branchRaw.replace(/^refs\/heads\//u, "")
-      : access.repo.defaultBranch;
+      : await readRepositoryDefaultBranch(ctx.env.BUCKET, repoKey(access), access.repo.defaultBranch);
   let inputs: Record<string, unknown> | null = null;
   if (body.inputs !== undefined && body.inputs !== null) {
     if (typeof body.inputs !== "object" || Array.isArray(body.inputs)) {
@@ -451,7 +453,7 @@ async function rerunHandler(ctx: RouteContext): Promise<Response> {
     workflowName: result.workflow.name ?? null,
     contentSha: file.contentSha,
     event: run.event,
-    ref: run.ref ?? `refs/heads/${access.repo.defaultBranch}`,
+    ref: run.ref ?? `refs/heads/${await readRepositoryDefaultBranch(ctx.env.BUCKET, repoKey(access), access.repo.defaultBranch)}`,
     sha: run.sha,
     actorId,
     inputs,
