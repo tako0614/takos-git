@@ -23,6 +23,7 @@ import {
   type RepositoryDto,
 } from "../../contract/v1.ts";
 import type { DbClient } from "../../db/index.ts";
+import type { ObjectStoreBinding } from "../../git/types.ts";
 import type { Route, RouteContext, RouteRegistry } from "../../router.ts";
 import { errorResponse, json } from "../repos/http.ts";
 import { readRepositoryDefaultBranch } from "../repos/repositories.ts";
@@ -160,6 +161,7 @@ async function authorizeTargetOwner(
 
 /** Map a fork-network member to a DTO (its parent is resolved for `forkOf`). */
 async function memberDto(
+  bucket: ObjectStoreBinding,
   db: DbClient,
   member: RepoFullRow,
   base: string,
@@ -169,7 +171,8 @@ async function memberDto(
     const parent = await getRepoById(db, member.forkOfId);
     parentFullName = parent ? `${parent.ownerLogin}/${parent.name}` : null;
   }
-  return toRepositoryDtoFull(member, parentFullName, base);
+  const defaultBranch = await readRepositoryDefaultBranch(bucket, member.storageKey, member.defaultBranch);
+  return { ...toRepositoryDtoFull(member, parentFullName, base), defaultBranch };
 }
 
 async function readable(
@@ -292,7 +295,8 @@ const listForksHandler: Route["handler"] = async (ctx) => {
   const forks: RepositoryDto[] = [];
   for (const child of children) {
     if (!(await readable(ctx.db!, access.auth.principal, child))) continue;
-    forks.push(toRepositoryDtoFull(child, parentFullName, base));
+    const defaultBranch = await readRepositoryDefaultBranch(ctx.env.BUCKET, child.storageKey, child.defaultBranch);
+    forks.push({ ...toRepositoryDtoFull(child, parentFullName, base), defaultBranch });
   }
   return json({ forks });
 };
@@ -316,11 +320,11 @@ const networkHandler: Route["handler"] = async (ctx) => {
   const nodes: RepositoryDto[] = [];
   for (const member of members) {
     if (!(await readable(ctx.db!, access.auth.principal, member))) continue;
-    nodes.push(await memberDto(ctx.db!, member, base));
+    nodes.push(await memberDto(ctx.env.BUCKET, ctx.db!, member, base));
   }
   const rootReadable = await readable(ctx.db!, access.auth.principal, root);
   return json({
-    root: rootReadable ? await memberDto(ctx.db!, root, base) : null,
+    root: rootReadable ? nodes.find(member => member.id === root.id) ?? await memberDto(ctx.env.BUCKET, ctx.db!, root, base) : null,
     repositories: nodes,
   });
 };
