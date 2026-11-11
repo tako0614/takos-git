@@ -315,6 +315,13 @@ Accounts roleやWorkspace参加をorg adminの代わりにしない。DBなし�
 GitHub REST/GraphQL API や GitHub Actions の完全互換は目標にしない。必要な integration は
 versioned capability として追加し、未対応 API を GitHub 互換として広告しない。
 
+### Browser review submission
+
+PRレビューのACKは、送信時の本文だけに適用する。送信待ちに追記・編集した本文があれば、
+その入力とフォームを残したままレビュー一覧を更新する。本文が変わらなければ従来どおり閉じる。
+画面移動で退役したフォームの遅いACK・失敗は、次の画面へ成功通知や状態更新を反映しない。
+失敗した送信の自動再送は行わず、結果不明時はレビュー一覧で元の結果を確認する。
+
 ## Self-hosted Actions runner
 
 Actions の実行層は takos-git 自身の Worker に埋め込む。Queue consumer、run coordinator DO、

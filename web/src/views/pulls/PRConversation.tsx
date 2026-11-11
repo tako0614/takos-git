@@ -350,8 +350,8 @@ function Conversation(props: ConversationProps & { target: ConversationTarget })
             owner={props.owner}
             repo={props.repo}
             number={props.pr.number}
-            onSubmitted={() => {
-              setShowReview(false);
+            onSubmitted={({ keepOpen }) => {
+              if (!keepOpen) setShowReview(false);
               refetchReviews();
             }}
             onCancel={() => setShowReview(false)}
