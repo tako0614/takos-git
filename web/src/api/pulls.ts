@@ -3,6 +3,7 @@
  * Pull requests views (list / detail / diff / files / conflicts / merge).
  */
 import { api, getPage, repoPath, type Page, type Query } from "./client.ts";
+import type { SubmissionContext } from "./issues.ts";
 import type {
   CommitSummary,
   DiffPayload,
@@ -101,6 +102,11 @@ export const pullsApi = {
 
   review(owner: string, repo: string, number: number, input: { state: "approved" | "changes_requested" | "commented"; body?: string; commitSha?: string }): Promise<{ review: ReviewDto }> {
     return api.post(`${repoPath(owner, repo)}/pulls/${number}/reviews`, input);
+  },
+
+  /** An old Worker must refuse this route rather than ignore its recovery key. */
+  submitReview(owner: string, repo: string, number: number, input: SubmissionContext & { state: "approved" | "changes_requested" | "commented"; body?: string }, idempotencyKey: string): Promise<{ review: ReviewDto }> {
+    return api.post(`${repoPath(owner, repo)}/pulls/${number}/reviews/submissions`, input, undefined, { idempotencyKey });
   },
 
   comment(owner: string, repo: string, number: number, input: { body: string; path: string; line: number; side?: "LEFT" | "RIGHT"; commitSha?: string }): Promise<{ comment: ReviewCommentDto }> {

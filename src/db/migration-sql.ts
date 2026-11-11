@@ -11,6 +11,7 @@ import repositoryDeletionQuarantine from "../../migrations/0004_repository_delet
 import issueCommentSubmissions from "../../migrations/0005_issue_comment_submissions.sql" with { type: "text" };
 import issueSubmissions from "../../migrations/0006_issue_submissions.sql" with { type: "text" };
 import pullRequestSubmissions from "../../migrations/0007_pull_request_submissions.sql" with { type: "text" };
+import pullReviewSubmissions from "../../migrations/0008_pull_review_submissions.sql" with { type: "text" };
 
 export const migrations: readonly {
   readonly version: string;
@@ -23,6 +24,7 @@ export const migrations: readonly {
   { version: "0005", sql: issueCommentSubmissions },
   { version: "0006", sql: issueSubmissions },
   { version: "0007", sql: pullRequestSubmissions },
+  { version: "0008", sql: pullReviewSubmissions },
 ];
 
 /**

@@ -350,6 +350,10 @@ function Conversation(props: ConversationProps & { target: ConversationTarget })
             owner={props.owner}
             repo={props.repo}
             number={props.pr.number}
+            recovery={target.repositoryId && target.recoveryScope && target.issueId ? {
+              storage: () => sessionStorage, scope: target.recoveryScope,
+              repositoryId: target.repositoryId, issueId: target.issueId,
+            } : null}
             onSubmitted={({ keepOpen }) => {
               if (!keepOpen) setShowReview(false);
               refetchReviews();
