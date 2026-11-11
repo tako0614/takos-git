@@ -121,17 +121,20 @@ export interface BlobResponse {
 // Diffs (git/commit-diff.ts → buildDiffPayload)
 // ============================================================================
 
-export type DiffLineType = "context" | "add" | "del";
+export type DiffLineType = "context" | "add" | "delete";
 
 export interface DiffLine {
   readonly type: DiffLineType;
-  readonly text: string;
-  readonly oldLine?: number | null;
-  readonly newLine?: number | null;
+  readonly content: string;
+  readonly oldLineNumber?: number;
+  readonly newLineNumber?: number;
 }
 
 export interface DiffHunk {
-  readonly header: string;
+  readonly oldStart: number;
+  readonly oldLines: number;
+  readonly newStart: number;
+  readonly newLines: number;
   readonly lines: readonly DiffLine[];
 }
 
