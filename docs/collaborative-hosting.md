@@ -315,6 +315,20 @@ Accounts roleやWorkspace参加をorg adminの代わりにしない。DBなし�
 GitHub REST/GraphQL API や GitHub Actions の完全互換は目標にしない。必要な integration は
 versioned capability として追加し、未対応 API を GitHub 互換として広告しない。
 
+### Browser diff contract
+
+Commit/compareとPR Filesの表示は、実Workerの`git/text-diff.ts`が返す
+`content`・`oldLineNumber`・`newLineNumber`と`delete`種別を使う。
+unified headerはhunkのold/new start・countから表示する。
+PRの行コメントは削除行をLEFT/元行、追加・context行をRIGHT/新行へ固定し、
+行番号が無い行にコメント先を推測して補わない。APIのschemaや認可を表示の都合で変更しない。
+
+行コメントのACKも送信時の入力版だけを確認する。送信待ちに追記やedit/revertがあれば、
+新しい本文とcomposerを残す。request先と行・commit・UI identityを捕捉し、退役やscope変更後の
+応答で別の入力を消したり成功表示を出したりしない。未確認・不完全ACK・失敗では本文を残す。
+このinline endpointには同key復旧receiptが無く、自動再送もしない。結果不明時はcomment一覧を
+確認してから次の操作を決める。reloadを越えるinline draft保存は、この入力版保持の保証に含めない。
+
 ### Browser review submission
 
 PRレビューのACKは、送信時の本文だけに適用する。送信待ちに追記・編集した本文があれば、
