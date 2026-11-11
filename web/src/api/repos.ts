@@ -12,6 +12,7 @@ import type {
   CommitDetailResponse,
   CommitListResponse,
   CompareResponse,
+  DiffPayload,
   RepoDetail,
   RepositoryDto,
   TagDto,
@@ -24,6 +25,14 @@ export interface RepositoryCreateInput {
   readonly description?: string;
   readonly visibility?: Visibility;
   readonly defaultBranch?: string;
+}
+
+/** The owning code-browser handler returns counts and files at the top level. */
+interface CompareWireResponse extends Omit<CompareResponse, "ahead" | "behind" | "diff"> {
+  readonly aheadBy: number;
+  readonly behindBy: number;
+  readonly baseSha: string;
+  readonly files: DiffPayload["files"];
 }
 
 export const reposApi = {
@@ -59,8 +68,14 @@ export const reposApi = {
   },
 
   /** `GET …/compare/:base...:head`. */
-  compare(owner: string, repo: string, spec: string, signal?: AbortSignal): Promise<CompareResponse> {
-    return api.get<CompareResponse>(`${repoPath(owner, repo)}/compare/${spec}`, undefined, signal);
+  async compare(owner: string, repo: string, spec: string, signal?: AbortSignal): Promise<CompareResponse> {
+    const body = await api.get<CompareWireResponse>(`${repoPath(owner, repo)}/compare/${encodeURIComponent(spec)}`, undefined, signal);
+    return {
+      ...body,
+      ahead: body.aheadBy,
+      behind: body.behindBy,
+      diff: { base: body.mergeBaseSha ?? body.baseSha, files: body.files },
+    };
   },
 
   /** `GET …/tree?ref=&path=`. */

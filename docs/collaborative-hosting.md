@@ -317,6 +317,11 @@ versioned capability として追加し、未対応 API を GitHub 互換とし�
 
 ### Browser diff contract
 
+compare clientは既存Workerのtop-level `aheadBy`・`behindBy`・`files`を画面の件数・diffへ投影する。
+diffのbaseは実handlerと同じ`mergeBaseSha ?? baseSha`を使い、merge baseを捏造しない。
+`base...head`は一つのAPI route segmentへencodeし、`feature/topic`のようなbranch名も保持する。
+元APIのstatus・認可・失敗応答とGit比較処理自体は変更しない。
+
 Commit/compareとPR Filesの表示は、実Workerの`git/text-diff.ts`が返す
 `content`・`oldLineNumber`・`newLineNumber`と`delete`種別を使う。
 unified headerはhunkのold/new start・countから表示する。
