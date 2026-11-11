@@ -354,7 +354,13 @@ DBの`0008`は旧migrationを変えず、reviewとそのreceiptを既存の
 receiptはIssue/principal/キーに拘束し、元PR・review・headを保持する。内容変更は409、
 元reviewやPRが消えた場合は410で復活させない。replay時も現在の認可/contextを確認する。
 移動したheadや閉じたPRへの復旧でも元のreviewだけを返し、再通知しない。通知は従来のbest-effort。
-ACK後に記録を消した後の未送信draft全般の永続化は別機能で、元intentの復旧とは区別する。
+元ACK確認時に残る未送信の追記は、元キーを持たない別のdraftとして同じtab storageへ先に保存し、
+その後で元intentの記録を退役させる。reloadやConversation/Files間の移動でも追記を復元し、
+未確認の送信としては扱わない。追記の送信は別の明示操作と新しいキーを必要とする。
+復元した追記の編集も保存し、明示的な空欄化や追記自体の確認済み送信で、そのdraftだけを消す。
+caller/repository/Issueで保存先を分け、別フォームが更新した保存内容を古いACKで上書き・削除しない。
+保存失敗では元intentを残し、同じキーで確認をやり直せる。初回送信前の通常draft全般、
+tab closure/保存消去後や他端末からの回復、旧frontendへのrollbackはこの保証に含めない。
 
 ## Self-hosted Actions runner
 

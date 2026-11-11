@@ -4,6 +4,7 @@ import { ApiError } from "../../api/client.ts";
 import { createJournaledSubmission } from "../../lib/journaled-submission.ts";
 import { isRecord } from "../../lib/submission-journal.ts";
 import { createReviewJournal, reviewContext, type ReviewAttempt, type ReviewFormSnapshot, type ReviewJournalOptions, type ReviewVerdict } from "./review-journal.ts";
+import { createReviewDraftStore, REVIEW_DRAFT_ERROR, type SavedReviewDraft } from "./review-draft.ts";
 export type { ReviewVerdict } from "./review-journal.ts";
 interface ReviewTarget { owner: string; repo: string; number: number }
 export interface ReviewAcknowledgment { keepOpen: boolean }
@@ -17,14 +18,35 @@ export function createReviewSubmission(options: {
 }) {
   const flow = createJournaledSubmission<ReviewAttempt, ReviewFormSnapshot>(options.recovery ? createReviewJournal(options.recovery) : null,
     (a): ReviewFormSnapshot => ({ body: body(), revision: a.submittedRevision }));
-  const restored = flow.restoredForm();
+  const drafts = options.recovery ? createReviewDraftStore(options.recovery) : null;
+  const [draftError, setDraftError] = createSignal<string | null>(null);
+  let retainedDraft: SavedReviewDraft | null = null;
+  try { retainedDraft = drafts?.read() ?? null; } catch { setDraftError(REVIEW_DRAFT_ERROR); }
+  let draftRaw = retainedDraft?.raw ?? null;
+  let draftActive = retainedDraft !== null;
+  const restored = flow.restoredForm() ?? retainedDraft?.form;
   const [body, setBody] = createSignal(restored?.body ?? "");
   const [busy, setBusy] = createSignal<ReviewVerdict | null>(null);
   const [error, setError] = createSignal<string | null>(null);
   let revision = restored?.revision ?? 0, retired = false;
   const targetKey = () => { const t = options.target(); return JSON.stringify([t.owner, t.repo, t.number]); };
+  function saveDraft(form: ReviewFormSnapshot): void {
+    try { draftRaw = drafts?.write(form, draftRaw) ?? null; setDraftError(null); }
+    catch { setDraftError(REVIEW_DRAFT_ERROR); throw new Error(REVIEW_DRAFT_ERROR); }
+  }
+  function draftAvailable(): boolean {
+    if (!draftError()) return true;
+    try {
+      if ((drafts?.read()?.raw ?? null) !== draftRaw) return false;
+      setDraftError(null); return true;
+    } catch { return false; }
+  }
   function updateBody(value: string): void {
+    if (retired) return;
     revision += 1; setBody(value); flow.saveForm({ body: value, revision });
+    if (draftActive && !flow.state()) {
+      try { saveDraft({ body: value, revision }); } catch { /* Keep visible input and report storage failure. */ }
+    }
   }
   async function send(attempt: ReviewAttempt): Promise<void> {
     const target = { ...options.target() }, captured = targetKey();
@@ -41,8 +63,12 @@ export function createReviewSubmission(options: {
         || !(review.commitSha === null || typeof review.commitSha === "string" && /^[a-f0-9]{40}$/u.test(review.commitSha))) {
         throw new TypeError("The original review was not confirmed.");
       }
-      if (!flow.acknowledge(attempt)) return;
       const keepOpen = revision !== attempt.submittedRevision;
+      // Persist a distinct unsent draft before retiring the original journal.
+      // A failed write leaves that original available for same-key recovery.
+      saveDraft({ body: keepOpen ? body() : "", revision });
+      if (!flow.acknowledge(attempt)) return;
+      draftActive = keepOpen;
       if (!keepOpen) setBody("");
       options.onSuccess(attempt.state); options.onSubmitted({ keepOpen });
     } catch (err) {
@@ -55,6 +81,7 @@ export function createReviewSubmission(options: {
   async function submit(state: ReviewVerdict): Promise<void> {
     if (retired || busy() || flow.state()) return;
     if (!options.recovery) { setError("Safe review recovery is unavailable. Reload after the server has been updated."); return; }
+    if (!draftAvailable()) { setError(REVIEW_DRAFT_ERROR); return; }
     const text = body().trim();
     if (state === "commented" && !text) { setError("A comment review requires a message."); return; }
     const attempt: ReviewAttempt = { idempotencyKey: crypto.randomUUID(), revision, submittedRevision: revision,
@@ -66,11 +93,12 @@ export function createReviewSubmission(options: {
   async function retryOriginal(): Promise<void> {
     const attempt = flow.unknown();
     if (retired || busy() || !attempt) return;
+    if (!draftAvailable()) { setError(REVIEW_DRAFT_ERROR); return; }
     // Reconfirm custody of this same journal before a manual recovery request.
     flow.saveForm({ body: body(), revision });
     if (flow.storageError()) { setError(flow.storageError()); return; }
     if (flow.retry(attempt)) await send(attempt);
   }
   return { body, busy, error, updateBody, submit, retryOriginal, pending: flow.state,
-    storageError: flow.storageError, dispose: () => { retired = true; } };
+    storageError: () => draftError() ?? flow.storageError(), dispose: () => { retired = true; } };
 }

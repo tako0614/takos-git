@@ -28,6 +28,22 @@ function fixture(storage = new Map<string, string>()) {
     setTarget: (value: typeof target) => { target = value; } };
 }
 
+test("a confirmed original leaves its newer unsent draft recoverable after reload without another pending request", async () => {
+  const f = fixture(); f.flow.updateBody("original");
+  const done = f.flow.submit("commented"); f.flow.updateBody("newer follow-up");
+  f.acknowledge(0); await done; f.flow.dispose();
+  const restored = fixture(f.storage);
+  expect(restored.flow.body()).toBe("newer follow-up");
+  expect(restored.flow.pending()).toBeNull(); expect(restored.requests).toEqual([]);
+  const followUp = restored.flow.submit("commented");
+  expect(restored.requests[0]!.body.body).toBe("newer follow-up");
+  expect(restored.requestKeys[0]).not.toBe(f.requestKeys[0]);
+  restored.acknowledge(0); await followUp; restored.flow.dispose();
+  const after = fixture(f.storage);
+  expect(after.flow.body()).toBe(""); expect(after.flow.pending()).toBeNull();
+  expect(after.requests).toEqual([]);
+});
+
 for (const verdict of ["commented", "approved", "changes_requested"] as const) {
   test(`an unchanged ${verdict} ACK clears and closes only the submitted draft`, async () => {
     const f = fixture();
@@ -142,7 +158,8 @@ test("reload restores original key and newer input, with no automatic request or
   restored.acknowledge(0); await retry;
   expect(restored.flow.body()).toBe("newer unsent input");
   expect(restored.acknowledgments).toEqual([{ keepOpen: true }]);
-  expect(restored.storage.size).toBe(0);
+  expect([...restored.storage.keys()].filter(k => k.startsWith("takos-git:pending-review:"))).toHaveLength(0);
+  expect([...restored.storage.keys()].filter(k => k.startsWith("takos-git:review-draft:"))).toHaveLength(1);
 });
 
 test("reload of unchanged original input closes only after original keyed ACK", async () => {
@@ -202,11 +219,47 @@ test("a failed local ACK cleanup retains the original intent for a same-key retr
     }) }, onSubmitted: a => { acknowledgments.push(a); }, onSuccess: () => {} });
   flow.updateBody("original"); const done = flow.submit("commented"); flow.updateBody("newer");
   f.acknowledge(0); await done;
-  expect(flow.pending()?.phase).toBe("unknown"); expect(f.storage.size).toBe(1);
+  expect(flow.pending()?.phase).toBe("unknown");
+  expect([...f.storage.keys()].filter(k => k.startsWith("takos-git:pending-review:"))).toHaveLength(1);
+  expect([...f.storage.keys()].filter(k => k.startsWith("takos-git:review-draft:"))).toHaveLength(1);
   expect(flow.body()).toBe("newer"); expect(acknowledgments).toEqual([]);
   failRemove = false; const retry = flow.retryOriginal(); f.acknowledge(1); await retry;
   expect(f.requestKeys[1]).toBe(f.requestKeys[0]); expect(acknowledgments).toEqual([{ keepOpen: true }]);
-  expect(flow.body()).toBe("newer"); expect(f.storage.size).toBe(0);
+  expect(flow.body()).toBe("newer");
+  expect([...f.storage.keys()].filter(k => k.startsWith("takos-git:pending-review:"))).toHaveLength(0);
+  expect([...f.storage.keys()].filter(k => k.startsWith("takos-git:review-draft:"))).toHaveLength(1);
+});
+
+test("recovered unsent text remains stored through further editing and explicit clearing", async () => {
+  const f = fixture(); f.flow.updateBody("original");
+  const done = f.flow.submit("commented"); f.flow.updateBody("newer"); f.acknowledge(0); await done;
+  f.flow.updateBody(""); expect(f.storage.size).toBe(0);
+  f.flow.updateBody("edited again"); f.flow.dispose();
+  const restored = fixture(f.storage);
+  expect(restored.flow.body()).toBe("edited again"); expect(restored.flow.pending()).toBeNull();
+  restored.flow.updateBody(""); restored.flow.dispose();
+  expect(fixture(f.storage).flow.body()).toBe("");
+});
+
+test("failed follow-up persistence cannot retire the original receipt or report a successful ACK", async () => {
+  const f = fixture(); let failDraft = true;
+  const acks: ReviewAcknowledgment[] = [];
+  const flow = createReviewSubmission({ target: () => ({ owner: "alice", repo: "project", number: 1 }),
+    recovery: { scope: "S".repeat(43), repositoryId: "repo-1", issueId: "issue-1", storage: () => ({
+      getItem: k => f.storage.get(k) ?? null,
+      setItem: (k,v) => { if (failDraft && k.startsWith("takos-git:review-draft:")) throw new Error("draft unavailable"); f.storage.set(k,v); },
+      removeItem: k => { f.storage.delete(k); },
+    }) }, onSubmitted: ack => { acks.push(ack); }, onSuccess: () => {} });
+  flow.updateBody("original"); const done = flow.submit("commented"); flow.updateBody("newer");
+  f.acknowledge(0); await done;
+  expect(flow.pending()?.phase).toBe("unknown"); expect(flow.body()).toBe("newer");
+  expect(acks).toEqual([]); expect(flow.storageError()).not.toBeNull();
+  expect([...f.storage.keys()].filter(k => k.startsWith("takos-git:pending-review:"))).toHaveLength(1);
+  failDraft = false; const retry = flow.retryOriginal();
+  expect(f.requestKeys[1]).toBe(f.requestKeys[0]); f.acknowledge(1); await retry;
+  expect(acks).toEqual([{ keepOpen: true }]); flow.dispose();
+  const restored = fixture(f.storage);
+  expect(restored.flow.body()).toBe("newer"); expect(restored.flow.pending()).toBeNull();
 });
 
 test("retry cannot overwrite another retained intent or dispatch its old key", async () => {
