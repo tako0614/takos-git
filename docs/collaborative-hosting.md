@@ -322,6 +322,21 @@ PRレビューのACKは、送信時の本文だけに適用する。送信待ち
 画面移動で退役したフォームの遅いACK・失敗は、次の画面へ成功通知や状態更新を反映しない。
 失敗した送信の自動再送は行わず、結果不明時はレビュー一覧で元の結果を確認する。
 
+レビューの復旧は`POST /api/v1/repos/:owner/:repo/pulls/:number/reviews/submissions`と
+元の`Idempotency-Key`を使う。旧Workerがキーを無視しないよう、旧`/reviews`へのfallbackはしない。
+従来のキー無し`/reviews`は、独立した新しいレビューとして互換性を保つ。
+browserは正規のrepository/Issue/sign-in contextで、送信前に元のverdict・本文・キーと現在入力を
+端末のtab storageへ保存する。保存確認前はPOSTしない。未確認の元送信と待機中の追記は
+reloadやConversation/Files間の移動後にも復元し、「Retry original review」でだけ照合する。
+不完全なACK、保存/削除失敗、元結果が不明なままの拒否では、元の記録を捨てて別キーにしない。
+
+DBの`0008`は旧migrationを変えず、reviewとそのreceiptを既存の
+[D1 batch](https://developers.cloudflare.com/d1/worker-api/d1-database/#batch)で一緒に確定する追加tableである。
+receiptはIssue/principal/キーに拘束し、元PR・review・headを保持する。内容変更は409、
+元reviewやPRが消えた場合は410で復活させない。replay時も現在の認可/contextを確認する。
+移動したheadや閉じたPRへの復旧でも元のreviewだけを返し、再通知しない。通知は従来のbest-effort。
+ACK後に記録を消した後の未送信draft全般の永続化は別機能で、元intentの復旧とは区別する。
+
 ## Self-hosted Actions runner
 
 Actions の実行層は takos-git 自身の Worker に埋め込む。Queue consumer、run coordinator DO、

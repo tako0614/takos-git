@@ -18,10 +18,12 @@ import {
 import { computeGitState } from "./read-model.ts";
 import { emitRepoEvent } from "./events.ts";
 import { prReadHandler, prWriteHandler, readJson, type PrHandlerCtx } from "./shared.ts";
+import { submissionContextError, type SubmissionContextInput } from "../submission-context.ts";
+import { createReviewSubmission, getReviewSubmission, type ReviewSubmissionResult } from "./review-submissions.ts";
 
 const REVIEW_STATES = new Set(["approved", "changes_requested", "commented"]);
 
-interface SubmitBody {
+interface SubmitBody extends SubmissionContextInput {
   state?: unknown;
   status?: unknown;
   body?: unknown;
@@ -29,7 +31,7 @@ interface SubmitBody {
 
 async function handleSubmit(ctx: RouteContext, prctx: PrHandlerCtx): Promise<Response> {
   const { access, pr, repo } = prctx;
-  if (pr.state !== "open") {
+  if (ctx.request.headers.get("Idempotency-Key") === null && pr.state !== "open") {
     return errorResponse(409, "not_open", "Cannot review a closed or merged pull request.");
   }
   const body = await readJson<SubmitBody>(ctx);
@@ -47,6 +49,18 @@ async function handleSubmit(ctx: RouteContext, prctx: PrHandlerCtx): Promise<Res
   const now = db.now();
   const id = db.id();
   const reviewerId = access.auth.principal.id === "anon" ? null : access.auth.principal.id;
+  const contextError = await submissionContextError(ctx, access.auth, access.repo.id, body, pr.issueId);
+  if (contextError) return contextError;
+  const key = ctx.request.headers.get("Idempotency-Key");
+  if (key !== null && !/^[\x21-\x7e]{1,255}$/u.test(key)) return errorResponse(400, "invalid_idempotency_key", "Idempotency-Key must contain 1–255 visible ASCII characters.");
+  if (key !== null) {
+    if (!reviewerId) return errorResponse(401, "unauthenticated", "Sign in to recover a review.");
+    const original = await getReviewSubmission(db, pr, reviewerId, key, { state, body: reviewBody });
+    if (original) return submissionResponse(original);
+  }
+  if (pr.state !== "open") {
+    return errorResponse(409, "not_open", "Cannot review a closed or merged pull request.");
+  }
   if (
     reviewerId !== null &&
     reviewerId === pr.authorId &&
@@ -61,7 +75,9 @@ async function handleSubmit(ctx: RouteContext, prctx: PrHandlerCtx): Promise<Res
   // Anchor the verdict to the current head tip (R2-authoritative).
   const gitState = await computeGitState(ctx.env.BUCKET, repo, pr, false);
 
-  await db.run(
+  const submission = key === null ? null : await createReviewSubmission(db, pr, reviewerId!, key, { state, body: reviewBody }, gitState.headSha);
+  if (submission && submission.outcome !== "created") return submissionResponse(submission);
+  if (!submission) await db.run(
     `INSERT INTO pr_reviews (id, pr_id, reviewer_id, state, body, commit_sha, submitted_at, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     [id, pr.id, reviewerId, state, reviewBody, gitState.headSha, now, now],
@@ -74,6 +90,7 @@ async function handleSubmit(ctx: RouteContext, prctx: PrHandlerCtx): Promise<Res
     payload: { number: pr.number, state, commitSha: gitState.headSha },
   });
 
+  if (submission) return submissionResponse(submission);
   const map = await buildPrincipalLiteMap(db, [reviewerId]);
   const row: ReviewRow = {
     id,
@@ -86,6 +103,17 @@ async function handleSubmit(ctx: RouteContext, prctx: PrHandlerCtx): Promise<Res
     created_at: now,
   };
   return json({ review: toReviewDto(row, map) }, 201);
+}
+
+function submissionResponse(result: ReviewSubmissionResult): Response {
+  if (result.outcome === "conflict") return errorResponse(409, "idempotency_conflict", "This submission key belongs to a different review.");
+  if (result.outcome === "deleted") return errorResponse(410, "submission_deleted", "The original review no longer exists.");
+  return json({ review: result.review }, 201, result.outcome === "replayed" ? { "Idempotency-Replayed": "true" } : undefined);
+}
+
+async function handleRecoverableSubmit(ctx: RouteContext, prctx: PrHandlerCtx): Promise<Response> {
+  if (ctx.request.headers.get("Idempotency-Key") === null) return errorResponse(400, "missing_idempotency_key", "A recoverable review requires its original Idempotency-Key.");
+  return handleSubmit(ctx, prctx);
 }
 
 async function handleList(ctx: RouteContext, prctx: PrHandlerCtx): Promise<Response> {
@@ -101,5 +129,6 @@ async function handleList(ctx: RouteContext, prctx: PrHandlerCtx): Promise<Respo
 
 export const reviewHandlers = {
   submit: prWriteHandler("pulls.write", handleSubmit),
+  submitRecoverable: prWriteHandler("pulls.write", handleRecoverableSubmit),
   list: prReadHandler(handleList),
 } as const;

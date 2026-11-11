@@ -45,6 +45,7 @@ const pullRoutes: readonly Route[] = [
 
   // --- reviews ---
   { method: "POST", path: `${PN}/reviews`, auth: "public", handler: reviewHandlers.submit },
+  { method: "POST", path: `${PN}/reviews/submissions`, auth: "public", handler: reviewHandlers.submitRecoverable },
   { method: "GET", path: `${PN}/reviews`, auth: "public", handler: reviewHandlers.list },
 
   // --- inline review comments ---
