@@ -1,4 +1,5 @@
 import { createMemo, createResource, Show, Suspense, type JSX } from "solid-js";
+import { compareRouteSpec } from "./compare-route.ts";
 import { reposApi } from "../../api/repos.ts";
 import { ApiError } from "../../api/client.ts";
 import type { CompareResponse } from "../../api/types.ts";
@@ -17,7 +18,8 @@ import { DiffSummary } from "./CommitDetailScreen.tsx";
 
 /** Split a `base...head` / `base..head` spec into its two endpoints. */
 function parseSpec(spec: string): { base: string; head: string } {
-  const decoded = decodeURIComponent(spec);
+  let decoded: string;
+  try { decoded = compareRouteSpec(spec); } catch { return { base: "", head: "" }; }
   const sep = decoded.includes("...") ? "..." : "..";
   const idx = decoded.indexOf(sep);
   if (idx < 0) return { base: decoded, head: "" };
@@ -50,7 +52,7 @@ export function CompareScreen(props: { owner: string; repo: string; spec: string
     () => [props.owner, props.repo, props.spec] as const,
     async ([o, r, spec]) => {
       try {
-        return { data: await reposApi.compare(o, r, spec), error: null as ApiError | null };
+        return { data: await reposApi.compare(o, r, compareRouteSpec(spec)), error: null as ApiError | null };
       } catch (err) {
         return { data: null, error: err instanceof ApiError ? err : new ApiError(500, "unknown", "Failed to compare") };
       }

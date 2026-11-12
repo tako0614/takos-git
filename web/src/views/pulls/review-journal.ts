@@ -7,6 +7,8 @@ export interface ReviewAttempt extends SubmissionAttempt {
   readonly submittedRevision: number;
   readonly state: ReviewVerdict;
   readonly body: string | null;
+  /** Missing only in a legacy journal, which may read an existing receipt. */
+  readonly commitSha?: string;
   readonly context: SubmissionContext;
 }
 export interface ReviewFormSnapshot { readonly body: string; readonly revision: number }
@@ -26,8 +28,9 @@ export function createReviewJournal(options: ReviewJournalOptions) {
       if (!isRecord(a) || !isSubmissionKey(a.idempotencyKey) || !isRevision(a.revision, -1) || !isRevision(a.submittedRevision)
         || !["approved", "changes_requested", "commented"].includes(String(a.state))
         || !(a.body === null || typeof a.body === "string") || (a.state === "commented" && !a.body?.trim())
+        || !(a.commitSha === undefined || typeof a.commitSha === "string" && /^[a-f0-9]{40}$/u.test(a.commitSha))
         || !matchesCommentContext(a.context, options)
-        || !keys(a, ["idempotencyKey", "revision", "submittedRevision", "state", "body", "context"])
+        || !keys(a, ["idempotencyKey", "revision", "submittedRevision", "state", "body", "commitSha", "context"])
         || !isRecord(form) || typeof form.body !== "string" || !isRevision(form.revision) || form.revision < a.submittedRevision
         || !keys(form, ["body", "revision"])) return null;
       return { attempt: a as unknown as ReviewAttempt, form: form as unknown as ReviewFormSnapshot };

@@ -157,6 +157,8 @@ export interface FileDiff {
 
 export interface DiffPayload {
   readonly base: string | null;
+  /** R2-authoritative head returned with a PR diff; absent in other diff shapes. */
+  readonly headSha?: string;
   readonly files: readonly FileDiff[];
 }
 

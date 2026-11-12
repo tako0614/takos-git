@@ -27,6 +27,7 @@ interface SubmitBody extends SubmissionContextInput {
   state?: unknown;
   status?: unknown;
   body?: unknown;
+  commitSha?: unknown;
 }
 
 async function handleSubmit(ctx: RouteContext, prctx: PrHandlerCtx): Promise<Response> {
@@ -52,10 +53,14 @@ async function handleSubmit(ctx: RouteContext, prctx: PrHandlerCtx): Promise<Res
   const contextError = await submissionContextError(ctx, access.auth, access.repo.id, body, pr.issueId);
   if (contextError) return contextError;
   const key = ctx.request.headers.get("Idempotency-Key");
+  const commitSha = body.commitSha;
+  if (commitSha !== undefined && (typeof commitSha !== "string" || !/^[a-f0-9]{40}$/u.test(commitSha))) {
+    return errorResponse(422, "invalid_commit", "commitSha must identify the reviewed head.");
+  }
   if (key !== null && !/^[\x21-\x7e]{1,255}$/u.test(key)) return errorResponse(400, "invalid_idempotency_key", "Idempotency-Key must contain 1–255 visible ASCII characters.");
   if (key !== null) {
     if (!reviewerId) return errorResponse(401, "unauthenticated", "Sign in to recover a review.");
-    const original = await getReviewSubmission(db, pr, reviewerId, key, { state, body: reviewBody });
+    const original = await getReviewSubmission(db, pr, reviewerId, key, { state, body: reviewBody, commitSha });
     if (original) return submissionResponse(original);
   }
   if (pr.state !== "open") {
@@ -72,10 +77,15 @@ async function handleSubmit(ctx: RouteContext, prctx: PrHandlerCtx): Promise<Res
       "A pull-request author cannot approve or request changes on their own pull request.",
     );
   }
-  // Anchor the verdict to the current head tip (R2-authoritative).
+  // An old journal may recover an existing receipt without this field; it may
+  // never create a new verdict against a head the caller did not review.
+  if (commitSha === undefined) return errorResponse(422, "invalid_commit", "A new review requires its reviewed commitSha.");
   const gitState = await computeGitState(ctx.env.BUCKET, repo, pr, false);
+  if (!gitState.headExists || gitState.headSha !== commitSha) {
+    return errorResponse(409, "head_changed", "The pull-request head changed. Review the current version before submitting.");
+  }
 
-  const submission = key === null ? null : await createReviewSubmission(db, pr, reviewerId!, key, { state, body: reviewBody }, gitState.headSha);
+  const submission = key === null ? null : await createReviewSubmission(db, pr, reviewerId!, key, { state, body: reviewBody, commitSha }, gitState.headSha);
   if (submission && submission.outcome !== "created") return submissionResponse(submission);
   if (!submission) await db.run(
     `INSERT INTO pr_reviews (id, pr_id, reviewer_id, state, body, commit_sha, submitted_at, created_at)

@@ -44,3 +44,13 @@ for (const change of [
     expect([...f.data]).toEqual(before);
   });
 }
+
+
+test("a target-bound journal retains its commit while a legacy journal remains readable", () => {
+  const f = fixture(); const attempt = {...f.attempt, commitSha:"a".repeat(40)};
+  f.journal.write({attempt,form:{body:"draft",revision:2}},null);
+  expect(f.journal.read()?.attempt.commitSha).toBe(attempt.commitSha);
+  f.journal.remove(attempt.idempotencyKey);
+  f.journal.write({attempt:f.attempt,form:{body:"legacy",revision:2}},null);
+  expect(f.journal.read()?.attempt.commitSha).toBeUndefined();
+});

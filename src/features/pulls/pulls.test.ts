@@ -150,6 +150,11 @@ async function pushFeatureAhead(fx: Fixture, file = "feature.txt"): Promise<stri
   return c1;
 }
 
+async function featureHead(fx: Fixture): Promise<string> {
+  const refs = await readRepoRefs(fx.handle.env.BUCKET, fx.repo);
+  return refs.refs.find(ref => ref.name === "refs/heads/feature")!.sha;
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -288,7 +293,7 @@ describe("pulls: reviews + inline comments", () => {
       jsonRequest(
         "POST",
         "/api/v1/repos/alice/web/pulls/1/reviews",
-        { state: "approved" },
+        { commitSha: await featureHead(fx), state: "approved" },
         "taksrv_alice_w",
       ),
       fx.handle.env,
@@ -309,7 +314,7 @@ describe("pulls: reviews + inline comments", () => {
     );
     const review = await dispatch(
       fx.reg,
-      jsonRequest("POST", "/api/v1/repos/alice/web/pulls/1/reviews", { state: "approved", body: "LGTM" }, "taksrv_carol_w"),
+      jsonRequest("POST", "/api/v1/repos/alice/web/pulls/1/reviews", { commitSha: await featureHead(fx), state: "approved", body: "LGTM" }, "taksrv_carol_w"),
       fx.handle.env,
     );
     expect(review.status).toBe(201);
@@ -332,7 +337,7 @@ describe("pulls: reviews + inline comments", () => {
       jsonRequest(
         "POST",
         "/api/v1/repos/alice/web/pulls/1/comments",
-        { body: "nit", file_path: "feature.txt", line: 1, side: "RIGHT" },
+        { commitSha: await featureHead(fx), body: "nit", file_path: "feature.txt", line: 1, side: "RIGHT" },
         "taksrv_alice_w",
       ),
       fx.handle.env,
@@ -500,7 +505,7 @@ describe("pulls: branch protection at merge", () => {
     // carol approves; now alice (owner => maintainer+) may merge.
     await dispatch(
       fx.reg,
-      jsonRequest("POST", "/api/v1/repos/alice/web/pulls/1/reviews", { state: "approved" }, "taksrv_carol_w"),
+      jsonRequest("POST", "/api/v1/repos/alice/web/pulls/1/reviews", { commitSha: await featureHead(fx), state: "approved" }, "taksrv_carol_w"),
       fx.handle.env,
     );
     const ok = await dispatch(
@@ -531,12 +536,12 @@ describe("pulls: branch protection at merge", () => {
     );
     await dispatch(
       fx.reg,
-      jsonRequest("POST", "/api/v1/repos/alice/web/pulls/1/reviews", { state: "approved" }, "taksrv_carol_w"),
+      jsonRequest("POST", "/api/v1/repos/alice/web/pulls/1/reviews", { commitSha: await featureHead(fx), state: "approved" }, "taksrv_carol_w"),
       fx.handle.env,
     );
     await dispatch(
       fx.reg,
-      jsonRequest("POST", "/api/v1/repos/alice/web/pulls/1/reviews", { state: "changes_requested", body: "no" }, "taksrv_bob_w"),
+      jsonRequest("POST", "/api/v1/repos/alice/web/pulls/1/reviews", { commitSha: await featureHead(fx), state: "changes_requested", body: "no" }, "taksrv_bob_w"),
       fx.handle.env,
     );
     const blocked = await dispatch(
@@ -618,7 +623,7 @@ describe("pulls: branch protection at merge", () => {
       jsonRequest(
         "POST",
         "/api/v1/repos/alice/web/pulls/1/reviews",
-        { state: "approved" },
+        { commitSha: await featureHead(fx), state: "approved" },
         "taksrv_carol_w",
       ),
       fx.handle.env,
@@ -718,7 +723,7 @@ describe("pulls: branch protection at merge", () => {
       jsonRequest(
         "POST",
         "/api/v1/repos/alice/web/pulls/1/reviews",
-        { state: "approved" },
+        { commitSha: await featureHead(fx), state: "approved" },
         "taksrv_bob_w",
       ),
       fx.handle.env,
@@ -743,7 +748,7 @@ describe("pulls: branch protection at merge", () => {
       jsonRequest(
         "POST",
         "/api/v1/repos/alice/web/pulls/1/reviews",
-        { state: "approved" },
+        { commitSha: await featureHead(fx), state: "approved" },
         "taksrv_carol_w",
       ),
       fx.handle.env,

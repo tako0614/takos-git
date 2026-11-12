@@ -6,16 +6,18 @@ import { isRecord } from "../../lib/submission-journal.ts";
 import { createReviewJournal, reviewContext, type ReviewAttempt, type ReviewFormSnapshot, type ReviewJournalOptions, type ReviewVerdict } from "./review-journal.ts";
 import { createReviewDraftStore, REVIEW_DRAFT_ERROR, type SavedReviewDraft } from "./review-draft.ts";
 export type { ReviewVerdict } from "./review-journal.ts";
-interface ReviewTarget { owner: string; repo: string; number: number }
+interface ReviewTarget { owner: string; repo: string; number: number; headSha: string }
 export interface ReviewAcknowledgment { keepOpen: boolean }
 
 /** Persist one original intent before dispatch; recovery is explicit and same-key. */
 export function createReviewSubmission(options: {
   target: () => ReviewTarget;
   recovery: ReviewJournalOptions | null;
+  allowNew?: () => boolean;
   onSubmitted: (ack: ReviewAcknowledgment) => void;
   onSuccess: (state: ReviewVerdict) => void;
 }) {
+  const reviewedHead = options.target().headSha;
   const flow = createJournaledSubmission<ReviewAttempt, ReviewFormSnapshot>(options.recovery ? createReviewJournal(options.recovery) : null,
     (a): ReviewFormSnapshot => ({ body: body(), revision: a.submittedRevision }));
   const drafts = options.recovery ? createReviewDraftStore(options.recovery) : null;
@@ -54,7 +56,7 @@ export function createReviewSubmission(options: {
     setBusy(attempt.state); setError(null);
     try {
       const response = await pullsApi.submitReview(target.owner, target.repo, target.number, {
-        state: attempt.state, body: attempt.body ?? undefined, ...attempt.context,
+        state: attempt.state, body: attempt.body ?? undefined, commitSha: attempt.commitSha, ...attempt.context,
       }, attempt.idempotencyKey);
       if (!current()) return;
       const review = isRecord(response) ? response.review : null;
@@ -62,6 +64,9 @@ export function createReviewSubmission(options: {
         || typeof review.createdAt !== "number" || !Number.isFinite(review.createdAt)
         || !(review.commitSha === null || typeof review.commitSha === "string" && /^[a-f0-9]{40}$/u.test(review.commitSha))) {
         throw new TypeError("The original review was not confirmed.");
+      }
+      if (attempt.commitSha !== undefined && review.commitSha !== attempt.commitSha) {
+        throw new TypeError("The reviewed head was not confirmed.");
       }
       const keepOpen = revision !== attempt.submittedRevision;
       // Persist a distinct unsent draft before retiring the original journal.
@@ -74,18 +79,28 @@ export function createReviewSubmission(options: {
     } catch (err) {
       if (current()) {
         flow.fail(attempt, err);
+        if (err instanceof ApiError && err.status === 409 && err.code === "head_changed") {
+          // This owning route looked up the original receipt before refusing a
+          // new insert. Preserve the draft before retiring this no-effect attempt.
+          try { saveDraft({ body: body(), revision }); draftActive = true; flow.resolve(attempt); }
+          catch { /* Failed local persistence retains the original journal. */ }
+        }
         setError(err instanceof ApiError ? err.message : "The original review is unconfirmed. Retry the original review to reconcile its result.");
       }
     } finally { if (current()) setBusy(null); }
   }
   async function submit(state: ReviewVerdict): Promise<void> {
     if (retired || busy() || flow.state()) return;
+    if (options.allowNew?.() === false) { setError("This pull request is closed. Only original review recovery is available."); return; }
+    if (!/^[a-f0-9]{40}$/u.test(reviewedHead) || reviewedHead !== options.target().headSha) {
+      setError("The reviewed head changed. Reopen the review form after checking the current version."); return;
+    }
     if (!options.recovery) { setError("Safe review recovery is unavailable. Reload after the server has been updated."); return; }
     if (!draftAvailable()) { setError(REVIEW_DRAFT_ERROR); return; }
     const text = body().trim();
     if (state === "commented" && !text) { setError("A comment review requires a message."); return; }
     const attempt: ReviewAttempt = { idempotencyKey: crypto.randomUUID(), revision, submittedRevision: revision,
-      state, body: text || null, context: reviewContext(options.recovery) };
+      state, body: text || null, commitSha: reviewedHead, context: reviewContext(options.recovery) };
     try { if (!flow.begin(attempt)) return; }
     catch (err) { setError(err instanceof Error ? err.message : "Review recovery could not be saved."); return; }
     await send(attempt);

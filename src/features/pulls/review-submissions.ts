@@ -2,7 +2,7 @@ import type { DbClient } from "../../db/index.ts";
 import { submissionHash } from "../../db/submission-hash.ts";
 import { buildPrincipalLiteMap, toReviewDto, type PullRequestRow, type ReviewDto } from "./dto.ts";
 
-export interface ReviewSubmissionInput { readonly state: string; readonly body: string | null }
+export interface ReviewSubmissionInput { readonly state: string; readonly body: string | null; readonly commitSha?: string }
 export type ReviewSubmissionResult =
   | { readonly outcome: "created" | "replayed"; readonly review: ReviewDto }
   | { readonly outcome: "conflict" }
@@ -17,6 +17,7 @@ export async function getReviewSubmission(db: DbClient, pr: PullRequestRow, prin
   );
   if (!receipt) return null;
   if (receipt.request_hash !== await submissionHash(intent(input))) return { outcome: "conflict" };
+  if (input.commitSha !== undefined && receipt.commit_sha !== input.commitSha) return { outcome: "conflict" };
   if (receipt.pr_id !== pr.id || !await db.queryOne("SELECT id FROM pr_reviews WHERE id=? AND pr_id=?", [receipt.review_id, pr.id])) return { outcome: "deleted" };
   const people = await buildPrincipalLiteMap(db, [principalId]);
   return { outcome: "replayed", review: toReviewDto({

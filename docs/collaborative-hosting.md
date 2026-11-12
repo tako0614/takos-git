@@ -487,3 +487,24 @@ GET /api/v1/repos/:owner/:repo/blob?ref=main&path=README.md
 M1 browse ref は branch name のみ受け付ける。arbitrary SHA を直接解決しないため、拒否された
 push が残した dangling object を SHA 推測で閲覧できない。blob response は 1 MiB までで、
 UTF-8 または base64 encoding を明示する。
+
+
+### Review target and original receipt recovery
+
+A new review or inline diff comment must send the exact displayed `commitSha`.
+The Worker compares it with the current R2-authoritative PR head before inserting
+anything, and refuses a missing/malformed target or a changed head. The diff
+composer takes this value from its diff response, not a separately loaded PR.
+A review form retains the head it was opened against; changing the head requires
+checking the new version before opening another review.
+
+Existing keyed receipts are read before the open/head checks. Retrying the
+original payload returns its original review and commit even after the branch
+moves or the PR closes. A key cannot be rebound to another commit. Old journals
+without a commit may recover a committed receipt, but cannot create a new
+review. Closed PR pages expose recovery while disabling new review submissions.
+The newer unsent draft and uncertain original remain separate.
+
+Browser comparison links decode their route spec once before passing literal
+refs to the API, which encodes them as one segment. This preserves slash and
+percent characters without double encoding.

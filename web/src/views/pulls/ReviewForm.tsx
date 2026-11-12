@@ -12,14 +12,17 @@ export function ReviewForm(props: {
   owner: string;
   repo: string;
   number: number;
+  headSha: string;
+  allowNew?: boolean;
   recovery: ReviewJournalOptions | null;
   onSubmitted: (ack: ReviewAcknowledgment) => void;
   onCancel?: () => void;
 }): JSX.Element {
   const toast = useToast();
   const flow = createReviewSubmission({
-    target: () => ({ owner: props.owner, repo: props.repo, number: props.number }),
+    target: () => ({ owner: props.owner, repo: props.repo, number: props.number, headSha: props.headSha }),
     recovery: props.recovery,
+    allowNew: () => props.allowNew !== false,
     onSubmitted: (ack) => props.onSubmitted(ack),
     onSuccess: (state) => {
       toast.success(
@@ -54,6 +57,7 @@ export function ReviewForm(props: {
           </Button>
         </Banner>}
       </Show>
+      <Show when={props.allowNew === false}><Banner tone="warning">This pull request is closed. Only a saved original review can be recovered.</Banner></Show>
       <Textarea
         rows={4}
         placeholder="Leave an overall review comment…"
@@ -61,13 +65,13 @@ export function ReviewForm(props: {
         onInput={(e) => flow.updateBody(e.currentTarget.value)}
       />
       <div class="flex flex-wrap items-center gap-2">
-        <Button variant="default" onClick={() => void flow.submit("commented")} disabled={!!flow.busy() || !!flow.pending() || !props.recovery}>
+        <Button variant="default" onClick={() => void flow.submit("commented")} disabled={!!flow.busy() || !!flow.pending() || !props.recovery || props.allowNew === false}>
           <Icons.MessageSquare class="h-4 w-4" /> Comment
         </Button>
-        <Button variant="default" onClick={() => void flow.submit("changes_requested")} disabled={!!flow.busy() || !!flow.pending() || !props.recovery}>
+        <Button variant="default" onClick={() => void flow.submit("changes_requested")} disabled={!!flow.busy() || !!flow.pending() || !props.recovery || props.allowNew === false}>
           <Icons.AlertTriangle class="h-4 w-4" /> Request changes
         </Button>
-        <Button variant="primary" onClick={() => void flow.submit("approved")} disabled={!!flow.busy() || !!flow.pending() || !props.recovery}>
+        <Button variant="primary" onClick={() => void flow.submit("approved")} disabled={!!flow.busy() || !!flow.pending() || !props.recovery || props.allowNew === false}>
           <Icons.Check class="h-4 w-4" /> Approve
         </Button>
         <Show when={props.onCancel}>

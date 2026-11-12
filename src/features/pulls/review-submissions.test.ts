@@ -27,7 +27,7 @@ async function fixture(visibility: "public" | "private" = "public") {
   }
   async function send(options: { key?: string | null; state?: string; body?: string; number?: number; token?: string; legacy?: boolean; context?: Record<string, unknown>; freshRouter?: boolean } = {}) {
     const { key = "original-key", state = "commented", body = "original review", number = 1, token = "taksrv_bob_w", legacy = false, context, freshRouter } = options;
-    const request = jsonRequest("POST", `${root}/${number}/reviews${legacy ? "" : "/submissions"}`, { state, body, ...context }, token);
+    const request = jsonRequest("POST", `${root}/${number}/reviews${legacy ? "" : "/submissions"}`, { state, body, commitSha: head, ...context }, token);
     if (key !== null) request.headers.set("Idempotency-Key", key);
     const target = freshRouter ? router() : reg; if (freshRouter) registerPullRoutes(target);
     return dispatch(target, request, f.env);
@@ -151,4 +151,51 @@ describe("original review submission recovery through the real router", () => {
       expect(await f.db.query("SELECT * FROM pull_review_submissions")).toEqual([]);
     } finally { f.fake.db.close(); }
   });
+});
+
+
+test("new review and inline comment refuse a changed displayed head without write effects", async () => {
+  const f = await fixture();
+  try {
+    await writeRepoRefs(f.env.BUCKET, "alice/web", { defaultBranch: "main", refs: [
+      { name: "refs/heads/main", sha: f.base }, { name: "refs/heads/topic", sha: f.base },
+    ] });
+    const review = await f.send();
+    expect(review.status).toBe(409); expect((await review.json()).error.code).toBe("head_changed");
+    const comment = await dispatch(f.reg, jsonRequest("POST", `${root}/1/comments`, {
+      body: "on the old diff", file_path: "file.txt", side: "RIGHT", line: 1, commitSha: f.head,
+    }, "taksrv_bob_w"), f.env);
+    expect(comment.status).toBe(409); expect((await comment.json()).error.code).toBe("head_changed");
+    expect(await f.rows()).toEqual([]);
+    expect(await f.db.query("SELECT * FROM pull_review_submissions")).toEqual([]);
+    expect(await f.db.query("SELECT * FROM pr_review_comments")).toEqual([]);
+  } finally { f.fake.db.close(); }
+});
+
+test("receipt recovery uses its original head after branch movement, but a key cannot be rebound", async () => {
+  const f = await fixture();
+  try {
+    const original = (await (await f.send()).json()).review;
+    await writeRepoRefs(f.env.BUCKET, "alice/web", { defaultBranch: "main", refs: [
+      { name: "refs/heads/main", sha: f.base }, { name: "refs/heads/topic", sha: f.base },
+    ] });
+    const replay = await f.send(); expect(replay.status).toBe(201);
+    expect((await replay.json()).review).toEqual(original);
+    const differentHead = await f.send({ context: { commitSha: f.base } });
+    expect(differentHead.status).toBe(409); expect((await differentHead.json()).error.code).toBe("idempotency_conflict");
+    expect(await f.rows()).toHaveLength(1);
+  } finally { f.fake.db.close(); }
+});
+
+test("only existing receipts may omit the head; new missing or malformed targets refuse", async () => {
+  const f = await fixture();
+  try {
+    for (const commitSha of [null, "", "not-a-commit"]) {
+      const r = await f.send({ context: { commitSha } });
+      expect(r.status).toBe(422); expect(await f.rows()).toEqual([]);
+    }
+    const original = (await (await f.send()).json()).review;
+    const replay = await f.send({ context: { commitSha: undefined } });
+    expect(replay.status).toBe(201); expect((await replay.json()).review).toEqual(original);
+  } finally { f.fake.db.close(); }
 });

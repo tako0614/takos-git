@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
+import { compareRouteSpec } from "../../../web/src/views/code/compare-route.ts";
 import { reposApi } from "../../../web/src/api/repos.ts";
 import { ApiError } from "../../../web/src/api/client.ts";
 import { RouteRegistry } from "../../router.ts";
@@ -45,7 +46,7 @@ async function fixture(visibility: "public" | "private" = "public") {
     responses.push({ status: response.status, body: await response.clone().json() as Record<string, unknown> });
     return response;
   }) as typeof fetch;
-  return { base: base.commitSha, requests, responses };
+  return { base: base.commitSha, topic, requests, responses };
 }
 
 for (const [spec, status, ahead, behind, files] of [
@@ -89,4 +90,13 @@ test("a private repo remains hidden from an anonymous compare client", async () 
   const f = await fixture("private");
   await expect(reposApi.compare("acme", "web", "main...topic")).rejects.toMatchObject({ status: 404 });
   expect(f.responses[0]!.status).toBe(404); expect(f.requests).toHaveLength(1); expect(f.requests[0]!.method).toBe("GET");
+});
+
+
+test("an encoded browser comparison link reaches the original slash ref once", async () => {
+  const f = await fixture();
+  const literal = "main...feature/topic";
+  const data = await reposApi.compare("acme", "web", compareRouteSpec(encodeURIComponent(literal)));
+  expect(f.responses[0]!.status).toBe(200); expect(data.headSha).toBe(f.topic);
+  expect(f.requests[0]!.path).toContain("main...feature%2Ftopic");
 });
