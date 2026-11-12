@@ -350,8 +350,14 @@ function Conversation(props: ConversationProps & { target: ConversationTarget })
             owner={props.owner}
             repo={props.repo}
             number={props.pr.number}
-            onSubmitted={() => {
-              setShowReview(false);
+            headSha={props.pr.head.sha}
+            allowNew={props.pr.state === "open"}
+            recovery={target.repositoryId && target.recoveryScope && target.issueId ? {
+              storage: () => sessionStorage, scope: target.recoveryScope,
+              repositoryId: target.repositoryId, issueId: target.issueId,
+            } : null}
+            onSubmitted={({ keepOpen }) => {
+              if (!keepOpen) setShowReview(false);
               refetchReviews();
             }}
             onCancel={() => setShowReview(false)}
@@ -375,9 +381,9 @@ function Conversation(props: ConversationProps & { target: ConversationTarget })
             onInput={(e) => updateDraft(e.currentTarget.value)}
           />
           <div class="mt-3 flex flex-wrap items-center justify-end gap-2">
-            <Show when={!showReview() && props.pr.state === "open"}>
+            <Show when={!showReview()}>
               <Button variant="default" onClick={() => setShowReview(true)}>
-                <Icons.Eye class="h-4 w-4" /> Add your review
+                <Icons.Eye class="h-4 w-4" /> {props.pr.state === "open" ? "Add your review" : "Recover saved review"}
               </Button>
             </Show>
             <Button variant="default" onClick={toggleState} disabled={busy() || props.pr.merged}>

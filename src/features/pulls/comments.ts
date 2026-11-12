@@ -28,6 +28,7 @@ const COMMENT_SELECT = `
     FROM pr_review_comments`;
 
 interface CreateBody {
+  commitSha?: unknown;
   body?: unknown;
   content?: unknown;
   file_path?: unknown;
@@ -85,6 +86,12 @@ async function handleCreate(ctx: RouteContext, prctx: PrHandlerCtx): Promise<Res
   const id = db.id();
   const authorId = access.auth.principal.id === "anon" ? null : access.auth.principal.id;
   const gitState = await computeGitState(ctx.env.BUCKET, repo, pr, false);
+  if (typeof raw.commitSha !== "string" || !/^[a-f0-9]{40}$/u.test(raw.commitSha)) {
+    return errorResponse(422, "invalid_commit", "An inline comment requires its displayed diff commitSha.");
+  }
+  if (!gitState.headExists || raw.commitSha !== gitState.headSha) {
+    return errorResponse(409, "head_changed", "The pull-request head changed. Reload the diff before commenting.");
+  }
 
   await db.run(
     `INSERT INTO pr_review_comments

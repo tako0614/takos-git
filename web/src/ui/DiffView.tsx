@@ -2,6 +2,7 @@ import { For, Show, createSignal, type JSX } from "solid-js";
 import { cn } from "../lib/cn.ts";
 import { Icons } from "../lib/Icons.tsx";
 import type { DiffHunk, DiffLine, FileDiff } from "../api/types.ts";
+import { diffHunkHeader } from "../lib/diff-lines.ts";
 
 /**
  * Unified-diff renderer seam. Consumes the server `DiffPayload` file/hunk shape
@@ -20,12 +21,12 @@ const STATUS_TONE: Record<string, string> = {
 
 function lineClass(type: DiffLine["type"]): string {
   if (type === "add") return "bg-success-subtle";
-  if (type === "del") return "bg-danger-subtle";
+  if (type === "delete") return "bg-danger-subtle";
   return "";
 }
 
 function marker(type: DiffLine["type"]): string {
-  return type === "add" ? "+" : type === "del" ? "-" : " ";
+  return type === "add" ? "+" : type === "delete" ? "-" : " ";
 }
 
 function HunkRows(props: { hunk: DiffHunk }): JSX.Element {
@@ -33,21 +34,21 @@ function HunkRows(props: { hunk: DiffHunk }): JSX.Element {
     <>
       <tr>
         <td colSpan={3} class="bg-accent-subtle px-3 py-1 font-mono text-xs text-muted">
-          {props.hunk.header}
+          {diffHunkHeader(props.hunk)}
         </td>
       </tr>
       <For each={props.hunk.lines}>
         {(line) => (
           <tr class={cn("font-mono text-xs leading-5", lineClass(line.type))}>
             <td class="w-10 select-none border-r border-border px-2 text-right text-subtle">
-              {line.oldLine ?? ""}
+              {line.oldLineNumber ?? ""}
             </td>
             <td class="w-10 select-none border-r border-border px-2 text-right text-subtle">
-              {line.newLine ?? ""}
+              {line.newLineNumber ?? ""}
             </td>
             <td class="whitespace-pre px-3">
               <span class="select-none text-subtle">{marker(line.type)} </span>
-              {line.text}
+              {line.content}
             </td>
           </tr>
         )}

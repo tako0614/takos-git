@@ -315,6 +315,53 @@ Accounts roleやWorkspace参加をorg adminの代わりにしない。DBなし�
 GitHub REST/GraphQL API や GitHub Actions の完全互換は目標にしない。必要な integration は
 versioned capability として追加し、未対応 API を GitHub 互換として広告しない。
 
+### Browser diff contract
+
+compare clientは既存Workerのtop-level `aheadBy`・`behindBy`・`files`を画面の件数・diffへ投影する。
+diffのbaseは実handlerと同じ`mergeBaseSha ?? baseSha`を使い、merge baseを捏造しない。
+`base...head`は一つのAPI route segmentへencodeし、`feature/topic`のようなbranch名も保持する。
+元APIのstatus・認可・失敗応答とGit比較処理自体は変更しない。
+
+Commit/compareとPR Filesの表示は、実Workerの`git/text-diff.ts`が返す
+`content`・`oldLineNumber`・`newLineNumber`と`delete`種別を使う。
+unified headerはhunkのold/new start・countから表示する。
+PRの行コメントは削除行をLEFT/元行、追加・context行をRIGHT/新行へ固定し、
+行番号が無い行にコメント先を推測して補わない。APIのschemaや認可を表示の都合で変更しない。
+
+行コメントのACKも送信時の入力版だけを確認する。送信待ちに追記やedit/revertがあれば、
+新しい本文とcomposerを残す。request先と行・commit・UI identityを捕捉し、退役やscope変更後の
+応答で別の入力を消したり成功表示を出したりしない。未確認・不完全ACK・失敗では本文を残す。
+このinline endpointには同key復旧receiptが無く、自動再送もしない。結果不明時はcomment一覧を
+確認してから次の操作を決める。reloadを越えるinline draft保存は、この入力版保持の保証に含めない。
+
+### Browser review submission
+
+PRレビューのACKは、送信時の本文だけに適用する。送信待ちに追記・編集した本文があれば、
+その入力とフォームを残したままレビュー一覧を更新する。本文が変わらなければ従来どおり閉じる。
+画面移動で退役したフォームの遅いACK・失敗は、次の画面へ成功通知や状態更新を反映しない。
+失敗した送信の自動再送は行わず、結果不明時はレビュー一覧で元の結果を確認する。
+
+レビューの復旧は`POST /api/v1/repos/:owner/:repo/pulls/:number/reviews/submissions`と
+元の`Idempotency-Key`を使う。旧Workerがキーを無視しないよう、旧`/reviews`へのfallbackはしない。
+従来のキー無し`/reviews`は、独立した新しいレビューとして互換性を保つ。
+browserは正規のrepository/Issue/sign-in contextで、送信前に元のverdict・本文・キーと現在入力を
+端末のtab storageへ保存する。保存確認前はPOSTしない。未確認の元送信と待機中の追記は
+reloadやConversation/Files間の移動後にも復元し、「Retry original review」でだけ照合する。
+不完全なACK、保存/削除失敗、元結果が不明なままの拒否では、元の記録を捨てて別キーにしない。
+
+DBの`0008`は旧migrationを変えず、reviewとそのreceiptを既存の
+[D1 batch](https://developers.cloudflare.com/d1/worker-api/d1-database/#batch)で一緒に確定する追加tableである。
+receiptはIssue/principal/キーに拘束し、元PR・review・headを保持する。内容変更は409、
+元reviewやPRが消えた場合は410で復活させない。replay時も現在の認可/contextを確認する。
+移動したheadや閉じたPRへの復旧でも元のreviewだけを返し、再通知しない。通知は従来のbest-effort。
+元ACK確認時に残る未送信の追記は、元キーを持たない別のdraftとして同じtab storageへ先に保存し、
+その後で元intentの記録を退役させる。reloadやConversation/Files間の移動でも追記を復元し、
+未確認の送信としては扱わない。追記の送信は別の明示操作と新しいキーを必要とする。
+復元した追記の編集も保存し、明示的な空欄化や追記自体の確認済み送信で、そのdraftだけを消す。
+caller/repository/Issueで保存先を分け、別フォームが更新した保存内容を古いACKで上書き・削除しない。
+保存失敗では元intentを残し、同じキーで確認をやり直せる。初回送信前の通常draft全般、
+tab closure/保存消去後や他端末からの回復、旧frontendへのrollbackはこの保証に含めない。
+
 ## Self-hosted Actions runner
 
 Actions の実行層は takos-git 自身の Worker に埋め込む。Queue consumer、run coordinator DO、
@@ -440,3 +487,24 @@ GET /api/v1/repos/:owner/:repo/blob?ref=main&path=README.md
 M1 browse ref は branch name のみ受け付ける。arbitrary SHA を直接解決しないため、拒否された
 push が残した dangling object を SHA 推測で閲覧できない。blob response は 1 MiB までで、
 UTF-8 または base64 encoding を明示する。
+
+
+### Review target and original receipt recovery
+
+A new review or inline diff comment must send the exact displayed `commitSha`.
+The Worker compares it with the current R2-authoritative PR head before inserting
+anything, and refuses a missing/malformed target or a changed head. The diff
+composer takes this value from its diff response, not a separately loaded PR.
+A review form retains the head it was opened against; changing the head requires
+checking the new version before opening another review.
+
+Existing keyed receipts are read before the open/head checks. Retrying the
+original payload returns its original review and commit even after the branch
+moves or the PR closes. A key cannot be rebound to another commit. Old journals
+without a commit may recover a committed receipt, but cannot create a new
+review. Closed PR pages expose recovery while disabling new review submissions.
+The newer unsent draft and uncertain original remain separate.
+
+Browser comparison links decode their route spec once before passing literal
+refs to the API, which encodes them as one segment. This preserves slash and
+percent characters without double encoding.
