@@ -261,7 +261,7 @@ export async function copyRepoObjects(
 
 /**
  * Copy only the objects reachable from `tips` (minus `haves`), instead of the
- * whole source prefix. Used by upstream sync: a whole-prefix copy would hand the
+ * whole source prefix. Used by initial forks and upstream sync: a whole-prefix copy would hand the
  * fork owner every object in the upstream — including history only reachable from
  * branches and pull requests the sync never named — for one branch's worth of
  * fast-forward. Same head-hit skip as `copyRepoObjects`, so it stays idempotent.
@@ -338,8 +338,8 @@ export type ForkOutcome =
  * Fork `source` into `targetOwner` as `forkName`. Steps (cross-store order):
  *   1. `provisionRepo` — R2 refs-doc create-if-absent CAS, then D1 row (with
  *      `fork_of_id = source.id`).
- *   2. Copy git objects source→fork.
- *   3. Two-phase advance the fork's refs to mirror source's refs (the only
+ *   2. Snapshot source refs and copy only objects reachable from those tips.
+ *   3. Two-phase advance the fork's refs from that same snapshot (the only
  *      sanctioned ref writer); project `ref_index`.
  *   4. Record the `repo_forks` network edge.
  * A failure after (1) rolls the half-provisioned fork back by deleting it.
@@ -372,13 +372,14 @@ export async function forkRepository(
   const forkStorageKey = forkRow.storageKey;
 
   try {
-    const objectsCopied = await copyRepoObjects(
+    const sourceRefs = await readRepoRefs(bucket, source.storageKey);
+    const objectsCopied = await copyReachableObjects(
       bucket,
       source.storageKey,
       forkStorageKey,
+      sourceRefs.refs.map((ref) => ref.sha),
     );
 
-    const sourceRefs = await readRepoRefs(bucket, source.storageKey);
     const result = await writeRefsWithMetadata(bucket, {
       repo: forkStorageKey,
       mutateRefs: () => ({

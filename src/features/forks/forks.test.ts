@@ -7,10 +7,10 @@
 import { afterEach, describe, expect, it } from "bun:test";
 
 import { SCOPES } from "../../contract/v1.ts";
-import { getCommitData, putCommit } from "../../git/object-store.ts";
+import { getCommitData, putBlob, putCommit } from "../../git/object-store.ts";
 import { readRepoRefs, writeRepoRefs } from "../../git/refs-store.ts";
 import { repositoryObjectStore } from "../../git/repo-object-store.ts";
-import { createSingleFileTree } from "../../git/tree-ops.ts";
+import { buildTreeFromPaths, createSingleFileTree } from "../../git/tree-ops.ts";
 import { RouteRegistry } from "../../router.ts";
 import type { RouterEnv } from "../../router.ts";
 import type { OAuthFetch } from "../../browser-auth.ts";
@@ -166,6 +166,44 @@ describe("fork create", () => {
     const req = jsonRequest("POST", "/api/v1/repos/acme/web/forks", { owner: "devuser" });
     const res = (await dispatch(registry, env, req)) as Response;
     expect(res.status).toBe(401);
+  });
+
+  it("does not copy source objects unreachable from advertised refs", async () => {
+    const { handle } = harness();
+    const source = await seedFullRepo(handle, {
+      ownerLogin: "acme",
+      name: "web",
+      visibility: "public",
+    });
+    const sourceStore = repositoryObjectStore(handle.env.BUCKET, source.storageKey);
+    const blob = await putBlob(sourceStore, new TextEncoder().encode("deleted-secret"));
+    const tree = await buildTreeFromPaths(sourceStore, [
+      { path: "secret.txt", sha: blob },
+    ]);
+    const dangling = await putCommit(sourceStore, {
+      tree,
+      parents: [],
+      author: { name: "T", email: "t@takos.test", timestamp: 1_700_000_000, tzOffset: "+0000" },
+      committer: { name: "T", email: "t@takos.test", timestamp: 1_700_000_000, tzOffset: "+0000" },
+      message: "dangling\n",
+    });
+
+    const principalId = await seedPrincipal(handle.db, "fork-owner");
+    await seedOwner(handle.db, "fork-owner", "user", principalId);
+    const sourceRow = await getRepoByOwnerName(handle.db, "acme", "web");
+    const owner = await resolveOwner(handle.db, "fork-owner");
+    const outcome = await forkRepository(
+      handle.env.BUCKET,
+      handle.db,
+      sourceRow!,
+      owner!,
+      "web",
+    );
+    expect(outcome.ok).toBe(true);
+
+    const forkStore = repositoryObjectStore(handle.env.BUCKET, "fork-owner/web");
+    expect(await getCommitData(forkStore, source.commitSha)).not.toBeNull();
+    expect(await getCommitData(forkStore, dangling)).toBeNull();
   });
 
   it("hides a private source behind 404 for a non-member", async () => {

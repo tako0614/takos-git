@@ -70,6 +70,9 @@ refを省略したActions discovery/dispatch、baseを省略した新規PR、bra
 明示refと保存済みPR submissionのACKはその元の値を保ち、write-only ACK回復はR2再読取を前提にしない。
 まだbranchのない空repoでは、読取DTOに作成時のconfigured default名を保つ。設定PATCHでbranchは作らない。
 fork作成のACKは、その作成が確定したrefs receiptの既定branchを返し、作成後のR2再読取を前提にしない。
+初回forkはsourceのrefs snapshotをobject copy前に一度読み、そのsnapshotのbranch/tagから到達するobjectだけを複製する。
+コピー中にsource refsが変わっても、fork refsとD1 projectionは選択済みsnapshotを使い、後のsnapshotと混在させない。
+sourceに残る未参照objectは複製せず、sourceのobjectやrefsは削除・変更しない。
 fork一覧とnetworkは、閲覧を許可された各repositoryの現在のR2既定値を返す。後続writerが変更した場合は作成ACKとfresh読取が異なることがある。
 
 ### Upstream sync and concurrent pushes
