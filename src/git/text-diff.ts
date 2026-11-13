@@ -13,6 +13,86 @@ export type LineDiffOp =
   | { type: "insert"; line: string }
   | { type: "delete"; line: string };
 
+export const DEFAULT_MAX_LCS_CELLS = 4_000_000;
+export const DEFAULT_MAX_DIFF_TEXT_BYTES = 8 * 1024 * 1024;
+export const DEFAULT_MAX_DIFF_INPUT_LINES = 100_000;
+
+/** Internal callers may tighten these request limits, never raise them. */
+export interface DiffLcsLimits {
+  readonly maxCells?: number;
+  readonly maxTextBytes?: number;
+  readonly maxInputLines?: number;
+}
+
+export class DiffLcsLimitError extends Error {
+  constructor() {
+    super("Diff request exceeds its computation budget.");
+    this.name = "DiffLcsLimitError";
+  }
+}
+
+function boundedLimit(value: number | undefined, ceiling: number): number {
+  if (value === undefined) return ceiling;
+  if (!Number.isSafeInteger(value) || value < 0) throw new DiffLcsLimitError();
+  return Math.min(value, ceiling);
+}
+
+/** No reservation is refunded: both retained input and all LCS work are bounded. */
+export class DiffLcsBudget {
+  readonly limitCells: number;
+  readonly limitInputLines: number;
+  private remainingCells: number;
+  private remainingTextBytes: number;
+  private remainingInputLines: number;
+
+  constructor(limits: DiffLcsLimits = {}) {
+    this.limitCells = boundedLimit(limits.maxCells, DEFAULT_MAX_LCS_CELLS);
+    this.limitInputLines = boundedLimit(limits.maxInputLines, DEFAULT_MAX_DIFF_INPUT_LINES);
+    this.remainingCells = this.limitCells;
+    this.remainingTextBytes = boundedLimit(limits.maxTextBytes, DEFAULT_MAX_DIFF_TEXT_BYTES);
+    this.remainingInputLines = this.limitInputLines;
+  }
+
+  get remaining(): number { return this.remainingCells; }
+
+  reserve(oldLineCount: number, newLineCount: number): number {
+    const rows = oldLineCount + 1, columns = newLineCount + 1;
+    const cells = rows * columns;
+    if (
+      !Number.isSafeInteger(oldLineCount) || oldLineCount < 0 ||
+      !Number.isSafeInteger(newLineCount) || newLineCount < 0 ||
+      !Number.isSafeInteger(rows) || !Number.isSafeInteger(columns) ||
+      !Number.isSafeInteger(cells) || cells > this.remainingCells ||
+      oldLineCount + newLineCount > this.limitInputLines
+    ) throw new DiffLcsLimitError();
+    // Combined input lines <=100,000 also keeps every Uint16 LCS value <=50,000.
+    this.remainingCells -= cells;
+    return cells;
+  }
+
+  reserveTextBytes(bytes: number): void {
+    if (!Number.isSafeInteger(bytes) || bytes < 0 || bytes > this.remainingTextBytes) {
+      throw new DiffLcsLimitError();
+    }
+    this.remainingTextBytes -= bytes;
+  }
+
+  /** Check before split allocates an input-line array, including blame history. */
+  splitLines(content: string): string[] {
+    let count = 1;
+    if (count > this.remainingInputLines) throw new DiffLcsLimitError();
+    for (let at = content.indexOf("\n"); at !== -1; at = content.indexOf("\n", at + 1)) {
+      if (++count > this.remainingInputLines) throw new DiffLcsLimitError();
+    }
+    this.remainingInputLines -= count;
+    return content.split("\n");
+  }
+}
+
+export function createDiffLcsBudget(limits: DiffLcsLimits = {}): DiffLcsBudget {
+  return new DiffLcsBudget(limits);
+}
+
 /**
  * Line diff based on LCS (O(n*m) time/memory). Intended for small files only.
  * Returns an edit script that transforms oldLines -> newLines.
@@ -20,12 +100,13 @@ export type LineDiffOp =
 export function diffLinesLcs(
   oldLines: string[],
   newLines: string[],
+  budget = createDiffLcsBudget(),
 ): LineDiffOp[] {
   const n = oldLines.length;
   const m = newLines.length;
 
   // dp[(i*(m+1))+j] = LCS length for oldLines[0..i) and newLines[0..j)
-  const dp = new Uint16Array((n + 1) * (m + 1));
+  const dp = new Uint16Array(budget.reserve(n, m));
   const width = m + 1;
 
   for (let i = 1; i <= n; i++) {
@@ -98,10 +179,14 @@ export type DiffHunk = {
  * show spurious churn. The single returned hunk (when there is any change)
  * carries the whole-file extent; lines carry 1-based old/new line numbers.
  */
-export function buildHunks(oldContent: string, newContent: string): DiffHunk[] {
-  const oldLines = oldContent.split("\n");
-  const newLines = newContent.split("\n");
-  const ops = diffLinesLcs(oldLines, newLines);
+export function buildHunks(
+  oldContent: string,
+  newContent: string,
+  budget = createDiffLcsBudget(),
+): DiffHunk[] {
+  const oldLines = budget.splitLines(oldContent);
+  const newLines = budget.splitLines(newContent);
+  const ops = diffLinesLcs(oldLines, newLines, budget);
 
   const lines: DiffLine[] = [];
   let oldNo = 0;
@@ -136,6 +221,32 @@ export function buildHunks(oldContent: string, newContent: string): DiffHunk[] {
       lines,
     },
   ];
+}
+
+/** Exact LCS counts with two short rows; no edit script or hunks are retained. */
+export function countLineChanges(
+  oldContent: string,
+  newContent: string,
+  budget = createDiffLcsBudget(),
+): { additions: number; deletions: number } {
+  let oldLines = budget.splitLines(oldContent);
+  let newLines = budget.splitLines(newContent);
+  const oldCount = oldLines.length, newCount = newLines.length;
+  budget.reserve(oldCount, newCount);
+  if (newCount > oldCount) [oldLines, newLines] = [newLines, oldLines];
+  let previous = new Uint16Array(newLines.length + 1);
+  let current = new Uint16Array(newLines.length + 1);
+  for (const oldLine of oldLines) {
+    for (let j = 1; j <= newLines.length; j++) {
+      current[j] = oldLine === newLines[j - 1]
+        ? previous[j - 1] + 1
+        : Math.max(previous[j], current[j - 1]);
+    }
+    [previous, current] = [current, previous];
+    current.fill(0);
+  }
+  const lcs = previous[newLines.length];
+  return { additions: newCount - lcs, deletions: oldCount - lcs };
 }
 
 /** Count additions/deletions across hunks (context lines excluded). */

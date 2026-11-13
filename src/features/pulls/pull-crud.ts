@@ -17,6 +17,7 @@ import { repositoryObjectStore } from "../../git/repo-object-store.ts";
 import { getCommitData, GitObjectTooLargeError } from "../../git/object-store.ts";
 import { findMergeBase } from "../../git/merge-base.ts";
 import { buildDiffPayload } from "../../git/commit-diff.ts";
+import { DiffLcsLimitError } from "../../git/text-diff.ts";
 import { isValidRefName } from "../../git/refs-store.ts";
 import { json, errorResponse } from "../repos/http.ts";
 import type { RepoAccess } from "../repos/identity.ts";
@@ -311,6 +312,9 @@ async function handleDiff(ctx: RouteContext, prctx: PrHandlerCtx, hunks: boolean
       ...diff,
     });
   } catch (error) {
+    if (error instanceof DiffLcsLimitError) {
+      return errorResponse(413, "diff_too_large", "Diff exceeds the request work budget.");
+    }
     if (error instanceof GitObjectTooLargeError) {
       return errorResponse(413, "blob_too_large", "Blob too large.");
     }
