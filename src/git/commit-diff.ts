@@ -20,7 +20,11 @@ import {
 import {
   buildHunks,
   countHunkChanges,
+  countLineChanges,
+  createDiffLcsBudget,
   decodeBlobContent,
+  type DiffLcsBudget,
+  type DiffLcsLimits,
   type DiffHunk,
 } from "./text-diff.ts";
 
@@ -50,6 +54,7 @@ export interface DiffPayloadOptions {
   readonly maxFiles?: number;
   readonly maxFileBytes?: number;
   readonly detectRenames?: boolean;
+  readonly lcsLimits?: DiffLcsLimits;
 }
 
 const DEFAULT_MAX_FILES = 300;
@@ -59,8 +64,8 @@ async function loadText(
   store: ObjectStoreBinding,
   sha: string | undefined,
   maxBytes: number,
-): Promise<{ text: string; binary: boolean } | "too_large"> {
-  if (!sha) return { text: "", binary: false };
+): Promise<{ text: string; binary: boolean; bytes: number } | "too_large"> {
+  if (!sha) return { text: "", binary: false, bytes: 0 };
   let blob: Uint8Array | null;
   try {
     blob = await getBlob(store, sha, maxBytes);
@@ -68,15 +73,16 @@ async function loadText(
     if (error instanceof GitObjectTooLargeError) return "too_large";
     throw error;
   }
-  if (!blob) return { text: "", binary: false };
+  if (!blob) return { text: "", binary: false, bytes: 0 };
   const decoded = decodeBlobContent(blob);
-  return { text: decoded.text, binary: decoded.isBinary };
+  return { text: decoded.text, binary: decoded.isBinary, bytes: blob.byteLength };
 }
 
 async function fileDiff(
   store: ObjectStoreBinding,
   entry: TreeDiffEntry,
   options: Required<Pick<DiffPayloadOptions, "includeHunks" | "maxFileBytes">>,
+  budget: DiffLcsBudget,
 ): Promise<FileDiff> {
   const base = {
     path: entry.path,
@@ -103,14 +109,19 @@ async function fileDiff(
     return { ...base, additions: 0, deletions: 0, binary: true };
   }
 
-  const hunks = buildHunks(oldSide.text, newSide.text);
-  const { additions, deletions } = countHunkChanges(hunks);
+  budget.reserveTextBytes(oldSide.bytes + newSide.bytes);
+  const hunks = options.includeHunks
+    ? buildHunks(oldSide.text, newSide.text, budget)
+    : undefined;
+  const { additions, deletions } = hunks
+    ? countHunkChanges(hunks)
+    : countLineChanges(oldSide.text, newSide.text, budget);
   return {
     ...base,
     additions,
     deletions,
     binary: false,
-    ...(options.includeHunks ? { hunks } : {}),
+    ...(hunks ? { hunks } : {}),
   };
 }
 
@@ -127,6 +138,7 @@ export async function buildDiffPayload(
   const includeHunks = options.includeHunks ?? false;
   const maxFiles = options.maxFiles ?? DEFAULT_MAX_FILES;
   const maxFileBytes = options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES;
+  const budget = createDiffLcsBudget(options.lcsLimits);
 
   const entries = await diffTrees(store, baseTreeSha, headTreeSha, {
     ...(options.detectRenames !== undefined
@@ -137,11 +149,12 @@ export async function buildDiffPayload(
   const truncated = entries.length > maxFiles;
   const limited = truncated ? entries.slice(0, maxFiles) : entries;
 
-  const files = await Promise.all(
-    limited.map((entry) =>
-      fileDiff(store, entry, { includeHunks, maxFileBytes }),
-    ),
-  );
+  // Retain only one pair of decoded blobs at a time. On a limit error no later
+  // file is started, and summary reads never create edit scripts or hunks.
+  const files: FileDiff[] = [];
+  for (const entry of limited) {
+    files.push(await fileDiff(store, entry, { includeHunks, maxFileBytes }, budget));
+  }
 
   const summary = summarizeTreeDiff(limited);
   let additions = 0;

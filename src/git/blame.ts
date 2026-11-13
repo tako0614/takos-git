@@ -13,12 +13,19 @@ import type { ObjectStoreBinding } from "./types.ts";
 import type { GitCommit } from "./git-objects.ts";
 import { getBlob, getCommitData, GitObjectTooLargeError } from "./object-store.ts";
 import { getEntryAtPath } from "./tree-ops.ts";
-import { decodeBlobContent, diffLinesLcs } from "./text-diff.ts";
+import {
+  createDiffLcsBudget,
+  decodeBlobContent,
+  DiffLcsLimitError,
+  diffLinesLcs,
+  type DiffLcsLimits,
+} from "./text-diff.ts";
 
 export interface BlameLimits {
   readonly maxFileBytes?: number;
   readonly maxLines?: number;
   readonly maxCommits?: number;
+  readonly lcsLimits?: DiffLcsLimits;
 }
 
 const DEFAULT_MAX_FILE_BYTES = 1024 * 1024;
@@ -48,6 +55,7 @@ export type BlameResult =
         | "commit_not_found"
         | "file_not_found"
         | "too_large"
+        | "diff_too_large"
         | "binary";
     };
 
@@ -85,6 +93,7 @@ export async function blameFile(
   const maxFileBytes = limits.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES;
   const maxLines = limits.maxLines ?? DEFAULT_MAX_LINES;
   const maxCommits = limits.maxCommits ?? DEFAULT_MAX_COMMITS;
+  const budget = createDiffLcsBudget(limits.lcsLimits);
 
   const headCommit = await getCommitData(store, startCommitSha);
   if (!headCommit) return { ok: false, reason: "commit_not_found" };
@@ -107,21 +116,30 @@ export async function blameFile(
       : null;
 
     if (cursorOid !== parentOid) {
-      let blob: Uint8Array | null;
       try {
-        blob = await getBlob(store, cursorOid, maxFileBytes);
+        const blob = await getBlob(store, cursorOid, maxFileBytes);
+        if (!blob) return { ok: false, reason: "file_not_found" };
+        const decoded = decodeBlobContent(blob);
+        if (decoded.isBinary) return { ok: false, reason: "binary" };
+        // Preserve the per-file refusal before request-wide input reservations,
+        // without allocating an array for a file already over its line limit.
+        let lineCount = 1;
+        if (lineCount > maxLines) return { ok: false, reason: "too_large" };
+        for (let at = decoded.text.indexOf("\n"); at !== -1; at = decoded.text.indexOf("\n", at + 1)) {
+          if (++lineCount > maxLines) return { ok: false, reason: "too_large" };
+        }
+        budget.reserveTextBytes(blob.byteLength);
+        const lines = budget.splitLines(decoded.text);
+        changeCommits.push({ commit: cursorCommit, lines });
       } catch (error) {
         if (error instanceof GitObjectTooLargeError) {
           return { ok: false, reason: "too_large" };
         }
+        if (error instanceof DiffLcsLimitError) {
+          return { ok: false, reason: "diff_too_large" };
+        }
         throw error;
       }
-      if (!blob) return { ok: false, reason: "file_not_found" };
-      const decoded = decodeBlobContent(blob);
-      if (decoded.isBinary) return { ok: false, reason: "binary" };
-      const lines = decoded.text.split("\n");
-      if (lines.length > maxLines) return { ok: false, reason: "too_large" };
-      changeCommits.push({ commit: cursorCommit, lines });
     }
 
     if (!parentCommit || parentOid === null) break;
@@ -144,7 +162,15 @@ export async function blameFile(
   let currentLines: string[] = [];
   let attributions: string[] = [];
   for (const { commit, lines } of changeCommits) {
-    const ops = diffLinesLcs(currentLines, lines);
+    let ops: ReturnType<typeof diffLinesLcs>;
+    try {
+      ops = diffLinesLcs(currentLines, lines, budget);
+    } catch (error) {
+      if (error instanceof DiffLcsLimitError) {
+        return { ok: false, reason: "diff_too_large" };
+      }
+      throw error;
+    }
     const nextAttrib: string[] = [];
     let oldIdx = 0;
     for (const op of ops) {

@@ -337,6 +337,27 @@ PRの行コメントは削除行をLEFT/元行、追加・context行をRIGHT/新
 このinline endpointには同key復旧receiptが無く、自動再送もしない。結果不明時はcomment一覧を
 確認してから次の操作を決める。reloadを越えるinline draft保存は、この入力版保持の保証に含めない。
 
+### Diff computation limits
+
+Commit detail、compare、PR diff/files、blameはrequestごとにLCSのwork budgetを共有する。
+全比較の`(oldLines + 1) * (newLines + 1)`の合計は4,000,000 cells以下、
+比較に使うtextの入力合計は8 MiB・100,000行以下とする。bytesと行はfile間、
+blameでは保持する変更version間で合算する。各積はsafe integerと上限を確認してから
+DPを確保し、行配列も残り行数を確認してから作る。内部callerは上限を下げられるが、
+HTTP queryや設定で上げる経路は設けない。
+
+Fileの比較は逐次実行し、拒否後に後続fileを開始しない。各fileの両側blob読取りは並行だが、
+同時に扱うのは一組だけとする。summaryは短い側の二行DPでexactな追加・削除数を計算し、
+edit scriptやhunkを作らない。full diffとsummaryは同じ論理cell budgetを消費する。
+Blameは変更versionのtext・行を保持する前にも上限を確認する。
+
+Budget超過は部分的な成功や近似countにせず、既存error envelopeのHTTP 413で返す。
+Commit/compare/PRは`diff_too_large`、blameは`blame_too_large`を使う。
+既存の1 MiB/file、binary/oversizeのdiff placeholder、file数による`truncated`、
+blameのfile/行上限による`blob_too_large`とhistoryの`truncated`は維持する。
+このbudgetはtext alignmentを制限するもので、tree列挙・graph walk・conflict処理の
+別の資源上限や、配信環境の性能を保証するものではない。
+
 ### Browser review submission
 
 PRレビューのACKは、送信時の本文だけに適用する。送信待ちに追記・編集した本文があれば、

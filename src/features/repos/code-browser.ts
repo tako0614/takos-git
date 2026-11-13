@@ -37,6 +37,7 @@ import {
 } from "../../git/merge-base.ts";
 import { buildDiffPayload } from "../../git/commit-diff.ts";
 import { blameFile } from "../../git/blame.ts";
+import { DiffLcsLimitError } from "../../git/text-diff.ts";
 import type { ObjectStoreBinding } from "../../git/types.ts";
 import { json, errorResponse } from "./http.ts";
 import { requireRepoAccess, resolveIdentity, type RepoAccess } from "./identity.ts";
@@ -455,6 +456,9 @@ async function handleCommitDetail(
       diff: { base: parentSha, ...diff },
     });
   } catch (error) {
+    if (error instanceof DiffLcsLimitError) {
+      return errorResponse(413, "diff_too_large", "Diff exceeds the request work budget.");
+    }
     if (error instanceof GitObjectTooLargeError) {
       return errorResponse(413, "commit_too_large", "Commit object too large.", {
         maxBytes: MAX_COMMIT_BYTES,
@@ -535,6 +539,9 @@ async function handleCompare(ctx: RouteContext, access: RepoAccess): Promise<Res
   } catch (error) {
     const overflow = graphOverflowResponse(error);
     if (overflow) return overflow;
+    if (error instanceof DiffLcsLimitError) {
+      return errorResponse(413, "diff_too_large", "Diff exceeds the request work budget.");
+    }
     if (error instanceof GitObjectTooLargeError) {
       return errorResponse(413, "commit_too_large", "Commit object too large.", {
         maxBytes: MAX_COMMIT_BYTES,
@@ -567,6 +574,8 @@ async function handleBlame(ctx: RouteContext, access: RepoAccess): Promise<Respo
         return errorResponse(413, "blob_too_large", "Blob too large.", {
           maxBytes: MAX_BLOB_BYTES,
         });
+      case "diff_too_large":
+        return errorResponse(413, "blame_too_large", "Blame exceeds the request work budget.");
       case "binary":
         return errorResponse(422, "blame_unavailable_binary", "Blame unavailable for binary.");
     }
