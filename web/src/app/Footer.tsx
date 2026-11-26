@@ -8,7 +8,12 @@ export function Footer(): JSX.Element {
         <span>Takos Git — collaborative Git hosting Capsule.</span>
         <span class="flex items-center gap-3">
           <a href="/healthz" class="hover:text-fg">Status</a>
-          <a href="/mcp" class="hover:text-fg">MCP</a>
+          <a
+            href="https://github.com/tako0614/takos-git/blob/main/README.md#http-surface"
+            class="hover:text-fg"
+          >
+            MCP docs
+          </a>
         </span>
       </div>
     </footer>
