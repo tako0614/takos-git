@@ -186,6 +186,7 @@ export function GeneralSettingsView(): JSX.Element {
         >
           <form onSubmit={saveDescription} class="space-y-3">
             <Textarea
+              name="repoDescription"
               aria-label="Repository description"
               rows={3}
               maxLength={1024}

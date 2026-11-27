@@ -44,7 +44,13 @@ export function useRepo(): RepoContextValue {
 function tabs(owner: string, repo: string): UnderlineNavItem[] {
   const base = `/${owner}/${repo}`;
   return [
-    { label: "Code", href: base, end: true, icon: <Icons.Code class="h-4 w-4" /> },
+    {
+      label: "Code",
+      href: base,
+      end: true,
+      alsoActivePrefixes: [`${base}/tree`, `${base}/blob`, `${base}/commits`, `${base}/commit`, `${base}/compare`],
+      icon: <Icons.Code class="h-4 w-4" />,
+    },
     { label: "Issues", href: `${base}/issues`, icon: <Icons.Inbox class="h-4 w-4" /> },
     { label: "Pull requests", href: `${base}/pulls`, icon: <Icons.GitPullRequest class="h-4 w-4" /> },
     { label: "Actions", href: `${base}/actions`, icon: <Icons.Play class="h-4 w-4" /> },
@@ -102,17 +108,6 @@ export function RepoLayout(props: { children?: JSX.Element }): JSX.Element {
                 </Label>
               )}
             </Show>
-            <div class="ml-auto flex items-center gap-2">
-              {/* Star/fork are write chrome — shown only when signed in; wired in M2. */}
-              <Show when={session.authenticated()}>
-                <Button size="sm" variant="default" disabled title="Coming in Phase 4b">
-                  <Icons.Star class="h-4 w-4" /> Star
-                </Button>
-                <Button size="sm" variant="default" disabled title="Coming in Phase 4b">
-                  <Icons.GitMerge class="h-4 w-4" /> Fork
-                </Button>
-              </Show>
-            </div>
           </div>
           <Show when={detail.latest?.description}>
             <p class="mt-2 text-sm text-muted">{detail.latest?.description}</p>

@@ -458,6 +458,7 @@ function WebhookEditorDialog(props: {
                   <label class="flex items-center gap-2 rounded px-1.5 py-1 text-sm hover:bg-canvas-subtle">
                     <input
                       type="checkbox"
+                      name={`webhook-event-${ev.id}`}
                       checked={props.value.events.includes(ev.id)}
                       onChange={(e) => toggleEvent(ev.id, e.currentTarget.checked)}
                     />

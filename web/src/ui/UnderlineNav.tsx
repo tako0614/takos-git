@@ -1,12 +1,15 @@
 import { For, Show, type JSX } from "solid-js";
-import { A } from "@solidjs/router";
+import { A, useLocation } from "@solidjs/router";
 import { cn } from "../lib/cn.ts";
+import { moveTabFocus } from "../lib/a11y.ts";
 
 export interface UnderlineNavItem {
   readonly label: string;
   readonly href: string;
   /** Exact-match highlight (default is prefix match). */
   readonly end?: boolean;
+  /** Extra path prefixes that also highlight this tab (e.g. blob/tree/commits for Code). */
+  readonly alsoActivePrefixes?: readonly string[];
   readonly icon?: JSX.Element;
   readonly counter?: number | null;
 }
@@ -20,6 +23,13 @@ export function UnderlineNav(props: {
   class?: string;
   "aria-label"?: string;
 }): JSX.Element {
+  const location = useLocation();
+  const isExtraActive = (item: UnderlineNavItem): boolean => {
+    if (!item.alsoActivePrefixes?.length) return false;
+    const path = location.pathname;
+    return item.alsoActivePrefixes.some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
+  };
+
   return (
     <nav
       aria-label={props["aria-label"] ?? "Repository"}
@@ -33,7 +43,11 @@ export function UnderlineNav(props: {
           <A
             href={item.href}
             end={item.end}
-            class="tg-focus group -mb-px flex items-center gap-2 whitespace-nowrap border-b-2 border-transparent px-3 py-2 text-sm text-fg hover:border-border"
+            aria-current={isExtraActive(item) ? "page" : undefined}
+            class={cn(
+              "tg-focus group -mb-px flex items-center gap-2 whitespace-nowrap border-b-2 border-transparent px-3 py-2 text-sm text-fg hover:border-border",
+              isExtraActive(item) && "!border-attention-emphasis font-semibold !text-fg",
+            )}
             activeClass="!border-attention-emphasis font-semibold"
             inactiveClass="text-muted hover:text-fg"
           >
@@ -68,8 +82,13 @@ export function Tabs(props: {
             type="button"
             role="tab"
             data-tab-id={item.id}
+            tabIndex={props.active === item.id ? 0 : -1}
             aria-selected={props.active === item.id}
             onClick={() => props.onSelect(item.id)}
+            onKeyDown={(e) => {
+              const next = moveTabFocus(e);
+              if (next) props.onSelect(next);
+            }}
             class={cn(
               "tg-focus -mb-px border-b-2 px-3 py-2 text-sm",
               props.active === item.id

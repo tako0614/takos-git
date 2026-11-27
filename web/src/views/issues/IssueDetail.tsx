@@ -350,7 +350,7 @@ export function IssueDetail(props: {
                     <Show
                       when={!editingBody()}
                       fallback={
-                        <div class="ml-[52px] space-y-2">
+                        <div class="space-y-2 sm:ml-[52px]">
                           <MarkdownEditor
                             value={bodyDraft()}
                             onInput={updateBodyDraft}
@@ -411,7 +411,7 @@ export function IssueDetail(props: {
                       </div>
                     </Show>
                     <Show when={commentsCursor()}>
-                      <div class="ml-[52px]">
+                      <div class="sm:ml-[52px]">
                         <Button block disabled={commentsLoading()} onClick={() => void loadComments(false)}>
                           <Show when={commentsLoading()} fallback="Load more comments">
                             <Spinner /> Loading…
@@ -421,7 +421,7 @@ export function IssueDetail(props: {
                     </Show>
 
                     {/* Composer */}
-                    <div class="ml-[52px] border-t border-border pt-4">
+                    <div class="border-t border-border pt-4 sm:ml-[52px]">
                       <Show
                         when={session.authenticated()}
                         fallback={

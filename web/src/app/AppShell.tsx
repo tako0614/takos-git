@@ -10,6 +10,7 @@ import { SessionProvider } from "../store/session.tsx";
 import { TopBar } from "./TopBar.tsx";
 import { Footer } from "./Footer.tsx";
 import { RouteError } from "./RouteError.tsx";
+import { applyDocumentTitle } from "../lib/document-title.ts";
 import { ToastHost, ConfirmDialogHost, LoadingBlock } from "../ui/index.ts";
 
 /**
@@ -25,20 +26,32 @@ export function AppShell(props: { children?: JSX.Element }): JSX.Element {
   const isRouting = useIsRouting();
   const location = useLocation();
   let resetBoundary: (() => void) | undefined;
+  let mainEl: HTMLElement | undefined;
   createEffect(() => {
-    // Subscribe to path changes; clear a live error state when the user navigates.
-    location.pathname;
+    // Subscribe to path changes; clear a live error state and update <title>.
+    applyDocumentTitle(location.pathname);
     resetBoundary?.();
     resetBoundary = undefined;
   });
   return (
     <SessionProvider>
       <div class="flex min-h-screen flex-col bg-canvas text-fg">
+        <a
+          href="#main"
+          class="tg-focus sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-[80] focus:rounded-md focus:bg-accent-emphasis focus:px-3 focus:py-2 focus:text-sm focus:font-semibold focus:text-white"
+          onClick={(e) => {
+            e.preventDefault();
+            mainEl?.focus();
+            mainEl?.scrollIntoView();
+          }}
+        >
+          Skip to main content
+        </a>
         <Show when={isRouting()}>
           <div class="tg-route-bar" role="progressbar" aria-label="Loading page" />
         </Show>
         <TopBar />
-        <main class="flex-1">
+        <main id="main" tabIndex={-1} ref={mainEl} class="flex-1 outline-none">
           <ErrorBoundary
             fallback={(error, reset) => {
               resetBoundary = reset;
