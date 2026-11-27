@@ -31,8 +31,8 @@ function RepoRow(props: { repo: RepositoryDto }): JSX.Element {
   return (
     <div class="flex items-start justify-between gap-4 border-b border-border px-4 py-4 last:border-b-0">
       <div class="min-w-0">
-        <div class="flex items-center gap-2">
-          <A href={`/${props.repo.owner}/${props.repo.name}`} class="truncate text-base font-semibold text-accent hover:underline">
+        <div class="flex flex-wrap items-center gap-2">
+          <A href={`/${props.repo.owner}/${props.repo.name}`} class="min-w-0 truncate text-base font-semibold text-accent hover:underline">
             {props.repo.owner}/{props.repo.name}
           </A>
           <VisibilityBadge visibility={props.repo.visibility} />
@@ -107,8 +107,16 @@ export function HomeView(): JSX.Element {
       </Show>
 
       <ErrorBoundary
-        fallback={(err) => (
-          <Banner tone="danger" title="Could not load repositories">
+        fallback={(err, reset) => (
+          <Banner
+            tone="danger"
+            title="Could not load repositories"
+            action={
+              <Button size="sm" onClick={() => { reset(); void refetch(); }}>
+                Retry
+              </Button>
+            }
+          >
             {err instanceof ApiError ? err.message : "Unexpected error."}
           </Banner>
         )}

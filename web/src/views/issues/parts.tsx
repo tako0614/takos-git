@@ -5,6 +5,7 @@
  * design system (never `innerHTML`; user text always goes through `Markdown`).
  */
 import { createSignal, Index, Show, type JSX } from "solid-js";
+import { moveTabFocus } from "../../lib/a11y.ts";
 import { cn } from "../../lib/cn.ts";
 import {
   Avatar,
@@ -102,6 +103,7 @@ export function MarkdownEditor(props: {
   onInput: (value: string) => void;
   placeholder?: string;
   id?: string;
+  "aria-label"?: string;
   disabled?: boolean;
   rows?: number;
   class?: string;
@@ -114,6 +116,10 @@ export function MarkdownEditor(props: {
         ? "border border-border bg-canvas font-semibold text-fg"
         : "border border-transparent text-muted hover:text-fg",
     );
+  const onTabKeyDown = (e: KeyboardEvent) => {
+    const next = moveTabFocus(e);
+    if (next === "write" || next === "preview") setTab(next);
+  };
   return (
     <div class={cn("rounded-md border border-border bg-canvas", props.class)}>
       <div
@@ -124,18 +130,24 @@ export function MarkdownEditor(props: {
         <button
           type="button"
           role="tab"
+          data-tab-id="write"
+          tabIndex={tab() === "write" ? 0 : -1}
           aria-selected={tab() === "write"}
           class={tabClass(tab() === "write")}
           onClick={() => setTab("write")}
+          onKeyDown={onTabKeyDown}
         >
           Write
         </button>
         <button
           type="button"
           role="tab"
+          data-tab-id="preview"
+          tabIndex={tab() === "preview" ? 0 : -1}
           aria-selected={tab() === "preview"}
           class={tabClass(tab() === "preview")}
           onClick={() => setTab("preview")}
+          onKeyDown={onTabKeyDown}
         >
           Preview
         </button>
@@ -151,6 +163,7 @@ export function MarkdownEditor(props: {
         >
           <Textarea
             id={props.id}
+            aria-label={props["aria-label"] ?? (props.id ? undefined : (props.placeholder ?? "Comment"))}
             value={props.value}
             disabled={props.disabled}
             placeholder={props.placeholder ?? "Leave a comment"}

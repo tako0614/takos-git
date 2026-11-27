@@ -375,6 +375,8 @@ function Conversation(props: ConversationProps & { target: ConversationTarget })
             </div>
           </Banner>}</Show>
           <Textarea
+            name="prComment"
+            aria-label="Leave a comment"
             rows={4}
             placeholder="Leave a comment"
             value={draft()}

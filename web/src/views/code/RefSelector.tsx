@@ -1,6 +1,7 @@
 import {
   createResource,
   createSignal,
+  createUniqueId,
   For,
   Show,
   Suspense,
@@ -29,14 +30,21 @@ export function RefSelector(props: {
   const [open, setOpen] = createSignal(false);
   const [tab, setTab] = createSignal<RefKind>("branch");
   const [filter, setFilter] = createSignal("");
+  const menuId = createUniqueId();
   let root: HTMLDivElement | undefined;
+  let triggerBtn: HTMLButtonElement | undefined;
   let inputEl: HTMLInputElement | undefined;
 
   const onDocClick = (e: MouseEvent) => {
     if (root && !root.contains(e.target as Node)) close();
   };
   const onKey = (e: KeyboardEvent) => {
-    if (e.key === "Escape") close();
+    if (e.key === "Escape") {
+      if (e.isComposing || e.keyCode === 229) return;
+      e.preventDefault();
+      close();
+      triggerBtn?.focus();
+    }
   };
   const close = () => {
     setOpen(false);
@@ -95,9 +103,11 @@ export function RefSelector(props: {
   return (
     <div ref={root} class="relative inline-block text-left">
       <button
+        ref={triggerBtn}
         type="button"
         aria-haspopup="menu"
         aria-expanded={open()}
+        aria-controls={open() ? menuId : undefined}
         class={cn(
           "tg-focus inline-flex max-w-[15rem] items-center gap-1.5 rounded-md border border-border bg-canvas-subtle font-medium text-fg hover:bg-canvas-inset",
           btnSize(),
@@ -111,8 +121,9 @@ export function RefSelector(props: {
 
       <Show when={open()}>
         <div
+          id={menuId}
           role="menu"
-          class="absolute left-0 z-40 mt-1 w-72 overflow-hidden rounded-md border border-border bg-canvas shadow-lg"
+          class="absolute left-0 z-40 mt-1 w-72 max-w-[calc(100vw-2rem)] overflow-hidden rounded-md border border-border bg-canvas shadow-lg"
         >
           <div class="border-b border-border p-2">
             <div class="text-xs font-semibold text-muted">Switch branches/tags</div>
@@ -120,6 +131,7 @@ export function RefSelector(props: {
               <Icons.Search class="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-subtle" />
               <input
                 ref={inputEl}
+                name="refFilter"
                 type="text"
                 value={filter()}
                 onInput={(e) => setFilter(e.currentTarget.value)}

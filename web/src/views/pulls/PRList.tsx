@@ -242,6 +242,7 @@ function NewPullDialog(props: {
         <label class="flex items-center gap-2 text-sm text-fg">
           <input
             type="checkbox"
+            name="draft"
             checked={draft()}
             onChange={(e) => change(setDraft, e.currentTarget.checked)}
             class="tg-focus h-4 w-4 rounded border-border"

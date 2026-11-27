@@ -64,7 +64,8 @@ export function FileDiffView(props: { file: FileDiff }): JSX.Element {
     <div class="overflow-hidden rounded-md border border-border">
       <button
         type="button"
-        class="flex w-full items-center gap-2 bg-canvas-subtle px-3 py-2 text-left text-sm hover:bg-canvas-inset"
+        aria-expanded={open()}
+        class="tg-focus flex w-full items-center gap-2 bg-canvas-subtle px-3 py-2 text-left text-sm hover:bg-canvas-inset"
         onClick={() => setOpen((v) => !v)}
       >
         <Icons.ChevronDown class={cn("h-4 w-4 shrink-0 text-muted transition-transform", !open() && "-rotate-90")} />

@@ -17,10 +17,16 @@ export function ToastHost(): JSX.Element {
   const toast = useToast();
   return (
     <Portal>
-      <div class="pointer-events-none fixed bottom-4 right-4 z-[70] flex w-80 max-w-[calc(100vw-2rem)] flex-col gap-2">
+      <div
+        role="region"
+        aria-label="Notifications"
+        class="pointer-events-none fixed bottom-4 right-4 z-[70] flex w-80 max-w-[calc(100vw-2rem)] flex-col gap-2"
+      >
         <For each={toast.toasts}>
           {(item) => (
             <div
+              role={item.type === "error" ? "alert" : "status"}
+              aria-atomic="true"
               class={cn(
                 "pointer-events-auto flex items-start gap-2 rounded-md border bg-canvas px-3 py-2.5 text-sm shadow-lg",
                 TONES[item.type].box,

@@ -2,8 +2,8 @@ import { Show, createSignal, type JSX } from "solid-js";
 import { A, useNavigate } from "@solidjs/router";
 import { useSession } from "../store/session.tsx";
 import { Icons } from "../lib/Icons.tsx";
-import { Avatar, IconButton, Menu, Spinner } from "../ui/index.ts";
-import { cycleTheme, resolvedTheme } from "../lib/theme.ts";
+import { Avatar, IconButton, Menu, Spinner, useToast } from "../ui/index.ts";
+import { resolvedTheme, setThemePref } from "../lib/theme.ts";
 
 /** The product mark — a small git-fork glyph + wordmark, links home. */
 function ProductMark(): JSX.Element {
@@ -22,22 +22,40 @@ function ProductMark(): JSX.Element {
  */
 function GlobalSearch(): JSX.Element {
   const navigate = useNavigate();
+  const toast = useToast();
   const [value, setValue] = createSignal("");
   return (
     <form
       class="hidden min-w-0 flex-1 sm:block"
+      role="search"
       onSubmit={(e) => {
         e.preventDefault();
         const q = value().trim().replace(/^\/+/, "");
-        if (/^[^/\s]+\/[^/\s]+$/.test(q)) navigate(`/${q}`);
+        if (!q) return;
+        if (/^[^/\s]+\/[^/\s]+$/.test(q)) {
+          navigate(`/${q}`);
+        } else {
+          toast.info("Enter a repository path as owner/repo to jump directly.");
+        }
       }}
     >
       <label class="relative block max-w-md">
         <Icons.Search class="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-subtle" />
         <input
+          name="globalJump"
           type="search"
           value={value()}
           onInput={(e) => setValue(e.currentTarget.value)}
+          onKeyDown={(e) => {
+            if (e.isComposing || e.keyCode === 229) {
+              if (e.key === "Enter") e.preventDefault();
+              return;
+            }
+            if (e.key === "Escape" && value()) {
+              e.preventDefault();
+              setValue("");
+            }
+          }}
           placeholder="Jump to owner/repo…"
           aria-label="Search or jump to a repository"
           class="tg-focus w-full rounded-md border border-border bg-canvas-subtle py-1.5 pl-8 pr-3 text-sm text-fg placeholder:text-subtle"
@@ -48,14 +66,15 @@ function GlobalSearch(): JSX.Element {
 }
 
 function ThemeToggle(): JSX.Element {
+  const isDark = () => resolvedTheme() === "dark";
   return (
     <IconButton
-      aria-label="Toggle theme"
-      onClick={() => cycleTheme()}
+      aria-label={isDark() ? "Switch to light theme" : "Switch to dark theme"}
+      onClick={() => setThemePref(isDark() ? "light" : "dark")}
       title={`Theme: ${resolvedTheme()}`}
     >
-      <Show when={resolvedTheme() === "dark"} fallback={<Icons.Eye class="h-4 w-4" />}>
-        <Icons.EyeOff class="h-4 w-4" />
+      <Show when={isDark()} fallback={<Icons.Moon class="h-4 w-4" />}>
+        <Icons.Sun class="h-4 w-4" />
       </Show>
     </IconButton>
   );

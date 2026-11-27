@@ -1,4 +1,4 @@
-import { createSignal, Show, type JSX } from "solid-js";
+import { createSignal, createUniqueId, Show, type JSX } from "solid-js";
 import { createReactiveListener } from "../../lib/lifecycle.ts";
 import { Icons } from "../../ui/index.ts";
 import { CopyButton } from "./CopyButton.tsx";
@@ -10,13 +10,20 @@ import { CopyButton } from "./CopyButton.tsx";
  */
 export function CloneMenu(props: { cloneUrl: string }): JSX.Element {
   const [open, setOpen] = createSignal(false);
+  const menuId = createUniqueId();
   let root: HTMLDivElement | undefined;
+  let triggerBtn: HTMLButtonElement | undefined;
 
   const onDocClick = (e: MouseEvent) => {
     if (root && !root.contains(e.target as Node)) close();
   };
   const onKey = (e: KeyboardEvent) => {
-    if (e.key === "Escape") close();
+    if (e.key === "Escape") {
+      if (e.isComposing || e.keyCode === 229) return;
+      e.preventDefault();
+      close();
+      triggerBtn?.focus();
+    }
   };
   const close = () => {
     setOpen(false);
@@ -46,9 +53,11 @@ export function CloneMenu(props: { cloneUrl: string }): JSX.Element {
   return (
     <div ref={root} class="relative inline-block text-left">
       <button
+        ref={triggerBtn}
         type="button"
         aria-haspopup="menu"
         aria-expanded={open()}
+        aria-controls={open() ? menuId : undefined}
         class="tg-focus inline-flex h-8 items-center gap-1.5 rounded-md border border-success-emphasis bg-success-emphasis px-3 text-sm font-medium text-white hover:brightness-110"
         onClick={toggle}
       >
@@ -59,8 +68,9 @@ export function CloneMenu(props: { cloneUrl: string }): JSX.Element {
 
       <Show when={open()}>
         <div
+          id={menuId}
           role="menu"
-          class="absolute right-0 z-40 mt-1 w-80 overflow-hidden rounded-md border border-border bg-canvas p-3 shadow-lg"
+          class="absolute right-0 z-40 mt-1 w-80 max-w-[calc(100vw-2rem)] overflow-hidden rounded-md border border-border bg-canvas p-3 shadow-lg"
         >
           <div class="flex items-center gap-2 text-sm font-semibold text-fg">
             <Icons.Terminal class="h-4 w-4 text-muted" /> Clone
@@ -73,6 +83,7 @@ export function CloneMenu(props: { cloneUrl: string }): JSX.Element {
           <div class="mt-1 flex items-center gap-1 rounded-md border border-border bg-canvas-subtle">
             <input
               id="clone-url"
+              name="cloneUrl"
               type="text"
               readonly
               value={props.cloneUrl}

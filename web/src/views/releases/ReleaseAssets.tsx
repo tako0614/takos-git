@@ -63,6 +63,7 @@ export function ReleaseAssets(props: ReleaseAssetsProps): JSX.Element {
           <span>
             <input
               ref={fileInput}
+              name="assetFile"
               type="file"
               class="hidden"
               aria-hidden="true"
