@@ -36,6 +36,10 @@ export class ApiError extends Error {
   get isUnauthenticated(): boolean {
     return this.status === 401;
   }
+
+  get isSessionExpired(): boolean {
+    return this.isUnauthenticated && this.code === "session_expired";
+  }
   get isForbidden(): boolean {
     return this.status === 403;
   }
@@ -128,8 +132,7 @@ async function request<T>(
     if (!response.ok) {
       const error = await toError(response);
       if (
-        error.status === 401 &&
-        error.code === "session_expired" &&
+        error.isSessionExpired &&
         typeof location !== "undefined"
       ) {
         location.assign(

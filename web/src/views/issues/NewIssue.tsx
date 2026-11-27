@@ -11,11 +11,12 @@ import {
   Index,
   Show,
   type JSX,
+  type Resource,
 } from "solid-js";
 import { A, useNavigate } from "@solidjs/router";
 import { issuesApi } from "../../api/issues.ts";
 import { collaboratorsApi } from "../../api/admin.ts";
-import { ApiError } from "../../api/client.ts";
+import { ApiError, type Page } from "../../api/client.ts";
 import { useSession } from "../../store/session.tsx";
 import {
   Avatar,
@@ -31,6 +32,10 @@ import { LabelChip, MarkdownEditor } from "./parts.tsx";
 import { AssigneeEditor, LabelEditor, MilestoneEditor } from "./pickers.tsx";
 import { createIssueSubmission, type IssueSubmission } from "./issue-submission.ts";
 
+function loadedChoices<T>(resource: Resource<Page<T>>): readonly T[] {
+  return resource.state === "ready" ? resource.latest?.items ?? [] : [];
+}
+
 export function NewIssueForm(props: { owner: string; repo: string; repositoryId: string; recoveryScope: string }): JSX.Element {
   const session = useSession();
   const toast = useToast();
@@ -38,8 +43,12 @@ export function NewIssueForm(props: { owner: string; repo: string; repositoryId:
   const { confirm } = useConfirmDialog();
   const scope = { owner: props.owner, repo: props.repo };
   const base = () => `/${scope.owner}/${scope.repo}`;
+  const choiceReads = new AbortController();
   let retired = false;
-  onCleanup(() => { retired = true; });
+  onCleanup(() => {
+    retired = true;
+    choiceReads.abort();
+  });
 
   const submission = createIssueSubmission(undefined, props.repositoryId && props.recoveryScope
     ? { storage: () => sessionStorage, scope: props.recoveryScope, repositoryId: props.repositoryId } : undefined);
@@ -61,24 +70,25 @@ export function NewIssueForm(props: { owner: string; repo: string; repositoryId:
   const changeMilestone = (value: number | null) => { revision++; setMilestone(value); saveDraft(); };
 
   const repoKey = () => [scope.owner, scope.repo] as const;
-  const [labels] = createResource(repoKey, ([o, r]) => issuesApi.labels(o, r));
-  const [milestones] = createResource(repoKey, ([o, r]) => issuesApi.milestones(o, r));
-  const [collaborators] = createResource(repoKey, async ([o, r]) => {
-    try {
-      return await collaboratorsApi.list(o, r);
-    } catch {
-      return { items: [] as never[], nextCursor: null };
-    }
-  });
+  const [labels, { refetch: refetchLabels }] = createResource(repoKey, ([o, r]) => issuesApi.labels(o, r, choiceReads.signal));
+  const [milestones, { refetch: refetchMilestones }] = createResource(repoKey, ([o, r]) => issuesApi.milestones(o, r, choiceReads.signal));
+  const [collaborators, { refetch: refetchCollaborators }] = createResource(repoKey, ([o, r]) => collaboratorsApi.list(o, r, choiceReads.signal));
+  const choicesFailed = () => labels.error || milestones.error || collaborators.error;
+  const retryChoices = () => {
+    if (labels.error && !labels.loading) void refetchLabels();
+    if (milestones.error && !milestones.loading) void refetchMilestones();
+    if (collaborators.error && !collaborators.loading) void refetchCollaborators();
+  };
 
   const selectedLabels = () =>
-    (labels()?.items ?? []).filter((l) => labelNames().includes(l.name));
+    loadedChoices(labels).filter((l) => labelNames().includes(l.name));
   const selectedMilestone = () =>
-    (milestones()?.items ?? []).find((m) => m.number === milestone()) ?? null;
-  const unlistedLabels = () => labels.loading || labels.error || !labels.latest ? []
-    : labelNames().filter(name => !labels.latest!.items.some(label => label.name === name));
-  const unlistedMilestone = () => milestone() !== null && !milestones.loading && !milestones.error && !!milestones.latest
-    && !milestones.latest.items.some(item => item.number === milestone());
+    loadedChoices(milestones).find((m) => m.number === milestone()) ?? null;
+  const unlistedLabels = () => {
+    const options = loadedChoices(labels);
+    return labelNames().filter((name) => !options.some((label) => label.name === name));
+  };
+  const unlistedMilestone = () => milestone() !== null && !selectedMilestone();
 
   async function submit(e: Event): Promise<void> {
     e.preventDefault();
@@ -208,9 +218,14 @@ export function NewIssueForm(props: { owner: string; repo: string; repositoryId:
           </div>
 
           <aside class="space-y-5">
+            <Show when={choicesFailed()}>
+              <Banner tone="warning" title="Could not load some issue options">
+                <Button type="button" size="sm" onClick={retryChoices}>Retry issue options</Button>
+              </Banner>
+            </Show>
             <section class="space-y-2 border-b border-border pb-4">
               <LabelEditor
-                all={labels()?.items ?? []}
+                all={loadedChoices(labels)}
                 loading={labels.loading}
                 selected={labelNames()}
                 onApply={changeLabels}
@@ -224,14 +239,17 @@ export function NewIssueForm(props: { owner: string; repo: string; repositoryId:
                 </div>
               </Show>
               <Index each={unlistedLabels()}>{name => <div class="text-sm text-muted">
-                Saved label “{name()}” is not in the loaded choices.
-                <Button type="button" size="sm" onClick={() => changeLabels(labelNames().filter(value => value !== name()))}>Remove saved label</Button>
+                Saved label “{name()}”
+                <Show when={labels.state === "ready"}>
+                  {" is not in the loaded choices."}
+                  <Button type="button" size="sm" onClick={() => changeLabels(labelNames().filter(value => value !== name()))}>Remove saved label</Button>
+                </Show>
               </div>}</Index>
             </section>
 
             <section class="space-y-2 border-b border-border pb-4">
               <AssigneeEditor
-                candidates={(collaborators()?.items ?? []).map((c) => c.principal)}
+                candidates={loadedChoices(collaborators).map((c) => c.principal)}
                 loading={collaborators.loading}
                 selected={assigneeSubjects()}
                 allowManual
@@ -256,14 +274,17 @@ export function NewIssueForm(props: { owner: string; repo: string; repositoryId:
 
             <section class="space-y-2">
               <MilestoneEditor
-                all={milestones()?.items ?? []}
+                all={loadedChoices(milestones)}
                 loading={milestones.loading}
                 selected={milestone()}
                 onApply={changeMilestone}
               />
               <Show when={unlistedMilestone()}><div class="text-sm text-muted">
-                Saved milestone #{milestone()} is not in the loaded choices.
-                <Button type="button" size="sm" onClick={() => changeMilestone(null)}>Clear saved milestone</Button>
+                Saved milestone #{milestone()}
+                <Show when={milestones.state === "ready"}>
+                  {" is not in the loaded choices."}
+                  <Button type="button" size="sm" onClick={() => changeMilestone(null)}>Clear saved milestone</Button>
+                </Show>
               </div></Show>
               <Show
                 when={selectedMilestone()}

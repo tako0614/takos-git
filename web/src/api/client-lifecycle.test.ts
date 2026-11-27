@@ -1,6 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 
 import { api } from "./client.ts";
+import { fetchSession } from "./auth.ts";
 
 const realFetch = globalThis.fetch;
 
@@ -76,4 +77,12 @@ test("expired browser sessions navigate to login with the current return path", 
       Object.defineProperty(globalThis, "location", originalLocation);
     else Reflect.deleteProperty(globalThis, "location");
   }
+});
+
+test("startup session probe recognizes expiry without hiding an authority outage", async () => {
+  globalThis.fetch = (async () => Response.json({ error: { code: "session_expired" } }, { status: 401 })) as typeof fetch;
+  await expect(fetchSession()).resolves.toEqual({ authenticated: false, configured: true });
+
+  globalThis.fetch = (async () => Response.json({ error: { code: "session_expired" } }, { status: 503 })) as typeof fetch;
+  await expect(fetchSession()).rejects.toMatchObject({ status: 503, code: "session_expired" });
 });
