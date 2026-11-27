@@ -69,6 +69,7 @@ export function ReviewForm(props: {
           if (e.isComposing || e.keyCode === 229) return;
           if (e.key === "Escape" && props.onCancel && !flow.busy()) {
             e.preventDefault();
+            e.stopPropagation();
             props.onCancel();
           }
         }}

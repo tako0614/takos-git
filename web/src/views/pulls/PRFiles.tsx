@@ -124,6 +124,7 @@ function Composer(props: {
           if (e.isComposing || e.keyCode === 229) return;
           if (e.key === "Escape" && !flow.busy()) {
             e.preventDefault();
+            e.stopPropagation();
             props.onCancel();
             return;
           }
@@ -417,7 +418,7 @@ export function PRFiles(props: {
           tone="danger"
           title="Could not load the diff"
           action={
-            <Button size="sm" onClick={() => { reset(); void refetchDiff(); void refetchComments(); }}>
+            <Button size="sm" onClick={() => { void refetchDiff(); void refetchComments(); reset(); }}>
               Retry
             </Button>
           }

@@ -112,7 +112,7 @@ export function HomeView(): JSX.Element {
             tone="danger"
             title="Could not load repositories"
             action={
-              <Button size="sm" onClick={() => { reset(); void refetch(); }}>
+              <Button size="sm" onClick={() => { void refetch(); reset(); }}>
                 Retry
               </Button>
             }

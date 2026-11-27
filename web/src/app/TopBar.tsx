@@ -71,9 +71,11 @@ function GlobalSearchForm(props: {
             if (e.key === "Escape") {
               if (value()) {
                 e.preventDefault();
+                e.stopPropagation();
                 setValue("");
               } else if (props.onDismissEmpty) {
                 e.preventDefault();
+                e.stopPropagation();
                 props.onDismissEmpty();
               }
             }

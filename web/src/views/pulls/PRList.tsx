@@ -361,6 +361,7 @@ export function PRList(): JSX.Element {
               if (e.isComposing || e.keyCode === 229) return;
               if (e.key === "Escape" && search()) {
                 e.preventDefault();
+                e.stopPropagation();
                 setSearch("");
               }
             }}
@@ -401,7 +402,7 @@ export function PRList(): JSX.Element {
                 tone="danger"
                 title="Could not load pull requests"
                 action={
-                  <Button size="sm" onClick={() => { reset(); void refetch(); }}>
+                  <Button size="sm" onClick={() => { void refetch(); reset(); }}>
                     Retry
                   </Button>
                 }

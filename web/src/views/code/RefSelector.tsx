@@ -36,15 +36,19 @@ export function RefSelector(props: {
   const [filter, setFilter] = createSignal("");
   const [activeIndex, setActiveIndex] = createSignal(-1);
   const menuId = createUniqueId();
+  const listId = createUniqueId();
   let root: HTMLDivElement | undefined;
   let triggerBtn: HTMLButtonElement | undefined;
   let inputEl: HTMLInputElement | undefined;
   let listEl: HTMLDivElement | undefined;
 
-  const optionId = (index: number) => `${menuId}-opt-${index}`;
+  const optionId = (index: number) => `${listId}-opt-${index}`;
 
   const onDocClick = (e: MouseEvent) => {
-    if (root && !root.contains(e.target as Node)) close();
+    if (!root) return;
+    const path = typeof e.composedPath === "function" ? e.composedPath() : [];
+    if (path.includes(root) || root.contains(e.target as Node)) return;
+    close();
   };
   const close = () => {
     setOpen(false);
@@ -117,18 +121,25 @@ export function RefSelector(props: {
     if (e.key === "Escape") {
       if (e.isComposing || e.keyCode === 229) return;
       e.preventDefault();
+      e.stopPropagation();
       close();
       triggerBtn?.focus();
       return;
     }
     const list = items();
-    const inInput = document.activeElement === inputEl;
-    const action = resolveRefSelectorKey(e, list.length, activeIndex(), inInput);
+    const active = document.activeElement;
+    const scope =
+      active === inputEl
+        ? "input"
+        : active instanceof HTMLElement && Boolean(active.closest?.("[data-ref-index]"))
+          ? "option"
+          : "other";
+    const action = resolveRefSelectorKey(e, list.length, activeIndex(), scope);
     if (action.type === "move" && action.index !== undefined) {
       e.preventDefault();
       setActiveIndex(action.index);
       scrollOptionIntoView(action.index);
-      if (!inInput) {
+      if (scope === "option") {
         listEl?.querySelector<HTMLElement>(`[data-ref-index="${action.index}"]`)?.focus();
       }
       return;
@@ -158,6 +169,7 @@ export function RefSelector(props: {
   const onTabKeyDown = (e: KeyboardEvent) => {
     const next = moveTabFocus(e);
     if (next === "branch" || next === "tag") {
+      e.stopPropagation();
       setTab(next);
       setActiveIndex(-1);
     }
@@ -186,7 +198,7 @@ export function RefSelector(props: {
       <button
         ref={triggerBtn}
         type="button"
-        aria-haspopup="menu"
+        aria-haspopup="dialog"
         aria-expanded={open()}
         aria-controls={open() ? menuId : undefined}
         class={cn(
@@ -203,7 +215,8 @@ export function RefSelector(props: {
       <Show when={open()}>
         <div
           id={menuId}
-          role="menu"
+          role="dialog"
+          aria-label="Switch branches or tags"
           class="absolute left-0 z-40 mt-1 w-72 max-w-[calc(100vw-2rem)] overflow-hidden rounded-md border border-border bg-canvas shadow-lg"
         >
           <div class="border-b border-border p-2">
@@ -214,6 +227,10 @@ export function RefSelector(props: {
                 ref={inputEl}
                 name="refFilter"
                 type="text"
+                role="combobox"
+                aria-autocomplete="list"
+                aria-expanded={open()}
+                aria-controls={open() ? listId : undefined}
                 value={filter()}
                 onInput={(e) => setFilter(e.currentTarget.value)}
                 placeholder={tab() === "branch" ? "Find a branch…" : "Find a tag…"}
@@ -226,7 +243,8 @@ export function RefSelector(props: {
                   type="button"
                   aria-label="Clear ref filter"
                   class="tg-focus absolute right-1 top-1/2 inline-flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded text-muted hover:bg-canvas-subtle hover:text-fg"
-                  onClick={() => {
+                  onClick={(e) => {
+                    e.stopPropagation();
                     setFilter("");
                     setActiveIndex(-1);
                     inputEl?.focus();
@@ -277,7 +295,13 @@ export function RefSelector(props: {
             </button>
           </div>
 
-          <div ref={listEl} class="max-h-64 overflow-y-auto py-1">
+          <div
+            ref={listEl}
+            id={listId}
+            role="listbox"
+            aria-label={tab() === "branch" ? "Branches" : "Tags"}
+            class="max-h-64 overflow-y-auto py-1"
+          >
             <Suspense fallback={<div class="flex justify-center py-6"><Spinner /></div>}>
               <Show
                 when={items().length > 0}
@@ -296,7 +320,8 @@ export function RefSelector(props: {
                         type="button"
                         id={optionId(index())}
                         data-ref-index={index()}
-                        role="menuitem"
+                        role="option"
+                        aria-selected={current}
                         class={cn(
                           "tg-focus flex min-h-10 w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-canvas-subtle sm:min-h-0",
                           current ? "font-semibold text-fg" : "text-fg",
