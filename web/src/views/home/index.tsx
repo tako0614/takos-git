@@ -69,7 +69,16 @@ export function HomeView(): JSX.Element {
   // createResource treat the source as "no fetch" and never load the list.
   const [data, { refetch }] = createResource(
     () => ({ cursor: cursor() }),
-    (s) => reposApi.list({ cursor: s.cursor ?? undefined }),
+    async (s) => {
+      try {
+        return await reposApi.list({ cursor: s.cursor ?? undefined });
+      } catch (error) {
+        if (error instanceof ApiError && error.isSessionExpired) {
+          return { items: [], nextCursor: null };
+        }
+        throw error;
+      }
+    },
   );
 
   return (

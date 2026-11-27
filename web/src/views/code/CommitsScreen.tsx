@@ -32,7 +32,7 @@ export function CommitsScreen(props: {
 
   const pathQuery = () => (path() ? `?path=${encodeURIComponent(path())}` : "");
 
-  const [result] = createResource(
+  const [result, { refetch }] = createResource(
     () => [props.owner, props.repo, props.refName, path(), limit()] as const,
     async ([o, r, ref, p, lim]) => {
       try {
@@ -80,7 +80,9 @@ export function CommitsScreen(props: {
             <Show
               when={res.data}
               fallback={
-                <Banner tone="danger" title="Could not load commits">
+                <Banner tone="danger" title="Could not load commits" action={
+                  <Button type="button" size="sm" disabled={result.loading} onClick={() => void refetch()}>Retry</Button>
+                }>
                   {res.error?.message ?? "Unknown error"}
                 </Banner>
               }

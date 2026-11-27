@@ -86,7 +86,14 @@ describe("web app manifest", () => {
     expect(html).toContain('<link rel="icon" href="/icons/takos-git.svg" />');
   });
 
-  test("the SPA document CSP lets the same-origin manifest and icons load", async () => {
+  test("loads the same-origin theme initializer in the document head", async () => {
+    const html = await Bun.file(new URL("../web/index.html", import.meta.url)).text();
+    const head = html.split("</head>", 1)[0];
+    expect(head).toContain('<script src="/theme-init.js"></script>');
+    expect(await Bun.file(new URL("theme-init.js", PUBLIC_DIR)).exists()).toBe(true);
+  });
+
+  test("the SPA document CSP lets the same-origin theme initializer, manifest and icons load", async () => {
     const assets: AssetFetcher = {
       fetch: async () =>
         new Response("<!doctype html><div id=root></div>", {
@@ -99,7 +106,9 @@ describe("web app manifest", () => {
     const csp = cspDirectives(res.headers.get("content-security-policy") ?? "");
     const manifestSrc = csp.get("manifest-src") ?? csp.get("default-src");
     const imgSrc = csp.get("img-src") ?? csp.get("default-src");
+    const scriptSrc = csp.get("script-src-elem") ?? csp.get("script-src") ?? csp.get("default-src");
     expect(manifestSrc).toContain("'self'");
     expect(imgSrc).toContain("'self'");
+    expect(scriptSrc).toContain("'self'");
   });
 });
