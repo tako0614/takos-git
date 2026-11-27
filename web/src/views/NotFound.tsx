@@ -8,6 +8,7 @@ export function NotFoundView(): JSX.Element {
   return (
     <PageContainer>
       <EmptyState
+        headingLevel="h1"
         icon={<Icons.Search class="h-10 w-10" />}
         title="404 — Page not found"
         description="This page doesn’t exist. It may have been moved, or the URL may be mistyped."

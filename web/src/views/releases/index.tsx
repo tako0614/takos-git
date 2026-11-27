@@ -135,9 +135,9 @@ export function ReleasesView(): JSX.Element {
         fallback={
           <div class="flex flex-col gap-4">
             <div class="flex items-center justify-between gap-2">
-              <h2 class="flex items-center gap-2 text-lg font-semibold text-fg">
+              <h1 class="flex items-center gap-2 text-lg font-semibold text-fg">
                 <Icons.Tag class="h-5 w-5 text-muted" /> Releases
-              </h2>
+              </h1>
               {newButton("Draft a new release")}
             </div>
 

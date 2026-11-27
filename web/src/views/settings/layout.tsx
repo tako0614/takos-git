@@ -23,6 +23,7 @@ export function SettingsLayout(props: { children?: JSX.Element }): JSX.Element {
   const repo = useRepo();
   return (
     <div class="space-y-4">
+      <h1 class="text-lg font-semibold text-fg">Repository settings</h1>
       <UnderlineNav aria-label="Settings" items={subTabs(repo.owner(), repo.repo())} />
       <div>{props.children}</div>
     </div>

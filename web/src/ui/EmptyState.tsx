@@ -1,10 +1,12 @@
 import { Show, type JSX } from "solid-js";
+import { Dynamic } from "solid-js/web";
 import { cn } from "../lib/cn.ts";
 
 /** A centered "blankslate" for empty lists / not-yet-built views. */
 export function EmptyState(props: {
   icon?: JSX.Element;
   title: string;
+  headingLevel?: "h1" | "h2" | "h3";
   description?: JSX.Element;
   action?: JSX.Element;
   class?: string;
@@ -19,7 +21,15 @@ export function EmptyState(props: {
       <Show when={props.icon}>
         <div class="text-subtle">{props.icon}</div>
       </Show>
-      <h3 class="text-base font-semibold text-fg">{props.title}</h3>
+      <Dynamic
+        component={props.headingLevel ?? "h3"}
+        class={cn(
+          "font-semibold text-fg",
+          props.headingLevel === "h1" ? "text-xl" : "text-base",
+        )}
+      >
+        {props.title}
+      </Dynamic>
       <Show when={props.description}>
         <p class="max-w-md text-sm text-muted">{props.description}</p>
       </Show>

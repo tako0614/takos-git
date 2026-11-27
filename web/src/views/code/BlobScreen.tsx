@@ -168,10 +168,13 @@ export function BlobScreen(props: {
 
   return (
     <div class="space-y-4">
+      <h1 class="sr-only">
+        {props.path} — {props.owner}/{props.repo}
+      </h1>
       <div class="flex flex-wrap items-center gap-2">
         <A
           href={treeHref(props.owner, props.repo, props.refName)}
-          class="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-canvas-subtle px-3 text-sm text-fg hover:bg-canvas-inset"
+          class="tg-focus inline-flex min-h-11 items-center gap-1.5 rounded-md border border-border bg-canvas-subtle px-3 text-sm text-fg hover:bg-canvas-inset sm:min-h-0 sm:h-8"
         >
           <Icons.GitBranch class="h-4 w-4 text-muted" />
           <span class="font-mono">{props.refName}</span>

@@ -1,4 +1,5 @@
 import {
+  createEffect,
   createResource,
   createSignal,
   createUniqueId,
@@ -9,15 +10,18 @@ import {
 } from "solid-js";
 import { reposApi } from "../../api/repos.ts";
 import { Icons, Spinner } from "../../ui/index.ts";
+import { moveTabFocus } from "../../lib/a11y.ts";
 import { cn } from "../../lib/cn.ts";
 import { createReactiveListener } from "../../lib/lifecycle.ts";
+import { resolveRefSelectorKey } from "./ref-selector-a11y.ts";
 
 type RefKind = "branch" | "tag";
 
 /**
  * GitHub-style branch/tag switcher. A filterable popover with Branches / Tags
  * tabs. Lazily loads refs the first time it is opened; `onPick` hands the chosen
- * ref back to the parent (which navigates). Closes on outside-click / Escape.
+ * ref back to the parent (which navigates). Supports Arrow/Home/End/Enter
+ * keyboard selection and closes on outside-click, focus-out, or Escape.
  */
 export function RefSelector(props: {
   owner: string;
@@ -30,24 +34,21 @@ export function RefSelector(props: {
   const [open, setOpen] = createSignal(false);
   const [tab, setTab] = createSignal<RefKind>("branch");
   const [filter, setFilter] = createSignal("");
+  const [activeIndex, setActiveIndex] = createSignal(-1);
   const menuId = createUniqueId();
   let root: HTMLDivElement | undefined;
   let triggerBtn: HTMLButtonElement | undefined;
   let inputEl: HTMLInputElement | undefined;
+  let listEl: HTMLDivElement | undefined;
+
+  const optionId = (index: number) => `${menuId}-opt-${index}`;
 
   const onDocClick = (e: MouseEvent) => {
     if (root && !root.contains(e.target as Node)) close();
   };
-  const onKey = (e: KeyboardEvent) => {
-    if (e.key === "Escape") {
-      if (e.isComposing || e.keyCode === 229) return;
-      e.preventDefault();
-      close();
-      triggerBtn?.focus();
-    }
-  };
   const close = () => {
     setOpen(false);
+    setActiveIndex(-1);
   };
   const toggle = () => {
     if (open()) {
@@ -56,20 +57,9 @@ export function RefSelector(props: {
     }
     setOpen(true);
     setFilter("");
+    setActiveIndex(-1);
     queueMicrotask(() => inputEl?.focus());
   };
-  createReactiveListener({
-    active: open,
-    target: document,
-    type: "click",
-    handler: onDocClick as EventListener,
-  });
-  createReactiveListener({
-    active: open,
-    target: document,
-    type: "keydown",
-    handler: onKey as EventListener,
-  });
 
   // Fetch only once the popover has been opened at least once.
   const [refs] = createResource(
@@ -87,21 +77,112 @@ export function RefSelector(props: {
   );
 
   const items = () => {
+    if (refs.error) return [];
     const data = refs();
     const list = tab() === "branch" ? data?.branches ?? [] : data?.tags ?? [];
     const q = filter().trim().toLowerCase();
     return q ? list.filter((name) => name.toLowerCase().includes(q)) : list;
   };
 
+  createEffect(() => {
+    const list = items();
+    const q = filter().trim();
+    if (!open()) {
+      setActiveIndex(-1);
+      return;
+    }
+    if (list.length === 0) {
+      setActiveIndex(-1);
+      return;
+    }
+    if (q) {
+      setActiveIndex(0);
+    } else if (activeIndex() >= list.length) {
+      setActiveIndex(list.length - 1);
+    }
+  });
+
   const pick = (name: string) => {
     close();
     props.onPick(name, tab());
+    triggerBtn?.focus();
   };
 
-  const btnSize = () => (props.size === "sm" ? "h-7 px-2.5 text-xs" : "h-8 px-3 text-sm");
+  const scrollOptionIntoView = (index: number) => {
+    const target = listEl?.querySelector<HTMLElement>(`[data-ref-index="${index}"]`);
+    target?.scrollIntoView?.({ block: "nearest" });
+  };
+
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key === "Escape") {
+      if (e.isComposing || e.keyCode === 229) return;
+      e.preventDefault();
+      close();
+      triggerBtn?.focus();
+      return;
+    }
+    const list = items();
+    const inInput = document.activeElement === inputEl;
+    const action = resolveRefSelectorKey(e, list.length, activeIndex(), inInput);
+    if (action.type === "move" && action.index !== undefined) {
+      e.preventDefault();
+      setActiveIndex(action.index);
+      scrollOptionIntoView(action.index);
+      if (!inInput) {
+        listEl?.querySelector<HTMLElement>(`[data-ref-index="${action.index}"]`)?.focus();
+      }
+      return;
+    }
+    if (action.type === "pick" && action.index !== undefined) {
+      const chosen = list[action.index];
+      if (chosen) {
+        e.preventDefault();
+        pick(chosen);
+      }
+    }
+  };
+
+  createReactiveListener({
+    active: open,
+    target: document,
+    type: "click",
+    handler: onDocClick as EventListener,
+  });
+  createReactiveListener({
+    active: open,
+    target: document,
+    type: "keydown",
+    handler: onKey as EventListener,
+  });
+
+  const onTabKeyDown = (e: KeyboardEvent) => {
+    const next = moveTabFocus(e);
+    if (next === "branch" || next === "tag") {
+      setTab(next);
+      setActiveIndex(-1);
+    }
+  };
+
+  const activeDescendant = () => {
+    const idx = activeIndex();
+    return open() && idx >= 0 && idx < items().length ? optionId(idx) : undefined;
+  };
+
+  const btnSize = () =>
+    props.size === "sm"
+      ? "min-h-10 sm:min-h-0 sm:h-7 px-2.5 text-xs"
+      : "min-h-11 sm:min-h-0 sm:h-8 px-3 text-sm";
 
   return (
-    <div ref={root} class="relative inline-block text-left">
+    <div
+      ref={root}
+      class="relative inline-block text-left"
+      onFocusOut={(e) => {
+        if (!open() || !root) return;
+        const next = e.relatedTarget as Node | null;
+        if (next && !root.contains(next)) close();
+      }}
+    >
       <button
         ref={triggerBtn}
         type="button"
@@ -137,8 +218,23 @@ export function RefSelector(props: {
                 onInput={(e) => setFilter(e.currentTarget.value)}
                 placeholder={tab() === "branch" ? "Find a branch…" : "Find a tag…"}
                 aria-label="Filter refs"
-                class="tg-focus w-full rounded-md border border-border bg-canvas py-1.5 pl-7 pr-2 text-sm text-fg placeholder:text-subtle"
+                aria-activedescendant={activeDescendant()}
+                class="tg-focus w-full rounded-md border border-border bg-canvas py-1.5 pl-7 pr-8 text-sm text-fg placeholder:text-subtle"
               />
+              <Show when={filter()}>
+                <button
+                  type="button"
+                  aria-label="Clear ref filter"
+                  class="tg-focus absolute right-1 top-1/2 inline-flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded text-muted hover:bg-canvas-subtle hover:text-fg"
+                  onClick={() => {
+                    setFilter("");
+                    setActiveIndex(-1);
+                    inputEl?.focus();
+                  }}
+                >
+                  <Icons.X class="h-3.5 w-3.5" />
+                </button>
+              </Show>
             </div>
           </div>
 
@@ -146,30 +242,42 @@ export function RefSelector(props: {
             <button
               type="button"
               role="tab"
+              data-tab-id="branch"
+              tabIndex={tab() === "branch" ? 0 : -1}
               aria-selected={tab() === "branch"}
               class={cn(
-                "flex-1 px-3 py-2 font-medium",
-                tab() === "branch" ? "border-b-2 border-attention text-fg" : "text-muted hover:text-fg",
+                "tg-focus min-h-10 flex-1 px-3 py-2 font-medium sm:min-h-0",
+                tab() === "branch" ? "border-b-2 border-attention-emphasis text-fg" : "text-muted hover:text-fg",
               )}
-              onClick={() => setTab("branch")}
+              onClick={() => {
+                setTab("branch");
+                setActiveIndex(-1);
+              }}
+              onKeyDown={onTabKeyDown}
             >
               Branches
             </button>
             <button
               type="button"
               role="tab"
+              data-tab-id="tag"
+              tabIndex={tab() === "tag" ? 0 : -1}
               aria-selected={tab() === "tag"}
               class={cn(
-                "flex-1 px-3 py-2 font-medium",
-                tab() === "tag" ? "border-b-2 border-attention text-fg" : "text-muted hover:text-fg",
+                "tg-focus min-h-10 flex-1 px-3 py-2 font-medium sm:min-h-0",
+                tab() === "tag" ? "border-b-2 border-attention-emphasis text-fg" : "text-muted hover:text-fg",
               )}
-              onClick={() => setTab("tag")}
+              onClick={() => {
+                setTab("tag");
+                setActiveIndex(-1);
+              }}
+              onKeyDown={onTabKeyDown}
             >
               Tags
             </button>
           </div>
 
-          <div class="max-h-64 overflow-y-auto py-1">
+          <div ref={listEl} class="max-h-64 overflow-y-auto py-1">
             <Suspense fallback={<div class="flex justify-center py-6"><Spinner /></div>}>
               <Show
                 when={items().length > 0}
@@ -180,19 +288,24 @@ export function RefSelector(props: {
                 }
               >
                 <For each={items()}>
-                  {(name) => {
-                    const active = name === props.currentRef;
+                  {(name, index) => {
+                    const current = name === props.currentRef;
+                    const highlighted = () => activeIndex() === index();
                     return (
                       <button
                         type="button"
+                        id={optionId(index())}
+                        data-ref-index={index()}
                         role="menuitem"
                         class={cn(
-                          "flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-canvas-subtle",
-                          active ? "font-semibold text-fg" : "text-fg",
+                          "tg-focus flex min-h-10 w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-canvas-subtle sm:min-h-0",
+                          current ? "font-semibold text-fg" : "text-fg",
+                          highlighted() && "bg-canvas-subtle ring-1 ring-inset ring-accent-emphasis/60",
                         )}
+                        onMouseEnter={() => setActiveIndex(index())}
                         onClick={() => pick(name)}
                       >
-                        <Icons.Check class={cn("h-4 w-4 shrink-0", active ? "text-success" : "text-transparent")} />
+                        <Icons.Check class={cn("h-4 w-4 shrink-0", current ? "text-success" : "text-transparent")} />
                         <span class="truncate font-mono">{name}</span>
                         <Show when={name === props.defaultBranch}>
                           <span class="ml-auto rounded-full border border-border px-1.5 text-[10px] uppercase tracking-wide text-muted">

@@ -34,7 +34,7 @@ export function Banner(props: {
   const tone = () => TONES[props.tone ?? "info"];
   return (
     <div
-      role="status"
+      role={props.tone === "danger" ? "alert" : "status"}
       class={cn(
         "flex items-start gap-3 rounded-md border px-4 py-3 text-sm",
         tone().box,

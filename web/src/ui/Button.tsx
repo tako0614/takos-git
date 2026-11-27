@@ -9,9 +9,9 @@ const BASE =
   "tg-focus inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md border font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60 select-none";
 
 const SIZES: Record<ButtonSize, string> = {
-  sm: "h-7 px-2.5 text-xs",
-  md: "h-8 px-3 text-sm",
-  lg: "h-10 px-4 text-sm",
+  sm: "min-h-10 sm:min-h-0 sm:h-7 px-3 sm:px-2.5 text-xs",
+  md: "min-h-11 sm:min-h-0 sm:h-8 px-3.5 sm:px-3 text-sm",
+  lg: "min-h-11 h-11 sm:h-10 px-4 text-sm",
 };
 
 const VARIANTS: Record<ButtonVariant, string> = {

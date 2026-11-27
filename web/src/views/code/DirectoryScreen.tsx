@@ -160,6 +160,11 @@ export function DirectoryScreen(props: {
 
   return (
     <div class="space-y-4">
+      <h1 class="sr-only">
+        {props.path
+          ? `${props.path} — ${props.owner}/${props.repo}`
+          : `${props.owner}/${props.repo} code`}
+      </h1>
       <div class="flex flex-wrap items-center gap-2">
         <RefSelector
           owner={props.owner}
@@ -180,7 +185,7 @@ export function DirectoryScreen(props: {
         <div class="ml-auto flex items-center gap-2">
           <A
             href={commitsHref(props.owner, props.repo, props.refName)}
-            class="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-canvas-subtle px-3 text-sm text-fg hover:bg-canvas-inset"
+            class="tg-focus inline-flex min-h-11 items-center gap-1.5 rounded-md border border-border bg-canvas-subtle px-3 text-sm text-fg hover:bg-canvas-inset sm:min-h-0 sm:h-8"
           >
             <Icons.Clock class="h-4 w-4 text-muted" />
             <span class="hidden sm:inline">History</span>

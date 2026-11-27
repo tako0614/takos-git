@@ -63,7 +63,7 @@ export function CompareScreen(props: { owner: string; repo: string; spec: string
     <div class="space-y-4">
       <div class="flex flex-wrap items-center gap-2 text-sm">
         <Icons.GitMerge class="h-5 w-5 text-muted" />
-        <span class="font-semibold text-fg">Comparing changes</span>
+        <h1 class="text-base font-semibold text-fg">Comparing changes</h1>
         <span class="inline-flex items-center gap-1.5">
           <span class="rounded-md border border-border bg-canvas-subtle px-2 py-0.5 font-mono text-xs">
             {refs().base || "base"}

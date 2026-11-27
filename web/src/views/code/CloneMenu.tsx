@@ -58,7 +58,7 @@ export function CloneMenu(props: { cloneUrl: string }): JSX.Element {
         aria-haspopup="menu"
         aria-expanded={open()}
         aria-controls={open() ? menuId : undefined}
-        class="tg-focus inline-flex h-8 items-center gap-1.5 rounded-md border border-success-emphasis bg-success-emphasis px-3 text-sm font-medium text-white hover:brightness-110"
+        class="tg-focus inline-flex min-h-11 items-center gap-1.5 rounded-md border border-success-emphasis bg-success-emphasis px-3 text-sm font-medium text-white hover:brightness-110 sm:min-h-0 sm:h-8"
         onClick={toggle}
       >
         <Icons.Code class="h-4 w-4" />

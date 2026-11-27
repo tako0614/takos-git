@@ -46,7 +46,7 @@ export function UnderlineNav(props: {
               href={href() || item.href}
               aria-current={active() ? "page" : undefined}
               class={cn(
-                "tg-focus group -mb-px flex items-center gap-2 whitespace-nowrap border-b-2 border-transparent px-3 py-2 text-sm hover:border-border",
+                "tg-focus group -mb-px flex min-h-11 items-center gap-2 whitespace-nowrap border-b-2 border-transparent px-3 py-2.5 text-sm hover:border-border sm:min-h-0 sm:py-2",
                 active()
                   ? "!border-attention-emphasis font-semibold text-fg"
                   : "text-muted hover:text-fg",
@@ -92,7 +92,7 @@ export function Tabs(props: {
               if (next) props.onSelect(next);
             }}
             class={cn(
-              "tg-focus -mb-px border-b-2 px-3 py-2 text-sm",
+              "tg-focus -mb-px min-h-11 border-b-2 px-3 py-2.5 text-sm sm:min-h-0 sm:py-2",
               props.active === item.id
                 ? "border-attention-emphasis font-semibold text-fg"
                 : "border-transparent text-muted hover:text-fg",

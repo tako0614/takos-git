@@ -56,7 +56,7 @@ export function CommitsScreen(props: {
           defaultBranch={props.defaultBranch}
           onPick={pickRef}
         />
-        <h2 class="text-sm font-semibold text-fg">Commits</h2>
+        <h1 class="text-base font-semibold text-fg">Commits</h1>
         <Show when={path()}>
           <span class="inline-flex items-center gap-1.5 rounded-full border border-border bg-canvas-subtle px-2.5 py-0.5 text-xs text-muted">
             <Icons.FileText class="h-3.5 w-3.5" />
