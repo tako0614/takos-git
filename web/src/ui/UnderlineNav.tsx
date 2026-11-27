@@ -1,7 +1,8 @@
 import { For, Show, type JSX } from "solid-js";
-import { A, useLocation } from "@solidjs/router";
+import { useHref, useLocation, useResolvedPath } from "@solidjs/router";
 import { cn } from "../lib/cn.ts";
 import { moveTabFocus } from "../lib/a11y.ts";
+import { isUnderlineNavItemActive } from "./underline-nav-active.ts";
 
 export interface UnderlineNavItem {
   readonly label: string;
@@ -15,8 +16,9 @@ export interface UnderlineNavItem {
 }
 
 /**
- * GitHub's repo tab bar: a horizontal, scrollable row of `<A>` links with an
- * active underline driven by the router. `end` marks the exact-match (Code) tab.
+ * GitHub's repo tab bar: a horizontal, scrollable row of client-routed links
+ * with an active underline and `aria-current="page"` driven by `location.pathname`
+ * (including `alsoActivePrefixes` such as `/blob/*`, `/tree/*`, `/commits/*`).
  */
 export function UnderlineNav(props: {
   items: readonly UnderlineNavItem[];
@@ -24,11 +26,6 @@ export function UnderlineNav(props: {
   "aria-label"?: string;
 }): JSX.Element {
   const location = useLocation();
-  const isExtraActive = (item: UnderlineNavItem): boolean => {
-    if (!item.alsoActivePrefixes?.length) return false;
-    const path = location.pathname;
-    return item.alsoActivePrefixes.some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
-  };
 
   return (
     <nav
@@ -39,29 +36,34 @@ export function UnderlineNav(props: {
       )}
     >
       <For each={props.items}>
-        {(item) => (
-          <A
-            href={item.href}
-            end={item.end}
-            aria-current={isExtraActive(item) ? "page" : undefined}
-            class={cn(
-              "tg-focus group -mb-px flex items-center gap-2 whitespace-nowrap border-b-2 border-transparent px-3 py-2 text-sm text-fg hover:border-border",
-              isExtraActive(item) && "!border-attention-emphasis font-semibold !text-fg",
-            )}
-            activeClass="!border-attention-emphasis font-semibold"
-            inactiveClass="text-muted hover:text-fg"
-          >
-            <Show when={item.icon}>
-              <span class="text-muted group-hover:text-fg">{item.icon}</span>
-            </Show>
-            <span>{item.label}</span>
-            <Show when={item.counter != null}>
-              <span class="rounded-full bg-neutral-muted px-2 text-xs leading-5 text-fg">
-                {item.counter}
-              </span>
-            </Show>
-          </A>
-        )}
+        {(item) => {
+          const resolved = useResolvedPath(() => item.href);
+          const href = useHref(resolved);
+          const active = () => isUnderlineNavItemActive(location.pathname, item);
+          return (
+            <a
+              link
+              href={href() || item.href}
+              aria-current={active() ? "page" : undefined}
+              class={cn(
+                "tg-focus group -mb-px flex items-center gap-2 whitespace-nowrap border-b-2 border-transparent px-3 py-2 text-sm hover:border-border",
+                active()
+                  ? "!border-attention-emphasis font-semibold text-fg"
+                  : "text-muted hover:text-fg",
+              )}
+            >
+              <Show when={item.icon}>
+                <span class="text-muted group-hover:text-fg">{item.icon}</span>
+              </Show>
+              <span>{item.label}</span>
+              <Show when={item.counter != null}>
+                <span class="rounded-full bg-neutral-muted px-2 text-xs leading-5 text-fg">
+                  {item.counter}
+                </span>
+              </Show>
+            </a>
+          );
+        }}
       </For>
     </nav>
   );

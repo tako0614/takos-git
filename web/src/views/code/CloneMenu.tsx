@@ -19,6 +19,7 @@ export function CloneMenu(props: { cloneUrl: string }): JSX.Element {
   };
   const onKey = (e: KeyboardEvent) => {
     if (e.key === "Escape") {
+      if (e.isComposing || e.keyCode === 229) return;
       e.preventDefault();
       close();
       triggerBtn?.focus();
@@ -56,7 +57,7 @@ export function CloneMenu(props: { cloneUrl: string }): JSX.Element {
         type="button"
         aria-haspopup="menu"
         aria-expanded={open()}
-        aria-controls={menuId}
+        aria-controls={open() ? menuId : undefined}
         class="tg-focus inline-flex h-8 items-center gap-1.5 rounded-md border border-success-emphasis bg-success-emphasis px-3 text-sm font-medium text-white hover:brightness-110"
         onClick={toggle}
       >

@@ -3,26 +3,19 @@ import { Portal } from "solid-js/web";
 import { cn } from "../lib/cn.ts";
 import { Icons } from "../lib/Icons.tsx";
 import { createReactiveListener } from "../lib/lifecycle.ts";
+import {
+  handleDialogKeyDown,
+  popDialog,
+  pushDialog,
+  resolveInitialFocus,
+  restoreDialogFocus,
+} from "./dialog-a11y.ts";
 import { IconButton } from "./IconButton.tsx";
-
-const FOCUSABLE_SELECTOR = [
-  'a[href]:not([tabindex="-1"])',
-  'button:not([disabled]):not([tabindex="-1"])',
-  'input:not([disabled]):not([type="hidden"]):not([tabindex="-1"])',
-  'select:not([disabled]):not([tabindex="-1"])',
-  'textarea:not([disabled]):not([tabindex="-1"])',
-  '[tabindex]:not([tabindex="-1"])',
-].join(",");
-
-function focusableElements(container: HTMLElement): HTMLElement[] {
-  return Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
-    (el) => el.offsetParent !== null || el === document.activeElement,
-  );
-}
 
 /**
  * A modal dialog rendered in a Portal with a backdrop, Escape-to-close, focus
- * trap + focus restoration, `aria-labelledby`, and body scroll lock.
+ * trap + focus restoration, `aria-labelledby`, and reference-counted body
+ * scroll lock.
  */
 export function Dialog(props: {
   open: boolean;
@@ -34,6 +27,7 @@ export function Dialog(props: {
   class?: string;
 }): JSX.Element {
   const titleId = createUniqueId();
+  const dialogToken = Symbol("dialog");
   const width = () =>
     props.size === "lg" ? "max-w-2xl" : props.size === "sm" ? "max-w-sm" : "max-w-lg";
 
@@ -42,47 +36,22 @@ export function Dialog(props: {
   createEffect(() => {
     if (!props.open) return;
     const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    pushDialog(dialogToken);
 
     const frame = requestAnimationFrame(() => {
       if (!panel) return;
-      const items = focusableElements(panel);
-      (items[0] ?? panel).focus();
+      resolveInitialFocus(panel).focus();
     });
 
     onCleanup(() => {
       cancelAnimationFrame(frame);
-      document.body.style.overflow = previousOverflow;
-      if (previousFocus?.isConnected) previousFocus.focus();
+      const wasTop = popDialog(dialogToken);
+      if (wasTop) restoreDialogFocus(previousFocus);
     });
   });
 
   const onKey = (event: KeyboardEvent): void => {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      props.onClose();
-      return;
-    }
-    if (event.key !== "Tab" || !panel) return;
-    const items = focusableElements(panel);
-    if (items.length === 0) {
-      event.preventDefault();
-      panel.focus();
-      return;
-    }
-    const first = items[0];
-    const last = items[items.length - 1];
-    const active = document.activeElement;
-    if (event.shiftKey) {
-      if (active === first || !panel.contains(active)) {
-        event.preventDefault();
-        last.focus();
-      }
-    } else if (active === last || !panel.contains(active)) {
-      event.preventDefault();
-      first.focus();
-    }
+    handleDialogKeyDown(dialogToken, event, panel, props.onClose);
   };
   createReactiveListener({
     active: () => props.open,

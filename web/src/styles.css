@@ -87,7 +87,7 @@
     --canvas-inset: #010409;
     --fg-default: #f0f6fc;
     --fg-muted: #9198a1;
-    --fg-subtle: #6e7681;
+    --fg-subtle: #8b949e;
     --border-default: #3d444d;
     --border-muted: #21262d;
     --accent-fg: #4493f8;
@@ -125,6 +125,7 @@
   --color-danger-emphasis: var(--danger-emphasis);
   --color-danger-subtle: var(--danger-subtle);
   --color-attention: var(--attention-fg);
+  --color-attention-emphasis: var(--attention-emphasis);
   --color-attention-subtle: var(--attention-subtle);
   --color-done: var(--done-fg);
   --color-done-subtle: var(--done-subtle);

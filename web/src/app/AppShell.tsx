@@ -1,6 +1,7 @@
 import {
   createEffect,
   ErrorBoundary,
+  onCleanup,
   Show,
   Suspense,
   type JSX,
@@ -27,6 +28,10 @@ export function AppShell(props: { children?: JSX.Element }): JSX.Element {
   const location = useLocation();
   let resetBoundary: (() => void) | undefined;
   let mainEl: HTMLElement | undefined;
+  const initialTitle = typeof document !== "undefined" ? document.title : "";
+  onCleanup(() => {
+    if (typeof document !== "undefined") document.title = initialTitle;
+  });
   createEffect(() => {
     // Subscribe to path changes; clear a live error state and update <title>.
     applyDocumentTitle(location.pathname);

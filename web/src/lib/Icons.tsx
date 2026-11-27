@@ -25,7 +25,10 @@ function createIcon(
 ): (props: IconProps) => JSX.Element {
   return (props: IconProps) => {
     const [local, rest] = splitProps(props, ["class"]);
-    const decorative = () => rest["aria-label"] === undefined && rest["aria-hidden"] === undefined;
+    const decorative = () =>
+      rest["aria-label"] === undefined &&
+      rest["aria-labelledby"] === undefined &&
+      rest["aria-hidden"] === undefined;
     return (
       <svg
         viewBox="0 0 24 24"

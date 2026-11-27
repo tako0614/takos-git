@@ -8,6 +8,11 @@ import {
 import { A } from "@solidjs/router";
 import { cn } from "../lib/cn.ts";
 import { createReactiveListener } from "../lib/lifecycle.ts";
+import { toSafeHref } from "../lib/safeHref.ts";
+
+function isInternalHref(href: string): boolean {
+  return href.startsWith("/") && !href.startsWith("//");
+}
 
 export interface MenuItem {
   readonly label: JSX.Element;
@@ -47,6 +52,7 @@ export function Menu(props: {
   };
   const onKey = (e: KeyboardEvent) => {
     if (e.key === "Escape") {
+      if (e.isComposing || e.keyCode === 229) return;
       e.preventDefault();
       setOpen(false);
       triggerBtn?.focus();
@@ -91,7 +97,7 @@ export function Menu(props: {
         type="button"
         aria-haspopup="menu"
         aria-expanded={open()}
-        aria-controls={menuId}
+        aria-controls={open() ? menuId : undefined}
         aria-label={props.triggerLabel}
         class="tg-focus inline-flex items-center rounded-md"
         onClick={() => {
@@ -111,42 +117,67 @@ export function Menu(props: {
           )}
         >
           <For each={props.items}>
-            {(item) => (
-              <>
-                <Show when={item.separated}>
-                  <div class="my-1 border-t border-border" />
-                </Show>
-                {item.href ? (
-                  <A
-                    href={item.href}
-                    role="menuitem"
-                    class={cn(
-                      "tg-focus block px-3 py-1.5 text-sm hover:bg-canvas-subtle",
-                      item.danger ? "text-danger" : "text-fg",
-                    )}
-                    onClick={() => setOpen(false)}
-                  >
-                    {item.label}
-                  </A>
-                ) : (
-                  <button
-                    type="button"
-                    role="menuitem"
-                    disabled={item.disabled}
-                    class={cn(
-                      "tg-focus block w-full px-3 py-1.5 text-left text-sm hover:bg-canvas-subtle disabled:opacity-50",
-                      item.danger ? "text-danger" : "text-fg",
-                    )}
-                    onClick={() => {
-                      setOpen(false);
-                      item.onSelect?.();
-                    }}
-                  >
-                    {item.label}
-                  </button>
-                )}
-              </>
-            )}
+            {(item) => {
+              const linkClass = () =>
+                cn(
+                  "tg-focus block px-3 py-1.5 text-sm hover:bg-canvas-subtle",
+                  item.danger ? "text-danger" : "text-fg",
+                );
+              const safeExternal = () => (item.href ? toSafeHref(item.href) : null);
+              return (
+                <>
+                  <Show when={item.separated}>
+                    <div class="my-1 border-t border-border" />
+                  </Show>
+                  {item.href ? (
+                    isInternalHref(item.href) ? (
+                      <A
+                        href={item.href}
+                        role="menuitem"
+                        class={linkClass()}
+                        onClick={() => setOpen(false)}
+                      >
+                        {item.label}
+                      </A>
+                    ) : safeExternal() ? (
+                      <a
+                        href={safeExternal() as string}
+                        rel="noopener noreferrer"
+                        role="menuitem"
+                        class={linkClass()}
+                        onClick={() => setOpen(false)}
+                      >
+                        {item.label}
+                      </a>
+                    ) : (
+                      <span
+                        role="menuitem"
+                        aria-disabled="true"
+                        class="block px-3 py-1.5 text-sm text-muted opacity-50"
+                      >
+                        {item.label}
+                      </span>
+                    )
+                  ) : (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      disabled={item.disabled}
+                      class={cn(
+                        "tg-focus block w-full px-3 py-1.5 text-left text-sm hover:bg-canvas-subtle disabled:opacity-50",
+                        item.danger ? "text-danger" : "text-fg",
+                      )}
+                      onClick={() => {
+                        setOpen(false);
+                        item.onSelect?.();
+                      }}
+                    >
+                      {item.label}
+                    </button>
+                  )}
+                </>
+              );
+            }}
           </For>
         </div>
       </Show>

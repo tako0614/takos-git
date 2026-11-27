@@ -1,12 +1,12 @@
 import {
   children as resolveChildren,
-  createEffect,
   createUniqueId,
   Show,
   splitProps,
   type JSX,
 } from "solid-js";
 import { cn } from "../lib/cn.ts";
+import { wireFieldAria } from "./fields-a11y.ts";
 
 const FIELD_BASE =
   "tg-focus w-full rounded-md border border-border bg-canvas px-3 py-1.5 text-sm text-fg placeholder:text-subtle disabled:opacity-60";
@@ -33,33 +33,15 @@ export function Field(props: {
     }
     return null;
   };
-  const labelFor = () => props.for ?? control()?.id ?? undefined;
+  const labelFor = () => props.for || control()?.id || undefined;
 
-  createEffect(() => {
-    const el = control();
-    if (!el) return;
-    if (props.required) el.setAttribute("aria-required", "true");
-    else el.removeAttribute("aria-required");
-  });
-
-  createEffect(() => {
-    const el = control();
-    if (!el) return;
-    const owned = new Set([hintId, errorId]);
-    const existing = (el.getAttribute("aria-describedby") ?? "")
-      .split(/\s+/u)
-      .filter((token) => token && !owned.has(token));
-    if (props.error) existing.push(errorId);
-    else if (props.hint) existing.push(hintId);
-    if (existing.length > 0) el.setAttribute("aria-describedby", existing.join(" "));
-    else el.removeAttribute("aria-describedby");
-  });
-
-  createEffect(() => {
-    const el = control();
-    if (!el) return;
-    if (props.error) el.setAttribute("aria-invalid", "true");
-    else el.removeAttribute("aria-invalid");
+  wireFieldAria({
+    control,
+    required: () => props.required,
+    error: () => props.error,
+    hint: () => props.hint,
+    hintId,
+    errorId,
   });
 
   return (
@@ -88,7 +70,7 @@ export function TextInput(
 ): JSX.Element {
   const fallbackId = createUniqueId();
   const [local, rest] = splitProps(props, ["class", "type", "id"]);
-  const resolvedId = () => local.id ?? (rest.name ? undefined : fallbackId);
+  const resolvedId = () => local.id ?? fallbackId;
   return <input type={local.type ?? "text"} id={resolvedId()} class={cn(FIELD_BASE, local.class)} {...rest} />;
 }
 
@@ -97,7 +79,7 @@ export function Textarea(
 ): JSX.Element {
   const fallbackId = createUniqueId();
   const [local, rest] = splitProps(props, ["class", "id"]);
-  const resolvedId = () => local.id ?? (rest.name ? undefined : fallbackId);
+  const resolvedId = () => local.id ?? fallbackId;
   return <textarea id={resolvedId()} class={cn(FIELD_BASE, "min-h-[96px] resize-y font-sans", local.class)} {...rest} />;
 }
 
@@ -106,7 +88,7 @@ export function Select(
 ): JSX.Element {
   const fallbackId = createUniqueId();
   const [local, rest] = splitProps(props, ["class", "children", "id"]);
-  const resolvedId = () => local.id ?? (rest.name ? undefined : fallbackId);
+  const resolvedId = () => local.id ?? fallbackId;
   return (
     <select id={resolvedId()} class={cn(FIELD_BASE, "pr-8", local.class)} {...rest}>
       {local.children}

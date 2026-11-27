@@ -47,6 +47,10 @@ function GlobalSearch(): JSX.Element {
           value={value()}
           onInput={(e) => setValue(e.currentTarget.value)}
           onKeyDown={(e) => {
+            if (e.isComposing || e.keyCode === 229) {
+              if (e.key === "Enter") e.preventDefault();
+              return;
+            }
             if (e.key === "Escape" && value()) {
               e.preventDefault();
               setValue("");
