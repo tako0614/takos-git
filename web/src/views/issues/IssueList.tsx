@@ -8,6 +8,7 @@ import {
   createMemo,
   createResource,
   createSignal,
+  createUniqueId,
   ErrorBoundary,
   Index,
   Show,
@@ -86,7 +87,7 @@ export function IssueList(props: { owner: string; repo: string }): JSX.Element {
     cursor: cursor(),
   }));
 
-  const [page] = createResource(listKey, (k) =>
+  const [page, { refetch }] = createResource(listKey, (k) =>
     issuesApi.list(k.owner, k.repo, {
       state: k.state,
       label: k.label,
@@ -173,9 +174,12 @@ export function IssueList(props: { owner: string; repo: string }): JSX.Element {
     ),
   ];
 
+  const searchId = createUniqueId();
+  let searchInputEl: HTMLInputElement | undefined;
+
   const filterTrigger = (label: string, active: boolean) => (
     <span
-      class={`tg-focus inline-flex items-center gap-1 rounded-md border border-border px-3 py-1.5 text-sm hover:bg-canvas-subtle ${
+      class={`tg-focus inline-flex min-h-11 items-center gap-1 rounded-md border border-border px-3 py-1.5 text-sm hover:bg-canvas-subtle sm:min-h-0 ${
         active ? "font-semibold text-fg" : "text-muted"
       }`}
     >
@@ -183,20 +187,55 @@ export function IssueList(props: { owner: string; repo: string }): JSX.Element {
     </span>
   );
 
+  const hasFilterOrSearch = () => Boolean(search().trim()) || activeFilters();
+
   return (
     <div>
-      {/* Toolbar: search + New issue */}
+      <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <h1 class="text-lg font-semibold text-fg">Issues</h1>
+        <Show when={session.authenticated()}>
+          <ButtonLink as={A} href={`${base()}/issues/new`} variant="primary">
+            <Icons.Plus class="h-4 w-4" /> New issue
+          </ButtonLink>
+        </Show>
+      </div>
+
+      {/* Toolbar: search + filters + managers */}
       <div class="mb-4 flex flex-wrap items-center gap-2">
-        <label class="relative min-w-[240px] flex-1">
-          <span class="sr-only">Search issues</span>
+        <div class="relative min-w-[200px] flex-1">
+          <label for={searchId} class="sr-only">Search issues</label>
           <Icons.Search class="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
           <TextInput
-            class="pl-8"
+            ref={searchInputEl}
+            id={searchId}
+            name="issueSearch"
+            class="min-h-11 pl-8 pr-9 sm:min-h-0"
             placeholder="Search issues by title"
             value={search()}
             onInput={(e) => setSearch(e.currentTarget.value)}
+            onKeyDown={(e) => {
+              if (e.isComposing || e.keyCode === 229) return;
+              if (e.key === "Escape" && search()) {
+                e.preventDefault();
+                e.stopPropagation();
+                setSearch("");
+              }
+            }}
           />
-        </label>
+          <Show when={search()}>
+            <button
+              type="button"
+              aria-label="Clear search"
+              class="tg-focus absolute right-1 top-1/2 inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded text-muted hover:bg-canvas-subtle hover:text-fg sm:h-6 sm:w-6"
+              onClick={() => {
+                setSearch("");
+                searchInputEl?.focus();
+              }}
+            >
+              <Icons.X class="h-3.5 w-3.5" />
+            </button>
+          </Show>
+        </div>
         <Menu align="left" triggerLabel="Filter by label" trigger={filterTrigger("Label", labelFilter() !== undefined)} items={labelItems()} />
         <Menu align="left" triggerLabel="Filter by milestone" trigger={filterTrigger("Milestone", milestoneFilter() !== undefined)} items={milestoneItems()} />
         <Menu align="left" triggerLabel="Filter by assignee" trigger={filterTrigger("Assignee", assigneeFilter() !== undefined)} items={assigneeItems()} />
@@ -207,11 +246,6 @@ export function IssueList(props: { owner: string; repo: string }): JSX.Element {
           <Button onClick={() => setMilestonesOpen(true)}>
             <Icons.Tag class="h-4 w-4" /> Milestones
           </Button>
-          <Show when={session.authenticated()}>
-            <ButtonLink as={A} href={`${base()}/issues/new`} variant="primary">
-              <Icons.Plus class="h-4 w-4" /> New issue
-            </ButtonLink>
-          </Show>
         </div>
       </div>
 
@@ -243,24 +277,33 @@ export function IssueList(props: { owner: string; repo: string }): JSX.Element {
             {(a) => <Label tone="accent">assignee: {a()}</Label>}
           </Show>
           <button type="button" class="tg-focus rounded px-1 text-accent hover:underline" onClick={clearFilters}>
-            Clear
+            Clear filters
           </button>
         </div>
       </Show>
 
       <ErrorBoundary
-        fallback={(err) => (
-          <Banner tone="danger" title="Could not load issues">
+        fallback={(err, reset) => (
+          <Banner
+            tone="danger"
+            title="Could not load issues"
+            action={
+              <Button size="sm" onClick={() => { void refetch(); reset(); }}>
+                Retry
+              </Button>
+            }
+          >
             {err instanceof ApiError ? err.message : "Unexpected error."}
           </Banner>
         )}
       >
         <Box>
           {/* Open / Closed toggle bar */}
-          <div class="flex items-center gap-4 border-b border-border bg-canvas-subtle px-4 py-2.5 text-sm">
+          <div class="flex items-center gap-4 border-b border-border bg-canvas-subtle px-4 py-2 text-sm">
             <button
               type="button"
-              class={`tg-focus flex items-center gap-1.5 rounded ${
+              aria-pressed={state() === "open"}
+              class={`tg-focus flex min-h-10 items-center gap-1.5 rounded px-1 sm:min-h-0 ${
                 state() === "open" ? "font-semibold text-fg" : "text-muted hover:text-fg"
               }`}
               onClick={() => pickState("open")}
@@ -269,7 +312,8 @@ export function IssueList(props: { owner: string; repo: string }): JSX.Element {
             </button>
             <button
               type="button"
-              class={`tg-focus flex items-center gap-1.5 rounded ${
+              aria-pressed={state() === "closed"}
+              class={`tg-focus flex min-h-10 items-center gap-1.5 rounded px-1 sm:min-h-0 ${
                 state() === "closed" ? "font-semibold text-fg" : "text-muted hover:text-fg"
               }`}
               onClick={() => pickState("closed")}
@@ -285,19 +329,26 @@ export function IssueList(props: { owner: string; repo: string }): JSX.Element {
                 <EmptyState
                   class="border-0"
                   icon={<Icons.Inbox class="h-8 w-8" />}
-                  title={search().trim() ? "No matching issues" : `No ${state()} issues`}
+                  title={hasFilterOrSearch() ? "No matching issues" : `No ${state()} issues`}
                   description={
-                    search().trim()
-                      ? "No issue on this page matches your search."
+                    hasFilterOrSearch()
+                      ? "No issue matches the current search or filters."
                       : state() === "open"
                         ? "There aren't any open issues. Open one to start the conversation."
                         : "No issues have been closed yet."
                   }
                   action={
-                    <Show when={session.authenticated() && !search().trim()}>
-                      <ButtonLink as={A} href={`${base()}/issues/new`} variant="primary">
-                        <Icons.Plus class="h-4 w-4" /> New issue
-                      </ButtonLink>
+                    <Show
+                      when={hasFilterOrSearch()}
+                      fallback={
+                        <Show when={session.authenticated()}>
+                          <ButtonLink as={A} href={`${base()}/issues/new`} variant="primary">
+                            <Icons.Plus class="h-4 w-4" /> New issue
+                          </ButtonLink>
+                        </Show>
+                      }
+                    >
+                      <Button onClick={clearFilters}>Clear filters</Button>
                     </Show>
                   }
                 />

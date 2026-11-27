@@ -51,6 +51,7 @@ export function RouteError(props: {
   return (
     <PageContainer>
       <EmptyState
+        headingLevel="h1"
         icon={<Icons.AlertTriangle class="h-8 w-8" />}
         title={title()}
         description={description()}

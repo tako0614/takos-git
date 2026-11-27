@@ -4,8 +4,10 @@
  * and a "New pull request" dialog wired to `pullsApi.create`.
  */
 import {
+  createMemo,
   createResource,
   createSignal,
+  createUniqueId,
   ErrorBoundary,
   For,
   onCleanup,
@@ -215,7 +217,7 @@ function NewPullDialog(props: {
         <Show when={created()}>
           {(number) => <Banner tone="success">Pull request <A class="text-accent hover:underline" href={`${pullsHref}/${number()}`}>#{number()}</A> was created. Your form edits remain here.</Banner>}
         </Show>
-        <div class="grid grid-cols-2 gap-3">
+        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Field label="Base branch" required for="pull-base">
             <TextInput
               id="pull-base"
@@ -266,8 +268,11 @@ export function PRList(): JSX.Element {
   const session = useSession();
   const identity = useSubmissionScope();
   const [filter, setFilter] = createSignal<StateFilter>("open");
+  const [search, setSearch] = createSignal("");
   const [cursor, setCursor] = createSignal<string | null>(null);
   const [showNew, setShowNew] = createSignal(false);
+  const searchId = createUniqueId();
+  let searchInputEl: HTMLInputElement | undefined;
 
   // Reset paging whenever the filter changes.
   const setFilterReset = (f: StateFilter) => {
@@ -281,13 +286,31 @@ export function PRList(): JSX.Element {
       pullsApi.list(owner, name, { state, cursor: cur ?? undefined }),
   );
 
+  const visible = createMemo(() => {
+    const items = data()?.items ?? [];
+    const q = search().trim().toLowerCase();
+    if (!q) return items;
+    return items.filter(
+      (pr) =>
+        pr.title.toLowerCase().includes(q) ||
+        `#${pr.number}`.includes(q) ||
+        pr.base.ref.toLowerCase().includes(q) ||
+        pr.head.ref.toLowerCase().includes(q),
+    );
+  });
+
+  const clearFilters = () => {
+    setSearch("");
+    setFilterReset("all");
+  };
+
   const filterButton = (f: StateFilter, label: string, icon: JSX.Element) => (
     <button
       type="button"
       onClick={() => setFilterReset(f)}
       aria-pressed={filter() === f}
       class={
-        "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm transition-colors " +
+        "tg-focus flex min-h-10 items-center gap-1.5 rounded-md px-3 py-1.5 text-sm transition-colors sm:min-h-0 " +
         (filter() === f
           ? "font-semibold text-fg"
           : "text-muted hover:text-fg")
@@ -313,28 +336,77 @@ export function PRList(): JSX.Element {
         />}
       </Show>
 
+      <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <h1 class="text-lg font-semibold text-fg">Pull requests</h1>
+        <Show when={session.authenticated()}>
+          <Button variant="primary" size="sm" disabled={!identity()} onClick={() => setShowNew(true)}>
+            <Icons.Plus class="h-4 w-4" /> New pull request
+          </Button>
+        </Show>
+      </div>
+
+      <div class="mb-4 flex flex-wrap items-center gap-2">
+        <div class="relative min-w-[200px] flex-1">
+          <label for={searchId} class="sr-only">Search pull requests</label>
+          <Icons.Search class="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
+          <TextInput
+            ref={searchInputEl}
+            id={searchId}
+            name="prSearch"
+            class="min-h-11 pl-8 pr-9 sm:min-h-0"
+            placeholder="Search pull requests by title or branch"
+            value={search()}
+            onInput={(e) => setSearch(e.currentTarget.value)}
+            onKeyDown={(e) => {
+              if (e.isComposing || e.keyCode === 229) return;
+              if (e.key === "Escape" && search()) {
+                e.preventDefault();
+                e.stopPropagation();
+                setSearch("");
+              }
+            }}
+          />
+          <Show when={search()}>
+            <button
+              type="button"
+              aria-label="Clear search"
+              class="tg-focus absolute right-1 top-1/2 inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded text-muted hover:bg-canvas-subtle hover:text-fg sm:h-6 sm:w-6"
+              onClick={() => {
+                setSearch("");
+                searchInputEl?.focus();
+              }}
+            >
+              <Icons.X class="h-3.5 w-3.5" />
+            </button>
+          </Show>
+        </div>
+      </div>
+
       <Show when={session.authenticated() && currentDetail() && !identity()}>
-        <Banner tone="warning">Safe PR recovery is unavailable. Refresh after the server has been updated before creating a pull request.</Banner>
+        <Banner tone="warning" class="mb-4">Safe PR recovery is unavailable. Refresh after the server has been updated before creating a pull request.</Banner>
       </Show>
 
       <Box>
-        <div class="flex items-center justify-between gap-2 border-b border-border bg-canvas-subtle px-4 py-2">
-          <div class="flex items-center gap-1">
+        <div class="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-canvas-subtle px-4 py-2">
+          <div class="flex flex-wrap items-center gap-1">
             {filterButton("open", "Open", <Icons.GitPullRequest class="h-4 w-4 text-success" />)}
             {filterButton("closed", "Closed", <Icons.Check class="h-4 w-4 text-done" />)}
             {filterButton("all", "All", <Icons.MessageSquare class="h-4 w-4" />)}
           </div>
-          <Show when={session.authenticated()}>
-            <Button variant="primary" size="sm" disabled={!identity()} onClick={() => setShowNew(true)}>
-              <Icons.Plus class="h-4 w-4" /> New pull request
-            </Button>
-          </Show>
         </div>
 
         <ErrorBoundary
-          fallback={(err) => (
+          fallback={(err, reset) => (
             <div class="p-4">
-              <Banner tone="danger" title="Could not load pull requests">
+              <Banner
+                tone="danger"
+                title="Could not load pull requests"
+                action={
+                  <Button size="sm" onClick={() => { void refetch(); reset(); }}>
+                    Retry
+                  </Button>
+                }
+              >
                 {err instanceof ApiError ? err.message : "Unexpected error."}
               </Banner>
             </div>
@@ -342,24 +414,35 @@ export function PRList(): JSX.Element {
         >
           <Suspense fallback={<div class="p-6"><LoadingBlock label="Loading pull requests…" /></div>}>
             <Show
-              when={(data()?.items.length ?? 0) > 0}
+              when={visible().length > 0}
               fallback={
                 <div class="p-6">
                   <EmptyState
                     icon={<Icons.GitPullRequest class="h-8 w-8" />}
                     title={
-                      filter() === "open"
-                        ? "No open pull requests"
-                        : filter() === "closed"
-                          ? "No closed pull requests"
-                          : "No pull requests yet"
+                      search().trim()
+                        ? "No matching pull requests"
+                        : filter() === "open"
+                          ? "No open pull requests"
+                          : filter() === "closed"
+                            ? "No closed pull requests"
+                            : "No pull requests yet"
                     }
-                    description="Pull requests propose changes from one branch into another. Open one to start a review."
+                    description={
+                      search().trim()
+                        ? "No pull request on this page matches your search."
+                        : "Pull requests propose changes from one branch into another. Open one to start a review."
+                    }
+                    action={
+                      <Show when={search().trim() || filter() !== "all"}>
+                        <Button onClick={clearFilters}>Clear filters</Button>
+                      </Show>
+                    }
                   />
                 </div>
               }
             >
-              <For each={data()?.items}>
+              <For each={visible()}>
                 {(pr) => <PrRow pr={pr} owner={repo.owner()} repo={repo.repo()} />}
               </For>
             </Show>

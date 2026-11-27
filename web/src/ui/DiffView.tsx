@@ -1,4 +1,4 @@
-import { For, Show, createSignal, type JSX } from "solid-js";
+import { For, Show, createSignal, createUniqueId, type JSX } from "solid-js";
 import { cn } from "../lib/cn.ts";
 import { Icons } from "../lib/Icons.tsx";
 import type { DiffHunk, DiffLine, FileDiff } from "../api/types.ts";
@@ -29,6 +29,12 @@ function marker(type: DiffLine["type"]): string {
   return type === "add" ? "+" : type === "delete" ? "-" : " ";
 }
 
+function markerClass(type: DiffLine["type"]): string {
+  if (type === "add") return "text-success";
+  if (type === "delete") return "text-danger";
+  return "text-subtle";
+}
+
 function HunkRows(props: { hunk: DiffHunk }): JSX.Element {
   return (
     <>
@@ -47,7 +53,7 @@ function HunkRows(props: { hunk: DiffHunk }): JSX.Element {
               {line.newLineNumber ?? ""}
             </td>
             <td class="whitespace-pre px-3">
-              <span class="select-none text-subtle">{marker(line.type)} </span>
+              <span class={cn("select-none font-semibold", markerClass(line.type))}>{marker(line.type)} </span>
               {line.content}
             </td>
           </tr>
@@ -60,12 +66,14 @@ function HunkRows(props: { hunk: DiffHunk }): JSX.Element {
 /** A single file's diff, collapsible, with an add/del summary. */
 export function FileDiffView(props: { file: FileDiff }): JSX.Element {
   const [open, setOpen] = createSignal(true);
+  const bodyId = createUniqueId();
   return (
     <div class="overflow-hidden rounded-md border border-border">
       <button
         type="button"
         aria-expanded={open()}
-        class="tg-focus flex w-full items-center gap-2 bg-canvas-subtle px-3 py-2 text-left text-sm hover:bg-canvas-inset"
+        aria-controls={open() ? bodyId : undefined}
+        class="tg-focus flex min-h-11 w-full items-center gap-2 bg-canvas-subtle px-3 py-2 text-left text-sm hover:bg-canvas-inset sm:min-h-0"
         onClick={() => setOpen((v) => !v)}
       >
         <Icons.ChevronDown class={cn("h-4 w-4 shrink-0 text-muted transition-transform", !open() && "-rotate-90")} />
@@ -84,21 +92,23 @@ export function FileDiffView(props: { file: FileDiff }): JSX.Element {
         </span>
       </button>
       <Show when={open()}>
-        <Show
-          when={!props.file.binary}
-          fallback={<div class="px-3 py-4 text-center text-xs text-muted">Binary file not shown.</div>}
-        >
-          <div class="overflow-x-auto bg-canvas">
-            <table class="w-full border-collapse">
-              <tbody>
-                <For each={props.file.hunks ?? []}>{(hunk) => <HunkRows hunk={hunk} />}</For>
-              </tbody>
-            </table>
-            <Show when={(props.file.hunks?.length ?? 0) === 0}>
-              <div class="px-3 py-4 text-center text-xs text-muted">No line changes to display.</div>
-            </Show>
-          </div>
-        </Show>
+        <div id={bodyId}>
+          <Show
+            when={!props.file.binary}
+            fallback={<div class="px-3 py-4 text-center text-xs text-muted">Binary file not shown.</div>}
+          >
+            <div class="overflow-x-auto bg-canvas">
+              <table class="w-full border-collapse">
+                <tbody>
+                  <For each={props.file.hunks ?? []}>{(hunk) => <HunkRows hunk={hunk} />}</For>
+                </tbody>
+              </table>
+              <Show when={(props.file.hunks?.length ?? 0) === 0}>
+                <div class="px-3 py-4 text-center text-xs text-muted">No line changes to display.</div>
+              </Show>
+            </div>
+          </Show>
+        </div>
       </Show>
     </div>
   );

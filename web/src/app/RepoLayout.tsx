@@ -12,6 +12,7 @@ import type { RepoDetail } from "../api/types.ts";
 import { useSession } from "../store/session.tsx";
 import { Icons } from "../lib/Icons.tsx";
 import {
+  Banner,
   Breadcrumb,
   Button,
   EmptyState,
@@ -75,15 +76,24 @@ export function RepoLayout(props: { children?: JSX.Element }): JSX.Element {
     ([o, r]) => reposApi.get(o, r),
   );
 
+  const repoDetail = () => (detail.error ? undefined : detail.latest);
+
   const ctx: RepoContextValue = {
     owner,
     repo,
-    detail: () => detail.latest,
+    detail: repoDetail,
     loading: () => detail.loading,
     refetch: () => void refetch(),
   };
 
   const notFound = () => detail.error instanceof ApiError && detail.error.isNotFound;
+  const loadError = () => (detail.error && !notFound() ? detail.error : undefined);
+  const errorMessage = () => {
+    const err = loadError();
+    if (err instanceof ApiError) return err.message;
+    if (err instanceof Error) return err.message;
+    return "An unexpected error occurred while loading this repository.";
+  };
 
   return (
     <RepoContext.Provider value={ctx}>
@@ -98,10 +108,10 @@ export function RepoLayout(props: { children?: JSX.Element }): JSX.Element {
                 { label: repo(), href: `/${owner()}/${repo()}` },
               ]}
             />
-            <Show when={detail.latest}>
+            <Show when={repoDetail()}>
               {(d) => <VisibilityBadge visibility={d().visibility} />}
             </Show>
-            <Show when={detail.latest?.forkOf}>
+            <Show when={repoDetail()?.forkOf}>
               {(parent) => (
                 <Label tone="default">
                   <Icons.GitMerge class="h-3 w-3" /> forked from {parent()}
@@ -109,8 +119,8 @@ export function RepoLayout(props: { children?: JSX.Element }): JSX.Element {
               )}
             </Show>
           </div>
-          <Show when={detail.latest?.description}>
-            <p class="mt-2 text-sm text-muted">{detail.latest?.description}</p>
+          <Show when={repoDetail()?.description}>
+            <p class="mt-2 text-sm text-muted">{repoDetail()?.description}</p>
           </Show>
           <div class="mt-3">
             <UnderlineNav items={tabs(owner(), repo())} class="border-b-0 px-0" />
@@ -123,6 +133,7 @@ export function RepoLayout(props: { children?: JSX.Element }): JSX.Element {
           when={!notFound()}
           fallback={
             <EmptyState
+              headingLevel="h1"
               icon={<Icons.AlertTriangle class="h-8 w-8" />}
               title="Repository not found"
               description={`No repository ${owner()}/${repo()} is visible to you. It may be private, or you may need to sign in.`}
@@ -134,8 +145,28 @@ export function RepoLayout(props: { children?: JSX.Element }): JSX.Element {
             />
           }
         >
-          <Show when={!detail.loading || detail.latest} fallback={<LoadingBlock label="Loading repository…" />}>
-            {props.children}
+          <Show
+            when={!loadError()}
+            fallback={
+              <div class="space-y-3">
+                <h1 class="sr-only">Repository error — {owner()}/{repo()}</h1>
+                <Banner
+                  tone="danger"
+                  title="Could not load repository"
+                  action={
+                    <Button size="sm" disabled={detail.loading} onClick={() => void refetch()}>
+                      Retry
+                    </Button>
+                  }
+                >
+                  {errorMessage()}
+                </Banner>
+              </div>
+            }
+          >
+            <Show when={!detail.loading || repoDetail()} fallback={<LoadingBlock label="Loading repository…" />}>
+              {props.children}
+            </Show>
           </Show>
         </Show>
       </PageContainer>

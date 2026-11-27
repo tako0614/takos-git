@@ -59,10 +59,20 @@ export function ReviewForm(props: {
       </Show>
       <Show when={props.allowNew === false}><Banner tone="warning">This pull request is closed. Only a saved original review can be recovered.</Banner></Show>
       <Textarea
+        name="overallReviewComment"
+        aria-label="Overall review comment"
         rows={4}
         placeholder="Leave an overall review comment…"
         value={flow.body()}
         onInput={(e) => flow.updateBody(e.currentTarget.value)}
+        onKeyDown={(e) => {
+          if (e.isComposing || e.keyCode === 229) return;
+          if (e.key === "Escape" && props.onCancel && !flow.busy()) {
+            e.preventDefault();
+            e.stopPropagation();
+            props.onCancel();
+          }
+        }}
       />
       <div class="flex flex-wrap items-center gap-2">
         <Button variant="default" onClick={() => void flow.submit("commented")} disabled={!!flow.busy() || !!flow.pending() || !props.recovery || props.allowNew === false}>
