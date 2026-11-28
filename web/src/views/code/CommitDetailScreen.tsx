@@ -7,6 +7,7 @@ import {
   Avatar,
   Banner,
   Box,
+  Button,
   DiffView,
   EmptyState,
   Icons,
@@ -48,7 +49,7 @@ export function DiffSummary(props: { files: readonly FileDiff[] }): JSX.Element 
  * the first parent. Serves `/:owner/:repo/commit/:sha`.
  */
 export function CommitDetailScreen(props: { owner: string; repo: string; sha: string }): JSX.Element {
-  const [result] = createResource(
+  const [result, { refetch }] = createResource(
     () => [props.owner, props.repo, props.sha] as const,
     async ([o, r, sha]) => {
       try {
@@ -69,12 +70,24 @@ export function CommitDetailScreen(props: { owner: string; repo: string; sha: st
               <Show
                 when={res.error?.isNotFound}
                 fallback={
-                  <Banner tone="danger" title="Could not load commit">
-                    {res.error?.message}
-                  </Banner>
+                  <div class="space-y-3">
+                    <h1 class="sr-only">Commit error</h1>
+                    <Banner
+                      tone="danger"
+                      title="Could not load commit"
+                      action={
+                        <Button size="sm" disabled={result.loading} onClick={() => void refetch()}>
+                          Retry
+                        </Button>
+                      }
+                    >
+                      {res.error?.message}
+                    </Banner>
+                  </div>
                 }
               >
                 <EmptyState
+                  headingLevel="h1"
                   icon={<Icons.GitCommit class="h-8 w-8" />}
                   title="Commit not found"
                   description={<code class="font-mono">{props.sha}</code>}
@@ -103,10 +116,10 @@ export function CommitDetailScreen(props: { owner: string; repo: string; sha: st
                       <div class="ml-auto flex items-center gap-2">
                         <span class="text-xs text-muted">commit</span>
                         <Sha value={commit().sha} />
-                        <CopyButton value={commit().sha} label="Commit SHA" class="h-6 w-6 hover:bg-canvas-subtle" />
+                        <CopyButton value={commit().sha} label="Commit SHA" class="h-11 w-11 hover:bg-canvas-subtle sm:h-6 sm:w-6" />
                         <A
                           href={treeHref(props.owner, props.repo, commit().sha)}
-                          class="inline-flex h-7 items-center gap-1.5 rounded-md border border-border bg-canvas-subtle px-2.5 text-xs text-fg hover:bg-canvas-inset"
+                          class="tg-focus inline-flex min-h-11 items-center gap-1.5 rounded-md border border-border bg-canvas-subtle px-2.5 text-xs text-fg hover:bg-canvas-inset sm:min-h-0 sm:h-7"
                         >
                           <Icons.Code class="h-3.5 w-3.5 text-muted" /> Browse files
                         </A>
@@ -119,7 +132,7 @@ export function CommitDetailScreen(props: { owner: string; repo: string; sha: st
                           {(parent) => (
                             <A
                               href={commitHref(props.owner, props.repo, parent)}
-                              class="rounded bg-neutral-muted px-1.5 py-0.5 font-mono text-accent hover:underline"
+                              class="tg-focus inline-flex min-h-11 items-center rounded border border-border bg-canvas px-2.5 py-0.5 font-mono text-accent hover:underline sm:min-h-0 sm:px-1.5"
                             >
                               {parent.slice(0, 7)}
                             </A>

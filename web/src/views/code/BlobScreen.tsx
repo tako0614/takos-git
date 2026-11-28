@@ -60,7 +60,7 @@ function BlameView(props: { lines: readonly BlameLine[] }): JSX.Element {
                   >
                     <Show when={showCommit()}>
                       <span class="inline-flex items-center gap-1.5">
-                        <span class="rounded bg-neutral-muted px-1 text-[10px] text-muted">
+                        <span class="rounded bg-neutral-muted px-1 text-[10px] text-fg">
                           {line().commitSha.slice(0, 7)}
                         </span>
                         <span class="truncate text-muted">{line().authorName}</span>
@@ -103,7 +103,7 @@ export function BlobScreen(props: {
 
   const fileName = () => props.path.split("/").pop() ?? props.path;
 
-  const [blob] = createResource(
+  const [blob, { refetch }] = createResource(
     () => [props.owner, props.repo, props.refName, props.path] as const,
     async ([o, r, ref, path]) => {
       try {
@@ -201,7 +201,15 @@ export function BlobScreen(props: {
                     <Show
                       when={result.error?.isNotFound}
                       fallback={
-                        <Banner tone="danger" title="Could not load this file">
+                        <Banner
+                          tone="danger"
+                          title="Could not load this file"
+                          action={
+                            <Button size="sm" disabled={blob.loading} onClick={() => void refetch()}>
+                              Retry
+                            </Button>
+                          }
+                        >
                           {result.error?.message}
                         </Banner>
                       }
@@ -248,7 +256,7 @@ export function BlobScreen(props: {
                         </Button>
                         <A
                           href={`${commitsHref(props.owner, props.repo, props.refName)}?path=${encodeURIComponent(props.path)}`}
-                          class="inline-flex h-7 items-center gap-1.5 rounded-md border border-border bg-canvas-subtle px-2.5 text-xs text-fg hover:bg-canvas-inset"
+                          class="tg-focus inline-flex min-h-11 items-center gap-1.5 rounded-md border border-border bg-canvas-subtle px-2.5 text-xs text-fg hover:bg-canvas-inset sm:min-h-0 sm:h-7"
                         >
                           <Icons.Clock class="h-3.5 w-3.5 text-muted" /> History
                         </A>
@@ -256,13 +264,13 @@ export function BlobScreen(props: {
                           value={decoded()}
                           label="File contents"
                           title="Copy file contents"
-                          class="h-7 w-7 border border-border bg-canvas-subtle hover:bg-canvas-inset"
+                          class="h-11 w-11 border border-border bg-canvas-subtle hover:bg-canvas-inset sm:h-7 sm:w-7"
                         />
                       </Show>
                       <button
                         type="button"
                         onClick={download}
-                        class="tg-focus inline-flex h-7 w-7 items-center justify-center rounded-md border border-border bg-canvas-subtle text-fg hover:bg-canvas-inset"
+                        class="tg-focus inline-flex h-11 w-11 items-center justify-center rounded-md border border-border bg-canvas-subtle text-fg hover:bg-canvas-inset sm:h-7 sm:w-7"
                         title="Download"
                         aria-label="Download file"
                       >
@@ -282,7 +290,11 @@ export function BlobScreen(props: {
                             <div class="flex flex-col items-center gap-3 px-6 py-12 text-center">
                               <Icons.File class="h-8 w-8 text-subtle" />
                               <p class="text-sm text-muted">Binary file not shown.</p>
-                              <button type="button" onClick={download} class="text-accent hover:underline">
+                              <button
+                                type="button"
+                                onClick={download}
+                                class="tg-focus inline-flex min-h-11 items-center rounded px-3 text-accent hover:underline sm:min-h-0 sm:px-0"
+                              >
                                 Download file
                               </button>
                             </div>

@@ -54,6 +54,7 @@ export function Menu(props: {
     if (e.key === "Escape") {
       if (e.isComposing || e.keyCode === 229) return;
       e.preventDefault();
+      e.stopPropagation();
       setOpen(false);
       triggerBtn?.focus();
       return;
@@ -120,7 +121,7 @@ export function Menu(props: {
             {(item) => {
               const linkClass = () =>
                 cn(
-                  "tg-focus block px-3 py-1.5 text-sm hover:bg-canvas-subtle",
+                  "tg-focus flex min-h-11 items-center px-3 py-1.5 text-sm hover:bg-canvas-subtle sm:block sm:min-h-0",
                   item.danger ? "text-danger" : "text-fg",
                 );
               const safeExternal = () => (item.href ? toSafeHref(item.href) : null);
@@ -164,7 +165,7 @@ export function Menu(props: {
                       role="menuitem"
                       disabled={item.disabled}
                       class={cn(
-                        "tg-focus block w-full px-3 py-1.5 text-left text-sm hover:bg-canvas-subtle disabled:opacity-50",
+                        "tg-focus flex min-h-11 w-full items-center px-3 py-1.5 text-left text-sm hover:bg-canvas-subtle disabled:opacity-50 sm:block sm:min-h-0",
                         item.danger ? "text-danger" : "text-fg",
                       )}
                       onClick={() => {

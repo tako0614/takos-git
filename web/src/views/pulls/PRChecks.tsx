@@ -21,6 +21,7 @@ import type {
 import {
   Banner,
   Box,
+  Button,
   EmptyState,
   ExternalLink,
   Icons,
@@ -94,8 +95,8 @@ function Row(props: {
 
 export function PRChecks(props: { owner: string; repo: string; sha: string }): JSX.Element {
   const key = () => [props.owner, props.repo, props.sha] as const;
-  const [combined] = createResource(key, ([o, r, s]) => checksApi.combinedStatus(o, r, s));
-  const [runs] = createResource(key, ([o, r, s]) => checksApi.checkRuns(o, r, s));
+  const [combined, { refetch: refetchCombined }] = createResource(key, ([o, r, s]) => checksApi.combinedStatus(o, r, s));
+  const [runs, { refetch: refetchRuns }] = createResource(key, ([o, r, s]) => checksApi.checkRuns(o, r, s));
 
   const overall = (): { tone: BannerTone; title: string } => {
     const c: CombinedStatusDto | undefined = combined();
@@ -115,8 +116,16 @@ export function PRChecks(props: { owner: string; repo: string; sha: string }): J
 
   return (
     <ErrorBoundary
-      fallback={(err) => (
-        <Banner tone="danger" title="Could not load checks">
+      fallback={(err, reset) => (
+        <Banner
+          tone="danger"
+          title="Could not load checks"
+          action={
+            <Button size="sm" onClick={() => { void refetchCombined(); void refetchRuns(); reset(); }}>
+              Retry
+            </Button>
+          }
+        >
           {err instanceof ApiError ? err.message : "Unexpected error."}
         </Banner>
       )}

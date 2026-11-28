@@ -2,8 +2,8 @@ import { createMemo, splitProps, type JSX } from "solid-js";
 import { cn } from "../lib/cn.ts";
 
 const PALETTE = [
-  "#e11d48", "#db2777", "#9333ea", "#6366f1", "#2563eb",
-  "#0891b2", "#059669", "#65a30d", "#d97706", "#dc2626",
+  "#e11d48", "#db2777", "#9333ea", "#4f46e5", "#2563eb",
+  "#0e7490", "#047857", "#4d7c0f", "#b45309", "#dc2626",
 ];
 
 function hash(input: string): number {

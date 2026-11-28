@@ -6,6 +6,7 @@ import type { CompareResponse } from "../../api/types.ts";
 import {
   Banner,
   Box,
+  Button,
   DiffView,
   EmptyState,
   Icons,
@@ -48,7 +49,7 @@ function StatusIcon(props: { status: CompareResponse["status"] }): JSX.Element {
 export function CompareScreen(props: { owner: string; repo: string; spec: string }): JSX.Element {
   const refs = createMemo(() => parseSpec(props.spec));
 
-  const [result] = createResource(
+  const [result, { refetch }] = createResource(
     () => [props.owner, props.repo, props.spec] as const,
     async ([o, r, spec]) => {
       try {
@@ -85,7 +86,15 @@ export function CompareScreen(props: { owner: string; repo: string; spec: string
             <Show
               when={res.data}
               fallback={
-                <Banner tone="danger" title="Could not compare these refs">
+                <Banner
+                  tone="danger"
+                  title="Could not compare these refs"
+                  action={
+                    <Button size="sm" disabled={result.loading} onClick={() => void refetch()}>
+                      Retry
+                    </Button>
+                  }
+                >
                   {res.error?.message ?? "One of the refs may not exist."}
                 </Banner>
               }

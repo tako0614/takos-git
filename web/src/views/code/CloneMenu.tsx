@@ -11,16 +11,21 @@ import { CopyButton } from "./CopyButton.tsx";
 export function CloneMenu(props: { cloneUrl: string }): JSX.Element {
   const [open, setOpen] = createSignal(false);
   const menuId = createUniqueId();
+  const cloneUrlId = createUniqueId();
   let root: HTMLDivElement | undefined;
   let triggerBtn: HTMLButtonElement | undefined;
 
   const onDocClick = (e: MouseEvent) => {
-    if (root && !root.contains(e.target as Node)) close();
+    if (!root) return;
+    const path = typeof e.composedPath === "function" ? e.composedPath() : [];
+    if (path.includes(root) || root.contains(e.target as Node)) return;
+    close();
   };
   const onKey = (e: KeyboardEvent) => {
     if (e.key === "Escape") {
       if (e.isComposing || e.keyCode === 229) return;
       e.preventDefault();
+      e.stopPropagation();
       close();
       triggerBtn?.focus();
     }
@@ -51,11 +56,19 @@ export function CloneMenu(props: { cloneUrl: string }): JSX.Element {
   const cloneCmd = () => `git clone ${props.cloneUrl}`;
 
   return (
-    <div ref={root} class="relative inline-block text-left">
+    <div
+      ref={root}
+      class="relative inline-block text-left"
+      onFocusOut={(e) => {
+        if (!open() || !root) return;
+        const next = e.relatedTarget as Node | null;
+        if (next && !root.contains(next)) close();
+      }}
+    >
       <button
         ref={triggerBtn}
         type="button"
-        aria-haspopup="menu"
+        aria-haspopup="dialog"
         aria-expanded={open()}
         aria-controls={open() ? menuId : undefined}
         class="tg-focus inline-flex min-h-11 items-center gap-1.5 rounded-md border border-success-emphasis bg-success-emphasis px-3 text-sm font-medium text-white hover:brightness-110 sm:min-h-0 sm:h-8"
@@ -69,7 +82,8 @@ export function CloneMenu(props: { cloneUrl: string }): JSX.Element {
       <Show when={open()}>
         <div
           id={menuId}
-          role="menu"
+          role="dialog"
+          aria-label="Clone repository"
           class="absolute right-0 z-40 mt-1 w-80 max-w-[calc(100vw-2rem)] overflow-hidden rounded-md border border-border bg-canvas p-3 shadow-lg"
         >
           <div class="flex items-center gap-2 text-sm font-semibold text-fg">
@@ -77,12 +91,12 @@ export function CloneMenu(props: { cloneUrl: string }): JSX.Element {
           </div>
           <p class="mt-1 text-xs text-muted">Clone over HTTPS with the git CLI.</p>
 
-          <label class="mt-3 block text-xs font-medium text-muted" for="clone-url">
+          <label class="mt-3 block text-xs font-medium text-muted" for={cloneUrlId}>
             HTTPS
           </label>
           <div class="mt-1 flex items-center gap-1 rounded-md border border-border bg-canvas-subtle">
             <input
-              id="clone-url"
+              id={cloneUrlId}
               name="cloneUrl"
               type="text"
               readonly
@@ -94,13 +108,18 @@ export function CloneMenu(props: { cloneUrl: string }): JSX.Element {
               value={props.cloneUrl}
               label="Clone URL"
               title="Copy clone URL"
-              class="h-8 w-8 shrink-0 hover:bg-canvas-inset"
+              class="h-11 w-11 shrink-0 hover:bg-canvas-inset sm:h-8 sm:w-8"
             />
           </div>
 
           <div class="mt-3 flex items-center justify-between">
             <span class="text-xs font-medium text-muted">Command</span>
-            <CopyButton value={cloneCmd()} label="Command" title="Copy git clone command" class="text-xs text-accent hover:underline">
+            <CopyButton
+              value={cloneCmd()}
+              label="Command"
+              title="Copy git clone command"
+              class="min-h-11 px-2 text-xs text-accent hover:underline sm:min-h-0 sm:px-0"
+            >
               <span>Copy command</span>
             </CopyButton>
           </div>

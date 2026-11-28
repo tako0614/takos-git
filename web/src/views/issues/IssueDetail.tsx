@@ -29,6 +29,7 @@ import {
   Avatar,
   Banner,
   Button,
+  ButtonLink,
   EmptyState,
   Icons,
   IconButton,
@@ -72,11 +73,36 @@ export function IssueDetail(props: {
     issueKey,
     ([o, r, n]) => issuesApi.get(o, r, n),
   );
-  const issue = () => issueRes()?.issue;
+  const issue = () =>
+    issueRes.state === "ready" || issueRes.state === "refreshing"
+      ? issueRes.latest?.issue
+      : undefined;
 
   const repoKey = () => [props.owner, props.repo] as const;
-  const [labels] = createResource(repoKey, ([o, r]) => issuesApi.labels(o, r));
-  const [milestones] = createResource(repoKey, ([o, r]) => issuesApi.milestones(o, r));
+  const [labels, { refetch: refetchLabels }] = createResource(repoKey, ([o, r]) =>
+    issuesApi.labels(o, r),
+  );
+  const [milestones, { refetch: refetchMilestones }] = createResource(repoKey, ([o, r]) =>
+    issuesApi.milestones(o, r),
+  );
+  const labelItems = () =>
+    labels.state === "ready" || labels.state === "refreshing"
+      ? (labels.latest?.items ?? [])
+      : [];
+  const labelError = () =>
+    labels.error
+      ? (labels.error instanceof ApiError ? labels.error.message : "Could not load labels.")
+      : undefined;
+  const milestoneItems = () =>
+    milestones.state === "ready" || milestones.state === "refreshing"
+      ? (milestones.latest?.items ?? [])
+      : [];
+  const milestoneError = () =>
+    milestones.error
+      ? (milestones.error instanceof ApiError
+          ? milestones.error.message
+          : "Could not load milestones.")
+      : undefined;
   const [collaborators] = createResource(repoKey, async ([o, r]) => {
     try {
       return await collaboratorsApi.list(o, r);
@@ -161,9 +187,18 @@ export function IssueDetail(props: {
 
   const [editingTitle, setEditingTitle] = createSignal(false);
   const [titleDraft, setTitleDraft] = createSignal("");
+  let editTitleBtn: HTMLButtonElement | undefined;
   let titleDraftRevision = 0;
   const updateTitleDraft = (value: string) => { titleDraftRevision += 1; setTitleDraft(value); };
-  const cancelTitleEdit = () => { titleDraftRevision += 1; setEditingTitle(false); };
+  const restoreEditTitleFocus = () => {
+    if (editTitleBtn) editTitleBtn.focus();
+    else queueMicrotask(() => editTitleBtn?.focus());
+  };
+  const cancelTitleEdit = (restoreFocus = false) => {
+    titleDraftRevision += 1;
+    setEditingTitle(false);
+    if (restoreFocus) restoreEditTitleFocus();
+  };
   const beginEditTitle = () => {
     updateTitleDraft(issue()?.title ?? "");
     setEditingTitle(true);
@@ -173,7 +208,10 @@ export function IssueDetail(props: {
     const t = titleDraft().trim();
     if (!t) return;
     const revision = titleDraftRevision;
-    if (await patchIssue({ title: t }) && titleDraftRevision === revision) setEditingTitle(false);
+    if (await patchIssue({ title: t }) && titleDraftRevision === revision) {
+      setEditingTitle(false);
+      restoreEditTitleFocus();
+    }
   };
 
   // --- body editing ---------------------------------------------------------
@@ -258,35 +296,75 @@ export function IssueDetail(props: {
 
   const notFound = () =>
     issueRes.error instanceof ApiError && issueRes.error.isNotFound;
+  const loadError = () =>
+    issueRes.error && !notFound() ? issueRes.error : undefined;
+  const retryLoad = () => {
+    void refetchIssue();
+    void refetchLabels();
+    void refetchMilestones();
+    if (commentsError()) void loadComments(true);
+  };
 
   return (
     <ErrorBoundary
-      fallback={(err) => (
-        <Banner tone="danger" title="Could not load this issue">
-          {err instanceof ApiError ? err.message : "Unexpected error."}
-        </Banner>
+      fallback={(err, reset) => (
+        <div class="space-y-3">
+          <h1 class="sr-only">Issue error</h1>
+          <Banner
+            tone="danger"
+            title="Could not load this issue"
+            action={
+              <Button size="sm" onClick={() => { void refetchIssue(); void refetchLabels(); void refetchMilestones(); reset(); }}>
+                Retry
+              </Button>
+            }
+          >
+            {err instanceof ApiError ? err.message : "Unexpected error."}
+          </Banner>
+        </div>
       )}
     >
       <Show
         when={!notFound()}
         fallback={
           <EmptyState
+            headingLevel="h1"
             icon={<Icons.Inbox class="h-8 w-8" />}
             title="Issue not found"
             description={`No issue #${props.number} exists in this repository.`}
             action={
-              <A
-                href={`${base()}/issues`}
-                class="tg-focus rounded-md border border-border px-3 py-1.5 text-sm hover:bg-canvas-subtle"
-              >
+              <ButtonLink as={A} href={`${base()}/issues`}>
                 Back to issues
-              </A>
+              </ButtonLink>
             }
           />
         }
       >
+        <Show
+          when={!loadError()}
+          fallback={
+            <div class="space-y-3">
+              <h1 class="sr-only">Issue error</h1>
+              <Banner
+                tone="danger"
+                title="Could not load this issue"
+                action={
+                  <Button size="sm" disabled={issueRes.loading} onClick={retryLoad}>
+                    Retry
+                  </Button>
+                }
+              >
+                {loadError() instanceof ApiError
+                  ? (loadError() as ApiError).message
+                  : loadError() instanceof Error
+                    ? (loadError() as Error).message
+                    : "Unexpected error."}
+              </Banner>
+            </div>
+          }
+        >
         <Suspense fallback={<LoadingBlock label="Loading issue…" />}>
-          <Show when={issue()}>
+          <Show when={issue()} fallback={<LoadingBlock label="Loading issue…" />}>
             {(iss) => (
               <div>
                 {/* Title row */}
@@ -296,18 +374,28 @@ export function IssueDetail(props: {
                     fallback={
                       <div class="flex flex-wrap items-center gap-2">
                         <TextInput
+                          ref={(el) => { queueMicrotask(() => el.focus()); }}
                           class="flex-1"
+                          aria-label="Issue title"
                           value={titleDraft()}
                           onInput={(e) => updateTitleDraft(e.currentTarget.value)}
                           onKeyDown={(e) => {
-                            if (e.key === "Enter") void saveTitle();
-                            if (e.key === "Escape") cancelTitleEdit();
+                            if (e.isComposing || e.keyCode === 229) return;
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              void saveTitle();
+                            }
+                            if (e.key === "Escape") {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              cancelTitleEdit(true);
+                            }
                           }}
                         />
                         <Button variant="primary" disabled={busy() || !titleDraft().trim()} onClick={saveTitle}>
                           Save
                         </Button>
-                        <Button onClick={cancelTitleEdit}>Cancel</Button>
+                        <Button onClick={() => cancelTitleEdit(true)}>Cancel</Button>
                       </div>
                     }
                   >
@@ -318,15 +406,16 @@ export function IssueDetail(props: {
                       </h1>
                       <div class="flex items-center gap-2">
                         <Show when={session.authenticated()}>
-                          <Button size="sm" onClick={beginEditTitle}>
+                          <Button
+                            ref={(el) => { editTitleBtn = el; }}
+                            size="sm"
+                            onClick={beginEditTitle}
+                          >
                             <Icons.Edit class="h-3.5 w-3.5" /> Edit
                           </Button>
-                          <A
-                            href={`${base()}/issues/new`}
-                            class="tg-focus inline-flex h-7 items-center gap-2 rounded-md border border-success-emphasis bg-success-emphasis px-2.5 text-xs font-medium text-white hover:brightness-110"
-                          >
+                          <ButtonLink as={A} href={`${base()}/issues/new`} size="sm" variant="primary">
                             <Icons.Plus class="h-3.5 w-3.5" /> New issue
-                          </A>
+                          </ButtonLink>
                         </Show>
                       </div>
                     </div>
@@ -533,8 +622,10 @@ export function IssueDetail(props: {
 
                     <SidebarSection>
                       <LabelEditor
-                        all={labels()?.items ?? []}
+                        all={labelItems()}
                         loading={labels.loading}
+                        error={labelError()}
+                        onRetry={() => void refetchLabels()}
                         selected={iss().labels.map((l) => l.name)}
                         disabled={!session.authenticated() || busy()}
                         onApply={(names) => void patchIssue({ labels: names }, "Labels updated")}
@@ -551,8 +642,10 @@ export function IssueDetail(props: {
 
                     <SidebarSection>
                       <MilestoneEditor
-                        all={milestones()?.items ?? []}
+                        all={milestoneItems()}
                         loading={milestones.loading}
+                        error={milestoneError()}
+                        onRetry={() => void refetchMilestones()}
                         selected={iss().milestone?.number ?? null}
                         disabled={!session.authenticated() || busy()}
                         onApply={(m) => void patchIssue({ milestone: m }, "Milestone updated")}
@@ -573,7 +666,7 @@ export function IssueDetail(props: {
                       <div class="border-t border-border pt-4">
                         <button
                           type="button"
-                          class="tg-focus flex items-center gap-2 text-sm text-danger hover:underline disabled:opacity-60"
+                          class="tg-focus flex min-h-11 items-center gap-2 rounded text-sm text-danger hover:underline disabled:opacity-60 sm:min-h-0"
                           disabled={busy()}
                           onClick={async () => {
                             const target = iss().state === "open" ? "closed" : "open";
@@ -609,6 +702,7 @@ export function IssueDetail(props: {
             )}
           </Show>
         </Suspense>
+        </Show>
       </Show>
     </ErrorBoundary>
   );
@@ -692,7 +786,11 @@ function CommentItem(props: {
           <Menu
             align="right"
             triggerLabel="Comment actions"
-            trigger={<Icons.MoreHorizontal class="h-4 w-4 text-muted" />}
+            trigger={
+              <span class="inline-flex h-11 w-11 items-center justify-center rounded-md text-muted hover:bg-canvas-inset hover:text-fg sm:h-7 sm:w-7">
+                <Icons.MoreHorizontal class="h-4 w-4" />
+              </span>
+            }
             items={[
               { label: "Edit", onSelect: begin },
               { label: "Delete", onSelect: () => void remove(), danger: true, separated: true },

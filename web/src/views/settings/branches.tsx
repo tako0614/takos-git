@@ -140,7 +140,15 @@ export function BranchesSettingsView(): JSX.Element {
 
         <Suspense fallback={<LoadingBlock label="Loading rules…" />}>
           <Show when={rules.error}>
-            <Banner tone="danger" title="Could not load protection rules">
+            <Banner
+              tone="danger"
+              title="Could not load protection rules"
+              action={
+                <Button size="sm" disabled={rules.loading} onClick={reload}>
+                  Retry
+                </Button>
+              }
+            >
               {describeError(rules.error)}
             </Banner>
           </Show>

@@ -1,6 +1,7 @@
 import { createResource, For, Show, type JSX } from "solid-js";
-import { Box, BoxHeader, Icons, RelativeTime, Spinner } from "../../ui/index.ts";
+import { Banner, Box, BoxHeader, Button, Icons, RelativeTime, Spinner } from "../../ui/index.ts";
 import { actionsApi } from "../../api/actions.ts";
+import { ApiError } from "../../api/client.ts";
 import type { WorkflowArtifactDto } from "../../api/types.ts";
 
 function formatBytes(bytes: number | null): string {
@@ -22,20 +23,39 @@ export function ArtifactsList(props: {
   repo: string;
   runId: string;
 }): JSX.Element {
-  const [artifacts] = createResource(
+  const [artifacts, { refetch }] = createResource(
     () => [props.owner, props.repo, props.runId] as const,
     ([o, r, id]) => actionsApi.artifacts(o, r, id),
   );
+  const items = () => (artifacts.error ? [] : (artifacts()?.items ?? []));
 
   return (
     <Box>
       <BoxHeader>
         <Icons.Package class="h-4 w-4" /> Artifacts
-        <Show when={artifacts()?.items.length}>
-          <span class="ml-1 text-xs font-normal text-muted">{artifacts()!.items.length}</span>
+        <Show when={!artifacts.error && items().length}>
+          <span class="ml-1 text-xs font-normal text-muted">{items().length}</span>
         </Show>
       </BoxHeader>
 
+      <Show
+        when={!artifacts.error}
+        fallback={
+          <div class="p-4">
+            <Banner
+              tone="danger"
+              title="Couldn't load artifacts"
+              action={
+                <Button size="sm" disabled={artifacts.loading} onClick={() => void refetch()}>
+                  Retry
+                </Button>
+              }
+            >
+              {artifacts.error instanceof ApiError ? artifacts.error.message : "Unexpected error."}
+            </Banner>
+          </div>
+        }
+      >
       <Show
         when={!artifacts.loading}
         fallback={
@@ -45,11 +65,11 @@ export function ArtifactsList(props: {
         }
       >
         <Show
-          when={(artifacts()?.items.length ?? 0) > 0}
+          when={items().length > 0}
           fallback={<div class="px-4 py-6 text-center text-sm text-muted">No artifacts were uploaded by this run.</div>}
         >
           <ul class="divide-y divide-border">
-            <For each={artifacts()!.items}>
+            <For each={items()}>
               {(artifact: WorkflowArtifactDto) => (
                 <li class="flex items-center justify-between gap-3 px-4 py-3">
                   <div class="min-w-0">
@@ -75,7 +95,7 @@ export function ArtifactsList(props: {
                   </div>
                   <a
                     href={actionsApi.artifactDownloadUrl(props.owner, props.repo, artifact.id)}
-                    class="tg-focus inline-flex shrink-0 items-center gap-1 rounded-md border border-border bg-canvas-subtle px-2.5 py-1 text-xs font-medium text-fg hover:bg-canvas-inset"
+                    class="tg-focus inline-flex min-h-11 shrink-0 items-center gap-1 rounded-md border border-border bg-canvas-subtle px-2.5 py-1 text-xs font-medium text-fg hover:bg-canvas-inset sm:min-h-0"
                     rel="noopener"
                     aria-label={`Download ${artifact.name}`}
                   >
@@ -86,6 +106,7 @@ export function ArtifactsList(props: {
             </For>
           </ul>
         </Show>
+      </Show>
       </Show>
     </Box>
   );

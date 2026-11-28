@@ -7,6 +7,8 @@
 import { createSignal, Index, Show, type JSX } from "solid-js";
 import { moveTabFocus } from "../../lib/a11y.ts";
 import { cn } from "../../lib/cn.ts";
+import { computeLabelChipStyle } from "../../lib/label-color.ts";
+import { resolvedTheme } from "../../lib/theme.ts";
 import {
   Avatar,
   Icons,
@@ -67,15 +69,10 @@ export function IssueStateBadge(props: { state: "open" | "closed" }): JSX.Elemen
 
 /** A colored issue-label pill from a `LabelDto` (its color is a 6-hex string). */
 export function LabelChip(props: { label: LabelDto }): JSX.Element {
-  const hex = () => `#${(props.label.color || "8b949e").replace(/^#/, "")}`;
   return (
     <span
       class="inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium leading-4"
-      style={{
-        "border-color": `color-mix(in srgb, ${hex()} 55%, transparent)`,
-        background: `color-mix(in srgb, ${hex()} 16%, transparent)`,
-        color: hex(),
-      }}
+      style={computeLabelChipStyle(props.label.color, resolvedTheme())}
       title={props.label.description ?? undefined}
     >
       {props.label.name}
@@ -111,7 +108,7 @@ export function MarkdownEditor(props: {
   const [tab, setTab] = createSignal<"write" | "preview">("write");
   const tabClass = (active: boolean) =>
     cn(
-      "tg-focus rounded-md px-3 py-1 text-sm",
+      "tg-focus min-h-11 rounded-md px-3 py-1 text-sm sm:min-h-0",
       active
         ? "border border-border bg-canvas font-semibold text-fg"
         : "border border-transparent text-muted hover:text-fg",

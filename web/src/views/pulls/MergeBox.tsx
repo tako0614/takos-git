@@ -220,7 +220,7 @@ export function MergeBox(props: {
                     align="left"
                     triggerLabel="Choose a merge method"
                     trigger={
-                      <span class="tg-focus inline-flex h-8 items-center gap-1 rounded-md border border-border bg-canvas-subtle px-2 text-sm text-fg hover:bg-canvas-inset">
+                      <span class="tg-focus inline-flex h-11 w-11 items-center justify-center gap-1 rounded-md border border-border bg-canvas-subtle text-sm text-fg hover:bg-canvas-inset sm:h-8 sm:w-auto sm:px-2">
                         <Icons.ChevronDown class="h-4 w-4" />
                       </span>
                     }

@@ -52,7 +52,27 @@ export function NewIssueView(): JSX.Element {
   const repo = useRepo(), session = useSession(), scope = useSubmissionScope();
   const identity = createMemo(() => scope() ?? (!session.authenticated()
     ? { owner: repo.owner(), repo: repo.repo(), repositoryId: "", recoveryScope: "" } : null));
-  return <Show when={identity()} keyed fallback={<Banner tone="warning">Safe Issue recovery is unavailable. Refresh after the server has been updated.</Banner>}>
-    {context => <NewIssueForm owner={context.owner} repo={context.repo} repositoryId={context.repositoryId} recoveryScope={context.recoveryScope} />}
-  </Show>;
+  return (
+    <Show
+      when={identity()}
+      keyed
+      fallback={
+        <div class="space-y-4">
+          <h1 class="text-xl font-semibold text-fg">Create new issue</h1>
+          <Banner tone="warning">
+            Safe Issue recovery is unavailable. Refresh after the server has been updated.
+          </Banner>
+        </div>
+      }
+    >
+      {(context) => (
+        <NewIssueForm
+          owner={context.owner}
+          repo={context.repo}
+          repositoryId={context.repositoryId}
+          recoveryScope={context.recoveryScope}
+        />
+      )}
+    </Show>
+  );
 }

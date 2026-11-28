@@ -31,7 +31,7 @@ export function UnderlineNav(props: {
     <nav
       aria-label={props["aria-label"] ?? "Repository"}
       class={cn(
-        "flex gap-1 overflow-x-auto border-b border-border px-2",
+        "flex gap-1 overflow-x-auto overflow-y-hidden border-b border-border px-2",
         props.class,
       )}
     >
@@ -46,7 +46,7 @@ export function UnderlineNav(props: {
               href={href() || item.href}
               aria-current={active() ? "page" : undefined}
               class={cn(
-                "tg-focus group -mb-px flex min-h-11 items-center gap-2 whitespace-nowrap border-b-2 border-transparent px-3 py-2.5 text-sm hover:border-border sm:min-h-0 sm:py-2",
+                "tg-focus group flex min-h-11 items-center gap-2 whitespace-nowrap border-b-2 border-transparent px-3 py-2.5 text-sm hover:border-border sm:min-h-0 sm:py-2",
                 active()
                   ? "!border-attention-emphasis font-semibold text-fg"
                   : "text-muted hover:text-fg",
@@ -77,7 +77,7 @@ export function Tabs(props: {
   class?: string;
 }): JSX.Element {
   return (
-    <div role="tablist" class={cn("flex gap-1 border-b border-border", props.class)}>
+    <div role="tablist" class={cn("flex gap-1 overflow-x-auto overflow-y-hidden border-b border-border", props.class)}>
       <For each={props.items}>
         {(item) => (
           <button
@@ -92,7 +92,7 @@ export function Tabs(props: {
               if (next) props.onSelect(next);
             }}
             class={cn(
-              "tg-focus -mb-px min-h-11 border-b-2 px-3 py-2.5 text-sm sm:min-h-0 sm:py-2",
+              "tg-focus min-h-11 whitespace-nowrap border-b-2 px-3 py-2.5 text-sm sm:min-h-0 sm:py-2",
               props.active === item.id
                 ? "border-attention-emphasis font-semibold text-fg"
                 : "border-transparent text-muted hover:text-fg",

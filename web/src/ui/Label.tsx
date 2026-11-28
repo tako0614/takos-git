@@ -1,5 +1,7 @@
 import { splitProps, type JSX } from "solid-js";
 import { cn } from "../lib/cn.ts";
+import { computeLabelChipStyle } from "../lib/label-color.ts";
+import { resolvedTheme } from "../lib/theme.ts";
 import type { Visibility } from "../api/contract.ts";
 
 export type LabelTone =
@@ -43,15 +45,10 @@ export function Label(props: {
 
 /** A colored issue-label pill driven by a 6-hex color (no leading '#'). */
 export function ColorLabel(props: { name: string; color: string }): JSX.Element {
-  const hex = () => `#${props.color.replace(/^#/, "")}`;
   return (
     <span
       class="inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium leading-4"
-      style={{
-        "border-color": `color-mix(in srgb, ${hex()} 55%, transparent)`,
-        background: `color-mix(in srgb, ${hex()} 18%, transparent)`,
-        color: hex(),
-      }}
+      style={computeLabelChipStyle(props.color, resolvedTheme())}
     >
       {props.name}
     </span>

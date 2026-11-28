@@ -43,6 +43,7 @@ export function ReleaseDetail(props: ReleaseDetailProps): JSX.Element {
     () => [props.owner, props.repo, props.tag, props.reloadKey] as const,
     ([owner, repo, tag]) => releasesApi.get(owner, repo, tag).then((r) => r.release),
   );
+  const releaseData = () => (release.error ? undefined : release.latest);
 
   const remove = async (r: ReleaseDto) => {
     const ok = await confirm({
@@ -65,14 +66,14 @@ export function ReleaseDetail(props: ReleaseDetailProps): JSX.Element {
     <div class="flex flex-col gap-4">
       <button
         type="button"
-        class="tg-focus inline-flex w-fit items-center gap-1 rounded text-sm text-accent hover:underline"
+        class="tg-focus inline-flex min-h-11 w-fit items-center gap-1 rounded text-sm text-accent hover:underline sm:min-h-0"
         onClick={() => props.onBack()}
       >
         <Icons.ArrowLeft class="h-4 w-4" /> All releases
       </button>
 
       <Show
-        when={!release.loading || release.latest}
+        when={!release.loading || releaseData()}
         fallback={<LoadingBlock label="Loading release…" />}
       >
         <Show
@@ -81,16 +82,20 @@ export function ReleaseDetail(props: ReleaseDetailProps): JSX.Element {
             <Show
               when={release.error instanceof ApiError && release.error.isNotFound}
               fallback={
-                <Banner
-                  tone="danger"
-                  title="Couldn't load this release"
-                  action={<Button size="sm" onClick={() => void refetch()}>Retry</Button>}
-                >
-                  {release.error instanceof Error ? release.error.message : "Unknown error."}
-                </Banner>
+                <div class="space-y-3">
+                  <h1 class="sr-only">Release error</h1>
+                  <Banner
+                    tone="danger"
+                    title="Couldn't load this release"
+                    action={<Button size="sm" onClick={() => void refetch()}>Retry</Button>}
+                  >
+                    {release.error instanceof Error ? release.error.message : "Unknown error."}
+                  </Banner>
+                </div>
               }
             >
               <EmptyState
+                headingLevel="h1"
                 icon={<Icons.Tag class="h-8 w-8" />}
                 title="Release not found"
                 description={`No release is tagged ${props.tag} in this repository.`}
@@ -99,7 +104,7 @@ export function ReleaseDetail(props: ReleaseDetailProps): JSX.Element {
             </Show>
           }
         >
-          <Show when={release.latest}>
+          <Show when={releaseData()}>
             {(r) => (
               <>
                 <div class="flex flex-wrap items-start justify-between gap-3">

@@ -45,7 +45,7 @@ export function Mono(props: { children: JSX.Element; class?: string }): JSX.Elem
 /** A short-sha chip. */
 export function Sha(props: { value: string; class?: string }): JSX.Element {
   return (
-    <span class={cn("rounded bg-neutral-muted px-1.5 py-0.5 font-mono text-xs text-muted", props.class)}>
+    <span class={cn("rounded bg-neutral-muted px-1.5 py-0.5 font-mono text-xs text-fg", props.class)}>
       {props.value.slice(0, 7)}
     </span>
   );

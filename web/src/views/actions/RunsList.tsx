@@ -1,5 +1,5 @@
 import { Index, Show, type JSX } from "solid-js";
-import { Banner, Box, EmptyState, Icons, LoadingBlock } from "../../ui/index.ts";
+import { Banner, Box, Button, EmptyState, Icons, LoadingBlock } from "../../ui/index.ts";
 import { RunRow } from "./RunRow.tsx";
 import type { WorkflowRunDto } from "../../api/types.ts";
 
@@ -11,11 +11,26 @@ export function RunsList(props: {
   loading: boolean;
   error: string | null;
   filtered: boolean;
+  onRetry?: () => void;
 }): JSX.Element {
   return (
     <Show
       when={!props.error}
-      fallback={<Banner tone="danger" title="Couldn't load workflow runs">{props.error}</Banner>}
+      fallback={
+        <Banner
+          tone="danger"
+          title="Couldn't load workflow runs"
+          action={
+            <Show when={props.onRetry}>
+              <Button size="sm" onClick={() => props.onRetry?.()}>
+                Retry
+              </Button>
+            </Show>
+          }
+        >
+          {props.error}
+        </Banner>
+      }
     >
       <Show
         when={!props.loading}

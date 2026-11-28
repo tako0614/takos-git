@@ -51,7 +51,7 @@ function CommitRow(props: { owner: string; repo: string; commit: CommitSummary }
       <div class="flex shrink-0 items-center gap-1">
         <A
           href={commitHref(props.owner, props.repo, c().sha)}
-          class="rounded-md border border-border bg-canvas-subtle px-2 py-1 font-mono text-xs text-muted hover:bg-canvas-inset hover:text-fg"
+          class="tg-focus inline-flex min-h-11 items-center rounded-md border border-border bg-canvas-subtle px-2.5 py-1 font-mono text-xs text-muted hover:bg-canvas-inset hover:text-fg sm:min-h-0 sm:px-2"
           title="Browse this commit"
         >
           {c().sha.slice(0, 7)}
@@ -60,7 +60,7 @@ function CommitRow(props: { owner: string; repo: string; commit: CommitSummary }
           value={c().sha}
           label="Commit SHA"
           title="Copy full SHA"
-          class="h-7 w-7 hover:bg-canvas-subtle"
+          class="h-11 w-11 hover:bg-canvas-subtle sm:h-7 sm:w-7"
         />
       </div>
     </div>
