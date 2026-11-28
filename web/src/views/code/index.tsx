@@ -22,6 +22,7 @@ import { BlobScreen } from "./BlobScreen.tsx";
 import { CommitsScreen } from "./CommitsScreen.tsx";
 import { CompareScreen } from "./CompareScreen.tsx";
 import { CommitDetailScreen } from "./CommitDetailScreen.tsx";
+import { decodeRefParam } from "./helpers.ts";
 
 export function CodeView(): JSX.Element {
   const repo = useRepo();
@@ -32,14 +33,14 @@ export function CodeView(): JSX.Element {
   const name = () => repo.repo();
   const defaultBranch = () => repo.detail()?.defaultBranch || "main";
   const cloneUrl = () => repo.detail()?.cloneUrl || "";
-  const branch = () => params.branch || defaultBranch();
+  const branch = () => decodeRefParam(params.branch) || defaultBranch();
   const treePath = () => params.path || "";
   const spec = () => params.spec || "";
 
   const mode = createMemo<"blob" | "compare" | "commits" | "dir">(() => {
     const p = loc.pathname;
     if (p.includes("/blob/")) return "blob";
-    if (p.includes("/compare/")) return "compare";
+    if (/\/compare(?:\/|$)/u.test(p)) return "compare";
     if (p.includes("/commits")) return "commits";
     return "dir"; // overview (path === "") + tree browsing
   });
@@ -65,7 +66,12 @@ export function CodeView(): JSX.Element {
         />
       </Match>
       <Match when={mode() === "compare"}>
-        <CompareScreen owner={owner()} repo={name()} spec={spec()} />
+        <CompareScreen
+          owner={owner()}
+          repo={name()}
+          spec={spec()}
+          defaultBranch={defaultBranch()}
+        />
       </Match>
       <Match when={mode() === "commits"}>
         <CommitsScreen

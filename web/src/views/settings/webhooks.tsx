@@ -557,7 +557,7 @@ function WebhookEditorDialog(props: {
             <div class="grid grid-cols-1 gap-1 rounded-md border border-border p-3 sm:grid-cols-2">
               <For each={WEBHOOK_EVENTS}>
                 {(ev) => (
-                  <label class="flex items-center gap-2 rounded px-1.5 py-1 text-sm hover:bg-canvas-subtle">
+                  <label class="flex min-h-11 items-center gap-2 rounded px-1.5 py-1 text-sm hover:bg-canvas-subtle sm:min-h-0">
                     <input
                       type="checkbox"
                       name={`webhook-event-${ev.id}`}
@@ -570,7 +570,7 @@ function WebhookEditorDialog(props: {
               </For>
             </div>
             <Show when={!hasEvents()}>
-              <p class="text-xs text-danger">Select at least one event.</p>
+              <p role="alert" class="text-xs text-danger">Select at least one event.</p>
             </Show>
           </Show>
         </fieldset>

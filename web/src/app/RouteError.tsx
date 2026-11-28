@@ -1,4 +1,5 @@
 import { Show, type JSX } from "solid-js";
+import { A } from "@solidjs/router";
 import { ApiError } from "../api/client.ts";
 import { useSession } from "../store/session.tsx";
 import { Icons } from "../lib/Icons.tsx";
@@ -65,7 +66,7 @@ export function RouteError(props: {
             <Button variant="default" onClick={() => props.reset()}>
               Try again
             </Button>
-            <ButtonLink href="/">Go home</ButtonLink>
+            <ButtonLink as={A} href="/" onClick={() => props.reset()}>Go home</ButtonLink>
           </div>
         }
       />

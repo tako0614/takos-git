@@ -1,4 +1,4 @@
-import { createResource, createSignal, Index, Show, type JSX } from "solid-js";
+import { createEffect, createResource, createSignal, Index, on, Show, type JSX } from "solid-js";
 import { useSearchParams } from "@solidjs/router";
 import { useRepo } from "../../app/RepoLayout.tsx";
 import { useSession } from "../../store/session.tsx";
@@ -65,9 +65,17 @@ export function ReleasesView(): JSX.Element {
     setFormOpen(true);
   };
 
-  // --- list with cursor pagination -------------------------------------------
-  const [cursor, setCursor] = createSignal<string | null>(null);
-  const [stack, setStack] = createSignal<(string | null)[]>([]);
+  // --- list with repo-scoped cursor pagination --------------------------------
+  const repoScope = () => `${owner()}/${name()}`;
+  const [historyState, setHistoryState] = createSignal<{
+    scope: string;
+    stack: (string | null)[];
+  }>({ scope: repoScope(), stack: [null] });
+  const history = () =>
+    historyState().scope === repoScope() ? historyState().stack : [null];
+  const cursor = () => history()[history().length - 1] ?? null;
+  const resetPaging = () => setHistoryState({ scope: repoScope(), stack: [null] });
+  createEffect(on(repoScope, () => resetPaging(), { defer: true }));
 
   const [page, { refetch }] = createResource(
     () => [owner(), name(), cursor()] as const,
@@ -78,15 +86,12 @@ export function ReleasesView(): JSX.Element {
   const goNext = () => {
     const next = pageData()?.nextCursor;
     if (!next) return;
-    setStack((s) => [...s, cursor()]);
-    setCursor(next);
+    setHistoryState({ scope: repoScope(), stack: [...history(), next] });
   };
   const goPrev = () => {
-    setStack((s) => {
-      const copy = [...s];
-      const prev = copy.pop() ?? null;
-      setCursor(prev);
-      return copy;
+    setHistoryState({
+      scope: repoScope(),
+      stack: history().length > 1 ? history().slice(0, -1) : [null],
     });
   };
 
@@ -181,7 +186,7 @@ export function ReleasesView(): JSX.Element {
                   />
                   <Pagination
                     hasNext={!!pageData()?.nextCursor}
-                    hasPrev={stack().length > 0}
+                    hasPrev={history().length > 1}
                     onNext={goNext}
                     onPrev={goPrev}
                     loading={page.loading}

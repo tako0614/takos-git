@@ -82,13 +82,13 @@ function GlobalSearchForm(props: {
           }}
           placeholder="Jump to owner/repo…"
           aria-label="Search or jump to a repository"
-          class="tg-focus min-h-11 w-full rounded-md border border-border bg-canvas-subtle py-1.5 pl-8 pr-9 text-sm text-fg placeholder:text-subtle sm:min-h-0"
+          class="tg-focus min-h-11 w-full rounded-md border border-border bg-canvas-subtle py-1.5 pl-8 pr-11 text-sm text-fg placeholder:text-subtle sm:min-h-0 sm:pr-8"
         />
         <Show when={value()}>
           <button
             type="button"
             aria-label="Clear search"
-            class="tg-focus absolute right-1 top-1/2 inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded text-muted hover:bg-canvas-inset hover:text-fg sm:h-6 sm:w-6"
+            class="tg-focus absolute right-0 top-1/2 inline-flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded text-muted hover:bg-canvas-inset hover:text-fg sm:right-1 sm:h-6 sm:w-6"
             onClick={() => {
               setValue("");
               inputEl?.focus();

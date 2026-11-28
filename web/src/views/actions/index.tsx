@@ -8,10 +8,12 @@
  * kept fresh by polling while runs/jobs are non-terminal (CSP-safe; no WS needed).
  */
 import {
+  createEffect,
   createMemo,
   createResource,
   createSignal,
   For,
+  on,
   Show,
   type JSX,
 } from "solid-js";
@@ -52,15 +54,45 @@ const EVENT_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
 
 export function ActionsView(): JSX.Element {
   const repo = useRepo();
-
-  const [workflow, setWorkflow] = createSignal("");
-  const [status, setStatus] = createSignal("");
-  const [event, setEvent] = createSignal("");
   const [dispatchOpen, setDispatchOpen] = createSignal(false);
 
-  // Cursor stack for forward/back pagination (opaque server cursors).
-  const [cursors, setCursors] = createSignal<(string | null)[]>([null]);
+  // Repo-scoped filters and cursor stack so client-side repo switches never
+  // dispatch a stale request with the previous repository's filters or cursor.
+  const repoScope = () => `${repo.owner()}/${repo.repo()}`;
+  const [viewState, setViewState] = createSignal<{
+    scope: string;
+    workflow: string;
+    status: string;
+    event: string;
+    stack: (string | null)[];
+  }>({ scope: repoScope(), workflow: "", status: "", event: "", stack: [null] });
+  const scoped = () =>
+    viewState().scope === repoScope()
+      ? viewState()
+      : { scope: repoScope(), workflow: "", status: "", event: "", stack: [null] as (string | null)[] };
+  const workflow = () => scoped().workflow;
+  const status = () => scoped().status;
+  const event = () => scoped().event;
+  const cursors = () => scoped().stack;
   const currentCursor = () => cursors()[cursors().length - 1] ?? null;
+  const updateView = (patch: Partial<{ workflow: string; status: string; event: string; stack: (string | null)[] }>) =>
+    setViewState({ ...scoped(), scope: repoScope(), ...patch });
+  const setWorkflow = (v: string) => updateView({ workflow: v, stack: [null] });
+  const setStatus = (v: string) => updateView({ status: v, stack: [null] });
+  const setEvent = (v: string) => updateView({ event: v, stack: [null] });
+  const resetPaging = () => updateView({ stack: [null] });
+  const clearFilters = () =>
+    setViewState({ scope: repoScope(), workflow: "", status: "", event: "", stack: [null] });
+  createEffect(
+    on(
+      repoScope,
+      () => {
+        setDispatchOpen(false);
+        clearFilters();
+      },
+      { defer: true },
+    ),
+  );
 
   const filter = createMemo<RunListFilter>(() => ({
     workflow: workflow() || undefined,
@@ -99,9 +131,6 @@ export function ActionsView(): JSX.Element {
     return e instanceof ApiError ? e.message : "Something went wrong.";
   };
 
-  // Reset pagination whenever a filter changes.
-  const resetPaging = () => setCursors([null]);
-
   // Poll while any visible run is still live.
   createPolling({
     active: () => items().some((r) => runIsLive(r)),
@@ -111,9 +140,12 @@ export function ActionsView(): JSX.Element {
 
   const goNext = () => {
     const next = runsPage()?.nextCursor;
-    if (next) setCursors((c) => [...c, next]);
+    if (next) updateView({ stack: [...cursors(), next] });
   };
-  const goPrev = () => setCursors((c) => (c.length > 1 ? c.slice(0, -1) : c));
+  const goPrev = () =>
+    updateView({
+      stack: cursors().length > 1 ? cursors().slice(0, -1) : [null],
+    });
 
   return (
     <div class="flex flex-col gap-4">
@@ -138,10 +170,7 @@ export function ActionsView(): JSX.Element {
           id="filter-workflow"
           class="w-auto min-w-44"
           value={workflow()}
-          onChange={(e) => {
-            setWorkflow(e.currentTarget.value);
-            resetPaging();
-          }}
+          onChange={(e) => setWorkflow(e.currentTarget.value)}
         >
           <option value="">All workflows</option>
           <For each={workflows()}>
@@ -154,10 +183,7 @@ export function ActionsView(): JSX.Element {
           id="filter-status"
           class="w-auto min-w-40"
           value={status()}
-          onChange={(e) => {
-            setStatus(e.currentTarget.value);
-            resetPaging();
-          }}
+          onChange={(e) => setStatus(e.currentTarget.value)}
         >
           <For each={STATUS_OPTIONS}>
             {(o) => <option value={o.value}>{o.label}</option>}
@@ -169,10 +195,7 @@ export function ActionsView(): JSX.Element {
           id="filter-event"
           class="w-auto min-w-36"
           value={event()}
-          onChange={(e) => {
-            setEvent(e.currentTarget.value);
-            resetPaging();
-          }}
+          onChange={(e) => setEvent(e.currentTarget.value)}
         >
           <For each={EVENT_OPTIONS}>
             {(o) => <option value={o.value}>{o.label}</option>}
@@ -183,12 +206,7 @@ export function ActionsView(): JSX.Element {
           <Button
             variant="invisible"
             size="sm"
-            onClick={() => {
-              setWorkflow("");
-              setStatus("");
-              setEvent("");
-              resetPaging();
-            }}
+            onClick={clearFilters}
           >
             <Icons.X class="h-3.5 w-3.5" /> Clear
           </Button>
@@ -203,12 +221,7 @@ export function ActionsView(): JSX.Element {
         error={errorText()}
         filtered={isFiltered()}
         onRetry={() => void refetch()}
-        onClearFilters={() => {
-          setWorkflow("");
-          setStatus("");
-          setEvent("");
-          resetPaging();
-        }}
+        onClearFilters={clearFilters}
       />
 
       <Pagination

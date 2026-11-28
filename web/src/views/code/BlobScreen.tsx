@@ -7,7 +7,7 @@ import {
   Suspense,
   type JSX,
 } from "solid-js";
-import { A } from "@solidjs/router";
+import { A, useNavigate } from "@solidjs/router";
 import { reposApi } from "../../api/repos.ts";
 import { ApiError } from "../../api/client.ts";
 import {
@@ -23,8 +23,10 @@ import {
 import { cn } from "../../lib/cn.ts";
 import { PathBreadcrumb } from "./PathBreadcrumb.tsx";
 import { CopyButton } from "./CopyButton.tsx";
+import { RefSelector } from "./RefSelector.tsx";
 import { fetchBlame, type BlameLine } from "./blame.ts";
 import {
+  blobHref,
   commitHref,
   commitsHref,
   decodeBase64Utf8,
@@ -103,7 +105,10 @@ export function BlobScreen(props: {
   path: string;
   defaultBranch: string;
 }): JSX.Element {
+  const navigate = useNavigate();
   const [blameOn, setBlameOn] = createSignal(false);
+  const pickRef = (ref: string) =>
+    navigate(blobHref(props.owner, props.repo, ref, props.path));
 
   const fileName = () => props.path.split("/").pop() ?? props.path;
 
@@ -177,13 +182,13 @@ export function BlobScreen(props: {
         {props.path} — {props.owner}/{props.repo}
       </h1>
       <div class="flex flex-wrap items-center gap-2">
-        <A
-          href={treeHref(props.owner, props.repo, props.refName)}
-          class="tg-focus inline-flex min-h-11 items-center gap-1.5 rounded-md border border-border bg-canvas-subtle px-3 text-sm text-fg hover:bg-canvas-inset sm:min-h-0 sm:h-8"
-        >
-          <Icons.GitBranch class="h-4 w-4 text-muted" />
-          <span class="font-mono">{props.refName}</span>
-        </A>
+        <RefSelector
+          owner={props.owner}
+          repo={props.repo}
+          currentRef={props.refName}
+          defaultBranch={props.defaultBranch}
+          onPick={pickRef}
+        />
         <PathBreadcrumb
           owner={props.owner}
           repo={props.repo}
@@ -222,7 +227,20 @@ export function BlobScreen(props: {
                       <EmptyState
                         icon={<Icons.File class="h-8 w-8" />}
                         title="File not found"
-                        description={<code class="font-mono">{props.path}</code>}
+                        description={
+                          <>
+                            <code class="font-mono">{props.path}</code> does not exist on{" "}
+                            <code class="font-mono">{props.refName}</code>.
+                          </>
+                        }
+                        action={
+                          <A
+                            href={treeHref(props.owner, props.repo, props.refName)}
+                            class="tg-focus inline-flex min-h-11 items-center rounded px-2 text-accent hover:underline sm:min-h-0 sm:px-0"
+                          >
+                            Back to root
+                          </A>
+                        }
                       />
                     </Show>
                   }

@@ -1,4 +1,4 @@
-import { createSignal, Show, For, type JSX } from "solid-js";
+import { createResource, createSignal, createUniqueId, Show, For, type JSX } from "solid-js";
 import {
   Banner,
   Button,
@@ -11,8 +11,10 @@ import {
   useToast,
 } from "../../ui/index.ts";
 import { actionsApi } from "../../api/actions.ts";
+import { reposApi } from "../../api/repos.ts";
 import { ApiError } from "../../api/client.ts";
 import type { WorkflowDto } from "../../api/types.ts";
+import { BranchCombobox } from "../code/BranchCombobox.tsx";
 
 /**
  * The `workflow_dispatch` affordance — a modal that manually triggers a
@@ -29,11 +31,26 @@ export function DispatchDialog(props: {
   onDispatched: (runId: string | null) => void;
 }): JSX.Element {
   const toast = useToast();
+  const formId = createUniqueId();
   const [path, setPath] = createSignal("");
   const [ref, setRef] = createSignal("");
   const [inputs, setInputs] = createSignal("");
   const [submitting, setSubmitting] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
+
+  const [branchRes, { refetch: refetchBranches }] = createResource(
+    () => (props.open ? ([props.owner, props.repo] as const) : false),
+    ([o, r]) => reposApi.branches(o, r),
+  );
+  const branches = () => (branchRes.error ? [] : (branchRes.latest?.branches ?? []));
+  const branchesError = () =>
+    branchRes.error
+      ? (branchRes.error instanceof ApiError
+          ? branchRes.error.message
+          : branchRes.error instanceof Error
+            ? branchRes.error.message
+            : "Could not load branches.")
+      : null;
 
   // Only workflows that declare a manual trigger are dispatchable.
   const dispatchable = () =>
@@ -108,7 +125,7 @@ export function DispatchDialog(props: {
           <Button variant="default" onClick={close} disabled={submitting()}>
             Cancel
           </Button>
-          <Button variant="primary" onClick={submit} disabled={submitting()}>
+          <Button type="submit" form={formId} variant="primary" disabled={submitting()}>
             <Show when={submitting()} fallback={<><Icons.Play class="h-4 w-4" /> Run workflow</>}>
               <Icons.Loader class="h-4 w-4 animate-spin" /> Starting…
             </Show>
@@ -116,7 +133,15 @@ export function DispatchDialog(props: {
         </div>
       }
     >
-      <div class="flex flex-col gap-4">
+      <form
+        id={formId}
+        noValidate
+        class="flex flex-col gap-4"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void submit();
+        }}
+      >
         <Show when={error()}>
           <Banner tone="danger">{error()}</Banner>
         </Show>
@@ -159,12 +184,18 @@ export function DispatchDialog(props: {
         </Field>
 
         <Field label="Ref" for="dispatch-ref" hint={`Branch or tag (default: ${props.defaultRef})`}>
-          <TextInput
+          <BranchCombobox
             id="dispatch-ref"
+            name="dispatch-ref"
             value={ref()}
-            onInput={(e) => setRef(e.currentTarget.value)}
+            onInput={setRef}
+            branches={branches()}
+            defaultBranch={props.defaultRef}
+            loading={branchRes.loading}
+            error={branchesError()}
+            onRetry={() => void refetchBranches()}
             placeholder={props.defaultRef}
-            class="font-mono"
+            listboxLabel="Dispatch refs"
           />
         </Field>
 
@@ -182,7 +213,7 @@ export function DispatchDialog(props: {
             rows={4}
           />
         </Field>
-      </div>
+      </form>
     </Dialog>
   );
 }

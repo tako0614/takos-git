@@ -20,6 +20,16 @@ export function encodePath(path: string): string {
     .join("/");
 }
 
+/** Decode a percent-encoded `:branch` route parameter once, tolerating malformed escapes. */
+export function decodeRefParam(raw: string | undefined): string {
+  if (!raw) return "";
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+}
+
 /** A single ref segment (branch/tag) may contain slashes → keep it one segment. */
 function encodeRef(ref: string): string {
   return encodeURIComponent(ref);

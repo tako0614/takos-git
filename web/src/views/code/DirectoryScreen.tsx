@@ -32,6 +32,7 @@ import {
   commitHref,
   commitsHref,
   commitTitle,
+  compareHref,
   decodeBase64Utf8,
   extOf,
   findReadme,
@@ -39,6 +40,7 @@ import {
   sortEntries,
   treeHref,
 } from "./helpers.ts";
+import { formatCompareSpec } from "./compare-spec.ts";
 
 function entryIcon(entry: TreeEntry): JSX.Element {
   if (entry.kind === "tree") return <Icons.Folder class="h-4 w-4 text-accent" />;
@@ -195,6 +197,18 @@ export function DirectoryScreen(props: {
           />
         </Show>
         <div class="ml-auto flex items-center gap-2">
+          <A
+            href={compareHref(
+              props.owner,
+              props.repo,
+              formatCompareSpec(props.defaultBranch, props.refName),
+            )}
+            aria-label="Compare refs"
+            class="tg-focus inline-flex min-h-11 min-w-11 items-center justify-center gap-1.5 rounded-md border border-border bg-canvas-subtle px-3 text-sm text-fg hover:bg-canvas-inset sm:min-h-0 sm:min-w-0 sm:h-8"
+          >
+            <Icons.GitMerge class="h-4 w-4 text-muted" />
+            <span class="hidden sm:inline">Compare</span>
+          </A>
           <A
             href={commitsHref(props.owner, props.repo, props.refName)}
             aria-label="Commit history"

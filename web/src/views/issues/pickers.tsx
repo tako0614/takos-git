@@ -11,10 +11,12 @@ import {
   createSignal,
   createUniqueId,
   Index,
+  onCleanup,
   Show,
   type JSX,
 } from "solid-js";
 import { cn } from "../../lib/cn.ts";
+import { computeHorizontalShift, viewportWidth } from "../../lib/floating-clamp.ts";
 import { createReactiveListener } from "../../lib/lifecycle.ts";
 import { Icons, Spinner, TextInput } from "../../ui/index.ts";
 import { LabelChip, principalName } from "./parts.tsx";
@@ -36,10 +38,36 @@ export function Popover(props: {
   onClose?: () => void;
 }): JSX.Element {
   const [open, setOpen] = createSignal(false);
+  const [shiftX, setShiftX] = createSignal(0);
   const panelId = createUniqueId();
   let root: HTMLDivElement | undefined;
   let triggerBtn: HTMLButtonElement | undefined;
   let panelEl: HTMLDivElement | undefined;
+
+  const updateShift = () => {
+    if (!panelEl || typeof window === "undefined") return;
+    const prev = shiftX();
+    const rect = panelEl.getBoundingClientRect();
+    const unshifted = { left: rect.left - prev, right: rect.right - prev };
+    setShiftX(computeHorizontalShift(unshifted, viewportWidth()));
+  };
+
+  createEffect(() => {
+    if (!open()) {
+      setShiftX(0);
+      return;
+    }
+    const frame = requestAnimationFrame(updateShift);
+    onCleanup(() => cancelAnimationFrame(frame));
+  });
+  if (typeof window !== "undefined") {
+    createReactiveListener({
+      active: open,
+      target: window,
+      type: "resize",
+      handler: updateShift as EventListener,
+    });
+  }
 
   const close = (restoreFocus = false) => {
     if (open()) {
@@ -120,8 +148,9 @@ export function Popover(props: {
           id={panelId}
           role="dialog"
           aria-label={props.triggerLabel}
+          style={shiftX() ? { transform: `translateX(${shiftX()}px)` } : undefined}
           class={cn(
-            "absolute z-40 mt-1 max-w-[calc(100vw-2rem)] overflow-hidden rounded-md border border-border bg-canvas shadow-lg",
+            "absolute z-40 mt-1 max-w-[calc(100vw-1rem)] overflow-hidden rounded-md border border-border bg-canvas shadow-lg",
             props.align === "left" ? "left-0" : "right-0",
             props.width ?? "w-72",
           )}

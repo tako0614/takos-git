@@ -1,12 +1,15 @@
 import {
+  createEffect,
   createSignal,
   createUniqueId,
   For,
+  onCleanup,
   Show,
   type JSX,
 } from "solid-js";
 import { A } from "@solidjs/router";
 import { cn } from "../lib/cn.ts";
+import { computeHorizontalShift, viewportWidth } from "../lib/floating-clamp.ts";
 import { createReactiveListener } from "../lib/lifecycle.ts";
 import { toSafeHref } from "../lib/safeHref.ts";
 
@@ -37,10 +40,36 @@ export function Menu(props: {
   class?: string;
 }): JSX.Element {
   const [open, setOpen] = createSignal(false);
+  const [shiftX, setShiftX] = createSignal(0);
   const menuId = createUniqueId();
   let root: HTMLDivElement | undefined;
   let triggerBtn: HTMLButtonElement | undefined;
   let menuEl: HTMLDivElement | undefined;
+
+  const updateShift = () => {
+    if (!menuEl || typeof window === "undefined") return;
+    const prev = shiftX();
+    const rect = menuEl.getBoundingClientRect();
+    const unshifted = { left: rect.left - prev, right: rect.right - prev };
+    setShiftX(computeHorizontalShift(unshifted, viewportWidth()));
+  };
+
+  createEffect(() => {
+    if (!open()) {
+      setShiftX(0);
+      return;
+    }
+    const frame = requestAnimationFrame(updateShift);
+    onCleanup(() => cancelAnimationFrame(frame));
+  });
+  if (typeof window !== "undefined") {
+    createReactiveListener({
+      active: open,
+      target: window,
+      type: "resize",
+      handler: updateShift as EventListener,
+    });
+  }
 
   const menuItems = (): HTMLElement[] =>
     menuEl
@@ -127,8 +156,9 @@ export function Menu(props: {
           ref={menuEl}
           id={menuId}
           role="menu"
+          style={shiftX() ? { transform: `translateX(${shiftX()}px)` } : undefined}
           class={cn(
-            "absolute z-40 mt-1 min-w-[180px] overflow-hidden rounded-md border border-border bg-canvas py-1 shadow-lg",
+            "absolute z-40 mt-1 min-w-[180px] max-w-[calc(100vw-1rem)] overflow-hidden rounded-md border border-border bg-canvas py-1 shadow-lg",
             props.align === "left" ? "left-0" : "right-0",
           )}
         >

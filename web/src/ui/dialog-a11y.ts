@@ -77,7 +77,7 @@ export function handleDialogKeyDown(
 ): void {
   if (!isTopDialog(token)) return;
   if (event.key === "Escape") {
-    if (event.isComposing || event.keyCode === 229) return;
+    if (event.defaultPrevented || event.isComposing || event.keyCode === 229) return;
     event.preventDefault();
     onClose();
     return;

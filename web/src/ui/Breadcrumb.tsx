@@ -30,7 +30,10 @@ export function Breadcrumb(props: {
               <span class="text-subtle" aria-hidden="true">{sep()}</span>
             </Show>
             {crumb.href ? (
-              <A href={crumb.href} class="tg-focus rounded text-accent hover:underline">
+              <A
+                href={crumb.href}
+                class="tg-focus inline-flex min-h-11 items-center rounded px-1 text-accent hover:underline sm:min-h-0 sm:px-0"
+              >
                 {crumb.label}
               </A>
             ) : (
