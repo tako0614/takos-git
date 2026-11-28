@@ -59,7 +59,7 @@ export function CompareScreen(props: {
   const navigateCompare = (nextBase: string, nextHead: string) => {
     const b = nextBase.trim() || props.defaultBranch || "main";
     const h = nextHead.trim() || b;
-    navigate(compareHref(props.owner, props.repo, formatCompareSpec(b, h, refs().separator)));
+    navigate(compareHref(props.owner, props.repo, formatCompareSpec(b, h)));
   };
 
   const swapRefs = () => {
@@ -100,6 +100,8 @@ export function CompareScreen(props: {
               session.authenticated() &&
               hasCompleteSpec() &&
               refs().base !== refs().head &&
+              !result.loading &&
+              result.state === "ready" &&
               (result()?.data?.commits.length ?? 0) > 0
             }
           >
@@ -121,10 +123,9 @@ export function CompareScreen(props: {
             defaultBranch={props.defaultBranch}
             size="sm"
             triggerPrefix="base:"
-            triggerLabel={`Base ref: ${effectiveBase() || "none"}`}
             dialogLabel="Choose a base branch or tag"
             heading="Choose a base ref"
-            placeholder="base"
+            placeholder="choose ref"
             onPick={(ref) => navigateCompare(ref, effectiveHead() || ref)}
           />
           <button
@@ -144,7 +145,6 @@ export function CompareScreen(props: {
             defaultBranch={props.defaultBranch}
             size="sm"
             triggerPrefix="compare:"
-            triggerLabel={`Compare ref: ${effectiveHead() || "none"}`}
             dialogLabel="Choose a compare branch or tag"
             heading="Choose a compare ref"
             placeholder="choose ref"

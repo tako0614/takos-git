@@ -22,6 +22,7 @@ import { BlobScreen } from "./BlobScreen.tsx";
 import { CommitsScreen } from "./CommitsScreen.tsx";
 import { CompareScreen } from "./CompareScreen.tsx";
 import { CommitDetailScreen } from "./CommitDetailScreen.tsx";
+import { decodeRefParam } from "./helpers.ts";
 
 export function CodeView(): JSX.Element {
   const repo = useRepo();
@@ -32,7 +33,7 @@ export function CodeView(): JSX.Element {
   const name = () => repo.repo();
   const defaultBranch = () => repo.detail()?.defaultBranch || "main";
   const cloneUrl = () => repo.detail()?.cloneUrl || "";
-  const branch = () => params.branch || defaultBranch();
+  const branch = () => decodeRefParam(params.branch) || defaultBranch();
   const treePath = () => params.path || "";
   const spec = () => params.spec || "";
 

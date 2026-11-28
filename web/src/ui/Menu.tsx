@@ -9,7 +9,7 @@ import {
 } from "solid-js";
 import { A } from "@solidjs/router";
 import { cn } from "../lib/cn.ts";
-import { computeHorizontalShift } from "../lib/floating-clamp.ts";
+import { computeHorizontalShift, viewportWidth } from "../lib/floating-clamp.ts";
 import { createReactiveListener } from "../lib/lifecycle.ts";
 import { toSafeHref } from "../lib/safeHref.ts";
 
@@ -51,7 +51,7 @@ export function Menu(props: {
     const prev = shiftX();
     const rect = menuEl.getBoundingClientRect();
     const unshifted = { left: rect.left - prev, right: rect.right - prev };
-    setShiftX(computeHorizontalShift(unshifted, window.innerWidth));
+    setShiftX(computeHorizontalShift(unshifted, viewportWidth()));
   };
 
   createEffect(() => {

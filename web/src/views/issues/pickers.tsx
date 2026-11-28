@@ -16,7 +16,7 @@ import {
   type JSX,
 } from "solid-js";
 import { cn } from "../../lib/cn.ts";
-import { computeHorizontalShift } from "../../lib/floating-clamp.ts";
+import { computeHorizontalShift, viewportWidth } from "../../lib/floating-clamp.ts";
 import { createReactiveListener } from "../../lib/lifecycle.ts";
 import { Icons, Spinner, TextInput } from "../../ui/index.ts";
 import { LabelChip, principalName } from "./parts.tsx";
@@ -49,7 +49,7 @@ export function Popover(props: {
     const prev = shiftX();
     const rect = panelEl.getBoundingClientRect();
     const unshifted = { left: rect.left - prev, right: rect.right - prev };
-    setShiftX(computeHorizontalShift(unshifted, window.innerWidth));
+    setShiftX(computeHorizontalShift(unshifted, viewportWidth()));
   };
 
   createEffect(() => {

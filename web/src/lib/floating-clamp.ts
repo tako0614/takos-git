@@ -9,6 +9,14 @@ export interface HorizontalRect {
   readonly right: number;
 }
 
+/** Layout viewport width excluding any classic vertical scrollbar. */
+export function viewportWidth(): number {
+  if (typeof document !== "undefined" && document.documentElement?.clientWidth) {
+    return document.documentElement.clientWidth;
+  }
+  return typeof window !== "undefined" ? window.innerWidth : 0;
+}
+
 /**
  * Returns the pixel `translateX` delta required to bring `rect` inside
  * `[margin, viewportWidth - margin]`. Returns `0` when the panel already fits.

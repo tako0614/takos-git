@@ -13,7 +13,7 @@ import { reposApi } from "../../api/repos.ts";
 import { Icons, Spinner } from "../../ui/index.ts";
 import { moveTabFocus } from "../../lib/a11y.ts";
 import { cn } from "../../lib/cn.ts";
-import { computeHorizontalShift } from "../../lib/floating-clamp.ts";
+import { computeHorizontalShift, viewportWidth } from "../../lib/floating-clamp.ts";
 import { createReactiveListener } from "../../lib/lifecycle.ts";
 import { resolveRefSelectorKey } from "./ref-selector-a11y.ts";
 
@@ -57,7 +57,7 @@ export function RefSelector(props: {
     const prev = shiftX();
     const rect = dialogEl.getBoundingClientRect();
     const unshifted = { left: rect.left - prev, right: rect.right - prev };
-    setShiftX(computeHorizontalShift(unshifted, window.innerWidth));
+    setShiftX(computeHorizontalShift(unshifted, viewportWidth()));
   };
 
   createEffect(() => {

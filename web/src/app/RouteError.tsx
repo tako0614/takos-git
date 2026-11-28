@@ -66,7 +66,7 @@ export function RouteError(props: {
             <Button variant="default" onClick={() => props.reset()}>
               Try again
             </Button>
-            <ButtonLink as={A} href="/">Go home</ButtonLink>
+            <ButtonLink as={A} href="/" onClick={() => props.reset()}>Go home</ButtonLink>
           </div>
         }
       />

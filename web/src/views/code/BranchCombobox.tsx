@@ -44,6 +44,7 @@ export function BranchCombobox(props: {
   let root: HTMLDivElement | undefined;
   let inputEl: HTMLInputElement | undefined;
   let listEl: HTMLDivElement | undefined;
+  let suppressNextFocusOpen = false;
 
   const resolvedId = () => props.id ?? fallbackId;
   const optionId = (index: number) => `${listId}-opt-${index}`;
@@ -78,10 +79,18 @@ export function BranchCombobox(props: {
     setOpen(true);
   };
 
+  const focusInputWithoutOpen = () => {
+    suppressNextFocusOpen = true;
+    inputEl?.focus();
+    queueMicrotask(() => {
+      suppressNextFocusOpen = false;
+    });
+  };
+
   const pick = (name: string) => {
     props.onInput(name);
     close();
-    inputEl?.focus();
+    focusInputWithoutOpen();
   };
 
   const scrollOptionIntoView = (index: number) => {
@@ -103,16 +112,19 @@ export function BranchCombobox(props: {
     handler: onDocClick as EventListener,
   });
 
+  const onRootKeyDown = (e: KeyboardEvent) => {
+    if (e.isComposing || e.keyCode === 229) return;
+    if (e.key === "Escape" && open()) {
+      e.preventDefault();
+      e.stopPropagation();
+      close();
+      focusInputWithoutOpen();
+    }
+  };
+
   const onKeyDown = (e: KeyboardEvent) => {
     if (e.isComposing || e.keyCode === 229) return;
-    if (e.key === "Escape") {
-      if (open()) {
-        e.preventDefault();
-        e.stopPropagation();
-        close();
-      }
-      return;
-    }
+    if (e.key === "Escape") return;
     if (!open() && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
       if (props.branches.length > 0 || props.loading || props.error) {
         e.preventDefault();
@@ -150,6 +162,7 @@ export function BranchCombobox(props: {
     <div
       ref={root}
       class={cn("relative", props.class)}
+      on:keydown={onRootKeyDown}
       onFocusOut={(e) => {
         if (!open() || !root) return;
         const next = e.relatedTarget as Node | null;
@@ -172,7 +185,16 @@ export function BranchCombobox(props: {
           required={props.required}
           value={props.value}
           placeholder={props.placeholder}
-          onFocus={openList}
+          onFocus={() => {
+            if (suppressNextFocusOpen) {
+              suppressNextFocusOpen = false;
+              return;
+            }
+            openList();
+          }}
+          onClick={() => {
+            if (!open()) openList();
+          }}
           onInput={(e) => {
             setTyped(true);
             props.onInput(e.currentTarget.value);
@@ -254,6 +276,7 @@ export function BranchCombobox(props: {
                     return (
                       <button
                         type="button"
+                        tabIndex={-1}
                         id={optionId(index())}
                         data-branch-index={index()}
                         role="option"
