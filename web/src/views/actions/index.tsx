@@ -84,17 +84,18 @@ export function ActionsView(): JSX.Element {
     () => [repo.owner(), repo.repo()] as const,
     async ([o, r]) => (await actionsApi.workflows(o, r)).items,
   );
-  const workflows = (): readonly WorkflowDto[] => workflowsRes.latest ?? [];
+  const workflows = (): readonly WorkflowDto[] =>
+    workflowsRes.error ? [] : (workflowsRes.latest ?? []);
 
-  const items = () => runsRes.latest?.items ?? [];
-  const hasNext = () => Boolean(runsRes.latest?.nextCursor);
+  const runsPage = () => (runsRes.error ? undefined : runsRes.latest);
+  const items = () => runsPage()?.items ?? [];
+  const hasNext = () => Boolean(runsPage()?.nextCursor);
   const hasPrev = () => cursors().length > 1;
   const isFiltered = () => Boolean(workflow() || status() || event());
 
   const errorText = () => {
     const e = runsRes.error;
-    // Keep showing a good list if a background poll transiently fails.
-    if (!e || runsRes.latest) return null;
+    if (!e) return null;
     return e instanceof ApiError ? e.message : "Something went wrong.";
   };
 
@@ -109,7 +110,7 @@ export function ActionsView(): JSX.Element {
   });
 
   const goNext = () => {
-    const next = runsRes.latest?.nextCursor;
+    const next = runsPage()?.nextCursor;
     if (next) setCursors((c) => [...c, next]);
   };
   const goPrev = () => setCursors((c) => (c.length > 1 ? c.slice(0, -1) : c));
@@ -198,9 +199,10 @@ export function ActionsView(): JSX.Element {
         owner={repo.owner()}
         repo={repo.repo()}
         runs={items()}
-        loading={runsRes.loading && !runsRes.latest}
+        loading={runsRes.loading && !runsPage()}
         error={errorText()}
         filtered={isFiltered()}
+        onRetry={() => void refetch()}
       />
 
       <Pagination

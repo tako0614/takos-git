@@ -14,6 +14,7 @@ import {
   Banner,
   Box,
   BoxHeader,
+  Button,
   EmptyState,
   Icons,
   LoadingBlock,
@@ -136,7 +137,7 @@ export function DirectoryScreen(props: {
 }): JSX.Element {
   const navigate = useNavigate();
 
-  const [tree] = createResource(
+  const [tree, { refetch }] = createResource(
     () => [props.owner, props.repo, props.refName, props.path] as const,
     async ([o, r, ref, path]) => {
       try {
@@ -207,7 +208,15 @@ export function DirectoryScreen(props: {
                 <Show
                   when={result.error?.isNotFound}
                   fallback={
-                    <Banner tone="danger" title="Could not read this location">
+                    <Banner
+                      tone="danger"
+                      title="Could not read this location"
+                      action={
+                        <Button size="sm" disabled={tree.loading} onClick={() => void refetch()}>
+                          Retry
+                        </Button>
+                      }
+                    >
                       {result.error?.message}
                     </Banner>
                   }
@@ -222,7 +231,7 @@ export function DirectoryScreen(props: {
                         action={
                           <div class="flex items-center gap-2 rounded-md border border-border bg-canvas-subtle px-2 py-1.5">
                             <code class="font-mono text-xs text-fg">git clone {props.cloneUrl}</code>
-                            <CopyButton value={`git clone ${props.cloneUrl}`} label="Command" class="h-6 w-6" />
+                            <CopyButton value={`git clone ${props.cloneUrl}`} label="Command" class="h-10 w-10 sm:h-6 sm:w-6" />
                           </div>
                         }
                       />

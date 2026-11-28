@@ -9,6 +9,7 @@ import {
   createEffect,
   createMemo,
   createSignal,
+  createUniqueId,
   Index,
   Show,
   type JSX,
@@ -31,22 +32,34 @@ export function Popover(props: {
   children: (api: { close: () => void }) => JSX.Element;
   align?: "left" | "right";
   width?: string;
+  disabled?: boolean;
   onClose?: () => void;
 }): JSX.Element {
   const [open, setOpen] = createSignal(false);
+  const panelId = createUniqueId();
   let root: HTMLDivElement | undefined;
+  let triggerBtn: HTMLButtonElement | undefined;
 
-  const close = () => {
+  const close = (restoreFocus = false) => {
     if (open()) {
       setOpen(false);
       props.onClose?.();
+      if (restoreFocus) triggerBtn?.focus();
     }
   };
   const onDocClick = (e: MouseEvent) => {
-    if (root && !root.contains(e.target as Node)) close();
+    if (!root) return;
+    const path = typeof e.composedPath === "function" ? e.composedPath() : [];
+    if (path.includes(root) || root.contains(e.target as Node)) return;
+    close();
   };
   const onKey = (e: KeyboardEvent) => {
-    if (e.key === "Escape") close();
+    if (e.key === "Escape") {
+      if (e.isComposing || e.keyCode === 229) return;
+      e.preventDefault();
+      e.stopPropagation();
+      close(true);
+    }
   };
   createReactiveListener({
     active: open,
@@ -62,27 +75,40 @@ export function Popover(props: {
   });
 
   return (
-    <div ref={root} class="relative">
+    <div
+      ref={root}
+      class="relative"
+      onFocusOut={(e) => {
+        if (!open() || !root) return;
+        const next = e.relatedTarget as Node | null;
+        if (next && !root.contains(next)) close();
+      }}
+    >
       <button
+        ref={triggerBtn}
         type="button"
-        aria-haspopup="menu"
+        disabled={props.disabled}
+        aria-haspopup="dialog"
         aria-expanded={open()}
+        aria-controls={open() ? panelId : undefined}
         aria-label={props.triggerLabel}
-        class="tg-focus w-full rounded-md text-left"
+        class="tg-focus flex min-h-11 w-full items-center rounded-md py-1 text-left disabled:cursor-not-allowed disabled:opacity-60 sm:min-h-0 sm:py-0"
         onClick={() => (open() ? close() : setOpen(true))}
       >
-        {props.trigger({ open: open() })}
+        <span class="w-full">{props.trigger({ open: open() })}</span>
       </button>
       <Show when={open()}>
         <div
-          role="menu"
+          id={panelId}
+          role="dialog"
+          aria-label={props.triggerLabel}
           class={cn(
-            "absolute z-40 mt-1 overflow-hidden rounded-md border border-border bg-canvas shadow-lg",
+            "absolute z-40 mt-1 max-w-[calc(100vw-2rem)] overflow-hidden rounded-md border border-border bg-canvas shadow-lg",
             props.align === "left" ? "left-0" : "right-0",
             props.width ?? "w-72",
           )}
         >
-          {props.children({ close })}
+          {props.children({ close: () => close(true) })}
         </div>
       </Show>
     </div>
@@ -113,6 +139,7 @@ function OptionList<T>(props: {
           <div class="border-b border-border p-2">
             <TextInput
               value={s().value}
+              aria-label={s().placeholder}
               placeholder={s().placeholder}
               onInput={(e) => s().onInput(e.currentTarget.value)}
             />
@@ -137,9 +164,9 @@ function OptionList<T>(props: {
                 {(item) => (
                   <button
                     type="button"
-                    role="menuitemcheckbox"
+                    role="checkbox"
                     aria-checked={props.selected(item())}
-                    class="flex w-full items-start gap-2 px-3 py-1.5 text-left text-sm hover:bg-canvas-subtle"
+                    class="tg-focus flex min-h-10 w-full items-start gap-2 px-3 py-1.5 text-left text-sm hover:bg-canvas-subtle sm:min-h-0"
                     onClick={() => props.onToggle(item())}
                   >
                     <span class="mt-0.5 w-4 shrink-0 text-accent">
@@ -198,6 +225,7 @@ export function LabelEditor(props: {
       triggerLabel="Edit labels"
       align="right"
       width="w-72"
+      disabled={props.disabled}
       onClose={flush}
       trigger={() => (
         <span class="flex items-center justify-between text-sm font-semibold text-fg hover:text-accent">
@@ -282,6 +310,7 @@ export function AssigneeEditor(props: {
       triggerLabel="Edit assignees"
       align="right"
       width="w-72"
+      disabled={props.disabled}
       onClose={flush}
       trigger={() => (
         <span class="flex items-center justify-between text-sm font-semibold text-fg hover:text-accent">
@@ -312,9 +341,11 @@ export function AssigneeEditor(props: {
               <div class="flex items-center gap-2">
                 <TextInput
                   value={manual()}
+                  aria-label="Add assignee by subject ID"
                   placeholder="Add by subject id"
                   onInput={(e) => setManual(e.currentTarget.value)}
                   onKeyDown={(e) => {
+                    if (e.isComposing || e.keyCode === 229) return;
                     if (e.key === "Enter") {
                       e.preventDefault();
                       addManual();
@@ -357,6 +388,7 @@ export function MilestoneEditor(props: {
       triggerLabel="Edit milestone"
       align="right"
       width="w-72"
+      disabled={props.disabled}
       trigger={() => (
         <span class="flex items-center justify-between text-sm font-semibold text-fg hover:text-accent">
           Milestone <Icons.Settings class="h-4 w-4 text-muted" />

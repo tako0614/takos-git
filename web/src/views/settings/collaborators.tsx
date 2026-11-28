@@ -235,7 +235,15 @@ export function CollaboratorsSettingsView(): JSX.Element {
           </div>
           <Suspense fallback={<LoadingBlock label="Loading collaborators…" />}>
             <Show when={collabs.error}>
-              <Banner tone="danger" title="Could not load collaborators">
+              <Banner
+                tone="danger"
+                title="Could not load collaborators"
+                action={
+                  <Button size="sm" disabled={collabs.loading} onClick={reload}>
+                    Retry
+                  </Button>
+                }
+              >
                 {describeError(collabs.error)}
               </Banner>
             </Show>

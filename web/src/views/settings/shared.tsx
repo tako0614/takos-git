@@ -5,7 +5,7 @@
  * reuse, plus the small helpers (error copy, an accessible Toggle) every panel
  * needs.
  */
-import { Show, type JSX } from "solid-js";
+import { createUniqueId, Show, type JSX } from "solid-js";
 import { ApiError } from "../../api/client.ts";
 import { useSession } from "../../store/session.tsx";
 import { Banner, Box, BoxHeader, Button, Icons } from "../../ui/index.ts";
@@ -119,17 +119,23 @@ export function Toggle(props: {
       disabled={props.disabled}
       onClick={() => props.onChange(!props.checked)}
       class={cn(
-        "tg-focus relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors",
-        props.checked ? "bg-success-emphasis" : "bg-neutral-muted",
+        "tg-focus inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-md sm:min-h-0 sm:min-w-0 sm:rounded-full",
         props.disabled && "cursor-not-allowed opacity-50",
       )}
     >
       <span
         class={cn(
-          "inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform",
-          props.checked ? "translate-x-[18px]" : "translate-x-0.5",
+          "relative inline-flex h-5 w-9 items-center rounded-full border border-border transition-colors",
+          props.checked ? "border-success-emphasis bg-success-emphasis" : "bg-border",
         )}
-      />
+      >
+        <span
+          class={cn(
+            "inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform",
+            props.checked ? "translate-x-[17px]" : "translate-x-0.5",
+          )}
+        />
+      </span>
     </button>
   );
 }
@@ -142,9 +148,9 @@ export function ToggleField(props: {
   hint?: string;
   disabled?: boolean;
 }): JSX.Element {
-  const id = `tgl-${Math.random().toString(36).slice(2)}`;
+  const id = createUniqueId();
   return (
-    <div class="flex items-start justify-between gap-4 py-2">
+    <div class="flex items-center justify-between gap-4 py-2">
       <label for={id} class="min-w-0 cursor-pointer">
         <span class="text-sm font-medium text-fg">{props.label}</span>
         <Show when={props.hint}>

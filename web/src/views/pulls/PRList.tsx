@@ -48,9 +48,9 @@ type StateFilter = "open" | "closed" | "all";
 function BranchPair(props: { base: string; head: string }): JSX.Element {
   return (
     <span class="inline-flex items-center gap-1 text-xs text-muted">
-      <Mono class="rounded bg-neutral-muted px-1.5 py-0.5">{props.base}</Mono>
+      <Mono class="rounded bg-neutral-muted px-1.5 py-0.5 text-fg">{props.base}</Mono>
       <Icons.ChevronLeft class="h-3 w-3" />
-      <Mono class="rounded bg-neutral-muted px-1.5 py-0.5">{props.head}</Mono>
+      <Mono class="rounded bg-neutral-muted px-1.5 py-0.5 text-fg">{props.head}</Mono>
     </span>
   );
 }

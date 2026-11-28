@@ -72,9 +72,10 @@ export function ReleasesView(): JSX.Element {
     () => [owner(), name(), cursor()] as const,
     ([o, r, c]) => releasesApi.list(o, r, { limit: PAGE_SIZE, cursor: c }),
   );
+  const pageData = () => (page.error ? undefined : page.latest);
 
   const goNext = () => {
-    const next = page.latest?.nextCursor;
+    const next = pageData()?.nextCursor;
     if (!next) return;
     setStack((s) => [...s, cursor()]);
     setCursor(next);
@@ -142,7 +143,7 @@ export function ReleasesView(): JSX.Element {
             </div>
 
             <Show
-              when={!page.loading || page.latest}
+              when={!page.loading || pageData()}
               fallback={<LoadingBlock label="Loading releases…" />}
             >
               <Show
@@ -158,7 +159,7 @@ export function ReleasesView(): JSX.Element {
                 }
               >
                 <Show
-                  when={(page.latest?.items.length ?? 0) > 0}
+                  when={(pageData()?.items.length ?? 0) > 0}
                   fallback={
                     <EmptyState
                       icon={<Icons.Tag class="h-8 w-8" />}
@@ -169,14 +170,14 @@ export function ReleasesView(): JSX.Element {
                   }
                 >
                   <ReleaseTable
-                    items={page.latest?.items ?? []}
+                    items={pageData()?.items ?? []}
                     canWrite={canWrite()}
                     onOpen={openDetail}
                     onEdit={openEdit}
                     onDelete={removeFromList}
                   />
                   <Pagination
-                    hasNext={!!page.latest?.nextCursor}
+                    hasNext={!!pageData()?.nextCursor}
                     hasPrev={stack().length > 0}
                     onNext={goNext}
                     onPrev={goPrev}
@@ -264,7 +265,7 @@ function ReleaseRow(props: {
         <div class="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            class="tg-focus truncate rounded text-base font-semibold text-fg hover:text-accent hover:underline"
+            class="tg-focus inline-flex min-h-10 items-center truncate rounded text-left text-base font-semibold text-fg hover:text-accent hover:underline sm:min-h-0"
             onClick={() => props.onOpen(r().tag)}
           >
             {releaseTitle(r())}
@@ -311,7 +312,7 @@ function ReleaseRow(props: {
         <div class="flex shrink-0 items-center gap-1">
           <button
             type="button"
-            class="tg-focus rounded p-1.5 text-muted hover:bg-canvas-subtle hover:text-fg"
+            class="tg-focus inline-flex h-11 w-11 items-center justify-center rounded text-muted hover:bg-canvas-subtle hover:text-fg sm:h-7 sm:w-7"
             aria-label={`Edit ${r().tag}`}
             title="Edit"
             onClick={() => props.onEdit(r())}
@@ -320,7 +321,7 @@ function ReleaseRow(props: {
           </button>
           <button
             type="button"
-            class="tg-focus rounded p-1.5 text-muted hover:bg-canvas-subtle hover:text-danger"
+            class="tg-focus inline-flex h-11 w-11 items-center justify-center rounded text-muted hover:bg-canvas-subtle hover:text-danger sm:h-7 sm:w-7"
             aria-label={`Delete ${r().tag}`}
             title="Delete"
             onClick={() => props.onDelete(r())}

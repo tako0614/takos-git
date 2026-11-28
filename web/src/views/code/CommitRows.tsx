@@ -60,7 +60,7 @@ function CommitRow(props: { owner: string; repo: string; commit: CommitSummary }
           value={c().sha}
           label="Commit SHA"
           title="Copy full SHA"
-          class="h-7 w-7 hover:bg-canvas-subtle"
+          class="h-10 w-10 hover:bg-canvas-subtle sm:h-7 sm:w-7"
         />
       </div>
     </div>

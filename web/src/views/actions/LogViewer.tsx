@@ -94,7 +94,7 @@ export function LogViewer(props: {
         <div>
           <button
             type="button"
-            class="tg-focus inline-flex items-center gap-1 rounded hover:text-fg"
+            class="tg-focus inline-flex min-h-10 items-center gap-1 rounded px-2 hover:text-fg sm:min-h-0 sm:px-1"
             onClick={() => void copy()}
             disabled={!text()}
           >
@@ -112,7 +112,16 @@ export function LogViewer(props: {
         }
       >
         <Show when={error()}>
-          <div class="px-3 py-4 text-xs text-danger">{error()}</div>
+          <div class="flex items-center justify-between gap-2 px-3 py-3 text-xs text-danger">
+            <span>{error()}</span>
+            <button
+              type="button"
+              class="tg-focus rounded border border-border bg-canvas-subtle px-2 py-1 text-xs font-medium text-fg hover:bg-canvas-inset"
+              onClick={() => void load(true)}
+            >
+              Retry
+            </button>
+          </div>
         </Show>
         <Show when={!error() && notReady()}>
           <div class="px-3 py-4 text-xs text-muted">

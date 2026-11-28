@@ -18,6 +18,7 @@ import { useRepo } from "../../app/RepoLayout.tsx";
 import { pullsApi } from "../../api/pulls.ts";
 import { ApiError } from "../../api/client.ts";
 import type { PullRequestDto } from "../../api/types.ts";
+import { moveTabFocus } from "../../lib/a11y.ts";
 import { cn } from "../../lib/cn.ts";
 import {
   Banner,
@@ -37,20 +38,25 @@ import { PRChecks } from "./PRChecks.tsx";
 type Tab = "conversation" | "commits" | "files" | "checks";
 
 function TabButton(props: {
+  id: Tab;
   active: boolean;
   icon: JSX.Element;
   label: string;
   counter?: number | null;
   onClick: () => void;
+  onKeyDown: (e: KeyboardEvent) => void;
 }): JSX.Element {
   return (
     <button
       type="button"
       role="tab"
+      data-tab-id={props.id}
+      tabIndex={props.active ? 0 : -1}
       aria-selected={props.active}
       onClick={props.onClick}
+      onKeyDown={props.onKeyDown}
       class={cn(
-        "tg-focus -mb-px flex items-center gap-2 whitespace-nowrap border-b-2 px-3 py-2.5 text-sm",
+        "tg-focus flex min-h-11 items-center gap-2 whitespace-nowrap border-b-2 px-3 py-2.5 text-sm sm:min-h-0",
         props.active
           ? "border-attention-emphasis font-semibold text-fg"
           : "border-transparent text-muted hover:text-fg",
@@ -103,6 +109,14 @@ export function PRDetail(): JSX.Element {
     navigate(base());
   };
 
+  const onTabKeyDown = (e: KeyboardEvent) => {
+    const next = moveTabFocus(e);
+    if (next === "conversation") goConversation();
+    else if (next === "commits") goCommits();
+    else if (next === "files") goFiles();
+    else if (next === "checks") goChecks();
+  };
+
   const Header = (props: { pr: PullRequestDto }): JSX.Element => (
     <div class="space-y-3">
       <div class="flex flex-wrap items-start gap-3">
@@ -126,8 +140,8 @@ export function PRDetail(): JSX.Element {
         <p class="text-sm text-muted">
           <span class="font-semibold text-fg">{principalName(props.pr.author)}</span>{" "}
           wants to merge {props.pr.commitsCount} commit{props.pr.commitsCount === 1 ? "" : "s"} into{" "}
-          <Mono class="rounded bg-neutral-muted px-1.5 py-0.5">{props.pr.base.ref}</Mono> from{" "}
-          <Mono class="rounded bg-neutral-muted px-1.5 py-0.5">{props.pr.head.ref}</Mono>
+          <Mono class="rounded bg-neutral-muted px-1.5 py-0.5 text-fg">{props.pr.base.ref}</Mono> from{" "}
+          <Mono class="rounded bg-neutral-muted px-1.5 py-0.5 text-fg">{props.pr.head.ref}</Mono>
         </p>
       </div>
     </div>
@@ -135,9 +149,10 @@ export function PRDetail(): JSX.Element {
 
   return (
     <ErrorBoundary
-      fallback={(err) =>
+      fallback={(err, reset) =>
         err instanceof ApiError && err.isNotFound ? (
           <EmptyState
+            headingLevel="h1"
             icon={<Icons.GitPullRequest class="h-8 w-8" />}
             title="Pull request not found"
             description={`No pull request #${params.number} exists in this repository.`}
@@ -148,9 +163,20 @@ export function PRDetail(): JSX.Element {
             }
           />
         ) : (
-          <Banner tone="danger" title="Could not load the pull request">
-            {err instanceof ApiError ? err.message : "Unexpected error."}
-          </Banner>
+          <div class="space-y-3">
+            <h1 class="sr-only">Pull request error</h1>
+            <Banner
+              tone="danger"
+              title="Could not load the pull request"
+              action={
+                <Button size="sm" onClick={() => { void refetch(); reset(); }}>
+                  Retry
+                </Button>
+              }
+            >
+              {err instanceof ApiError ? err.message : "Unexpected error."}
+            </Banner>
+          </div>
         )
       }
     >
@@ -160,32 +186,40 @@ export function PRDetail(): JSX.Element {
             <div class="space-y-4">
               <Header pr={pr()} />
 
-              <div role="tablist" aria-label="Pull request sections" class="flex gap-1 overflow-x-auto border-b border-border">
+              <div role="tablist" aria-label="Pull request sections" class="flex gap-1 overflow-x-auto overflow-y-hidden border-b border-border">
                 <TabButton
+                  id="conversation"
                   active={tab() === "conversation"}
                   icon={<Icons.MessageSquare class="h-4 w-4" />}
                   label="Conversation"
                   counter={pr().commentsCount}
                   onClick={goConversation}
+                  onKeyDown={onTabKeyDown}
                 />
                 <TabButton
+                  id="commits"
                   active={tab() === "commits"}
                   icon={<Icons.GitCommit class="h-4 w-4" />}
                   label="Commits"
                   counter={pr().commitsCount}
                   onClick={goCommits}
+                  onKeyDown={onTabKeyDown}
                 />
                 <TabButton
+                  id="files"
                   active={tab() === "files"}
                   icon={<Icons.File class="h-4 w-4" />}
                   label="Files changed"
                   onClick={goFiles}
+                  onKeyDown={onTabKeyDown}
                 />
                 <TabButton
+                  id="checks"
                   active={tab() === "checks"}
                   icon={<Icons.Play class="h-4 w-4" />}
                   label="Checks"
                   onClick={goChecks}
+                  onKeyDown={onTabKeyDown}
                 />
               </div>
 

@@ -18,6 +18,7 @@ import {
   Avatar,
   Banner,
   Box,
+  Button,
   EmptyState,
   Icons,
   LoadingBlock,
@@ -55,15 +56,23 @@ function CommitRow(props: { owner: string; repo: string; commit: CommitSummary }
 }
 
 export function PRCommits(props: { owner: string; repo: string; number: number }): JSX.Element {
-  const [data] = createResource(
+  const [data, { refetch }] = createResource(
     () => [props.owner, props.repo, props.number] as const,
     ([o, r, n]) => pullsApi.commits(o, r, n),
   );
 
   return (
     <ErrorBoundary
-      fallback={(err) => (
-        <Banner tone="danger" title="Could not load commits">
+      fallback={(err, reset) => (
+        <Banner
+          tone="danger"
+          title="Could not load commits"
+          action={
+            <Button size="sm" onClick={() => { void refetch(); reset(); }}>
+              Retry
+            </Button>
+          }
+        >
           {err instanceof ApiError ? err.message : "Unexpected error."}
         </Banner>
       )}

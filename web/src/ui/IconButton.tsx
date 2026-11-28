@@ -16,7 +16,7 @@ export function IconButton(props: IconButtonProps): JSX.Element {
       type={local.type ?? "button"}
       class={cn(
         "tg-focus inline-flex items-center justify-center rounded-md border border-transparent text-muted hover:bg-canvas-subtle hover:text-fg transition-colors disabled:opacity-50 disabled:cursor-not-allowed",
-        local.size === "sm" ? "h-9 w-9 sm:h-6 sm:w-6" : "h-11 w-11 sm:h-8 sm:w-8",
+        local.size === "sm" ? "h-10 w-10 sm:h-6 sm:w-6" : "h-11 w-11 sm:h-8 sm:w-8",
         local.class,
       )}
       {...rest}

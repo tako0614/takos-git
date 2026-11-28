@@ -29,6 +29,7 @@ import {
   Avatar,
   Banner,
   Button,
+  ButtonLink,
   EmptyState,
   Icons,
   IconButton,
@@ -261,26 +262,35 @@ export function IssueDetail(props: {
 
   return (
     <ErrorBoundary
-      fallback={(err) => (
-        <Banner tone="danger" title="Could not load this issue">
-          {err instanceof ApiError ? err.message : "Unexpected error."}
-        </Banner>
+      fallback={(err, reset) => (
+        <div class="space-y-3">
+          <h1 class="sr-only">Issue error</h1>
+          <Banner
+            tone="danger"
+            title="Could not load this issue"
+            action={
+              <Button size="sm" onClick={() => { void refetchIssue(); reset(); }}>
+                Retry
+              </Button>
+            }
+          >
+            {err instanceof ApiError ? err.message : "Unexpected error."}
+          </Banner>
+        </div>
       )}
     >
       <Show
         when={!notFound()}
         fallback={
           <EmptyState
+            headingLevel="h1"
             icon={<Icons.Inbox class="h-8 w-8" />}
             title="Issue not found"
             description={`No issue #${props.number} exists in this repository.`}
             action={
-              <A
-                href={`${base()}/issues`}
-                class="tg-focus rounded-md border border-border px-3 py-1.5 text-sm hover:bg-canvas-subtle"
-              >
+              <ButtonLink as={A} href={`${base()}/issues`}>
                 Back to issues
-              </A>
+              </ButtonLink>
             }
           />
         }
@@ -297,11 +307,20 @@ export function IssueDetail(props: {
                       <div class="flex flex-wrap items-center gap-2">
                         <TextInput
                           class="flex-1"
+                          aria-label="Issue title"
                           value={titleDraft()}
                           onInput={(e) => updateTitleDraft(e.currentTarget.value)}
                           onKeyDown={(e) => {
-                            if (e.key === "Enter") void saveTitle();
-                            if (e.key === "Escape") cancelTitleEdit();
+                            if (e.isComposing || e.keyCode === 229) return;
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              void saveTitle();
+                            }
+                            if (e.key === "Escape") {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              cancelTitleEdit();
+                            }
                           }}
                         />
                         <Button variant="primary" disabled={busy() || !titleDraft().trim()} onClick={saveTitle}>
@@ -321,12 +340,9 @@ export function IssueDetail(props: {
                           <Button size="sm" onClick={beginEditTitle}>
                             <Icons.Edit class="h-3.5 w-3.5" /> Edit
                           </Button>
-                          <A
-                            href={`${base()}/issues/new`}
-                            class="tg-focus inline-flex h-7 items-center gap-2 rounded-md border border-success-emphasis bg-success-emphasis px-2.5 text-xs font-medium text-white hover:brightness-110"
-                          >
+                          <ButtonLink as={A} href={`${base()}/issues/new`} size="sm" variant="primary">
                             <Icons.Plus class="h-3.5 w-3.5" /> New issue
-                          </A>
+                          </ButtonLink>
                         </Show>
                       </div>
                     </div>
@@ -573,7 +589,7 @@ export function IssueDetail(props: {
                       <div class="border-t border-border pt-4">
                         <button
                           type="button"
-                          class="tg-focus flex items-center gap-2 text-sm text-danger hover:underline disabled:opacity-60"
+                          class="tg-focus flex min-h-10 items-center gap-2 rounded text-sm text-danger hover:underline disabled:opacity-60 sm:min-h-0"
                           disabled={busy()}
                           onClick={async () => {
                             const target = iss().state === "open" ? "closed" : "open";
@@ -692,7 +708,11 @@ function CommentItem(props: {
           <Menu
             align="right"
             triggerLabel="Comment actions"
-            trigger={<Icons.MoreHorizontal class="h-4 w-4 text-muted" />}
+            trigger={
+              <span class="inline-flex h-10 w-10 items-center justify-center rounded-md text-muted hover:bg-canvas-inset hover:text-fg sm:h-7 sm:w-7">
+                <Icons.MoreHorizontal class="h-4 w-4" />
+              </span>
+            }
             items={[
               { label: "Edit", onSelect: begin },
               { label: "Delete", onSelect: () => void remove(), danger: true, separated: true },

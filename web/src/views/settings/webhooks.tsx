@@ -146,7 +146,17 @@ export function WebhooksSettingsView(): JSX.Element {
 
         <Suspense fallback={<LoadingBlock label="Loading webhooks…" />}>
           <Show when={hooks.error}>
-            <Banner tone="danger" title="Could not load webhooks">{describeError(hooks.error)}</Banner>
+            <Banner
+              tone="danger"
+              title="Could not load webhooks"
+              action={
+                <Button size="sm" disabled={hooks.loading} onClick={reload}>
+                  Retry
+                </Button>
+              }
+            >
+              {describeError(hooks.error)}
+            </Banner>
           </Show>
           <Show when={!hooks.error}>
             <Show
@@ -256,7 +266,7 @@ function WebhookRow(props: {
 }
 
 function DeliveryLog(props: { owner: string; repo: string; hookId: string }): JSX.Element {
-  const [deliveries] = createResource(
+  const [deliveries, { refetch }] = createResource(
     () => [props.owner, props.repo, props.hookId] as const,
     async ([o, r, id]) => (await webhooksApi.deliveries(o, r, id)).items,
   );
@@ -264,7 +274,17 @@ function DeliveryLog(props: { owner: string; repo: string; hookId: string }): JS
     <Suspense fallback={<div class="px-4 py-4"><LoadingBlock label="Loading deliveries…" /></div>}>
       <Show when={deliveries.error}>
         <div class="px-4 py-3">
-          <Banner tone="danger" title="Could not load deliveries">{describeError(deliveries.error)}</Banner>
+          <Banner
+            tone="danger"
+            title="Could not load deliveries"
+            action={
+              <Button size="sm" disabled={deliveries.loading} onClick={() => void refetch()}>
+                Retry
+              </Button>
+            }
+          >
+            {describeError(deliveries.error)}
+          </Banner>
         </div>
       </Show>
       <Show when={!deliveries.error}>

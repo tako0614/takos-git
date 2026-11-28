@@ -7,6 +7,7 @@
 import {
   createResource,
   createSignal,
+  createUniqueId,
   onCleanup,
   ErrorBoundary,
   Index,
@@ -66,6 +67,7 @@ function ResolverBody(props: {
   const [edit, setEdit] = createSignal(props.conflicts[0]?.ours ?? props.conflicts[0]?.theirs ?? "");
   const [submitting, setSubmitting] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
+  const resolvedId = createUniqueId();
 
   const current = () => props.conflicts.find((c) => c.path === selected());
   const currentResolution = () => resolutions().get(selected());
@@ -130,7 +132,7 @@ function ResolverBody(props: {
 
   return (
     <div class="space-y-3 rounded-md border border-border bg-canvas p-3">
-      <div class="flex items-center justify-between">
+      <div class="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h3 class="text-sm font-semibold text-fg">
             Resolve {props.conflicts.length} conflicting file{props.conflicts.length === 1 ? "" : "s"}
@@ -139,7 +141,7 @@ function ResolverBody(props: {
             <Mono>{props.pr.base.ref}</Mono> ← <Mono>{props.pr.head.ref}</Mono>
           </p>
         </div>
-        <div class="flex items-center gap-2">
+        <div class="flex flex-wrap items-center gap-2">
           <Button size="sm" onClick={props.onCancel} disabled={submitting()}>Cancel</Button>
           <Button size="sm" variant="primary" onClick={submit} disabled={!allResolved() || submitting()}>
             {submitting()
@@ -153,8 +155,8 @@ function ResolverBody(props: {
         <Banner tone="danger">{error()}</Banner>
       </Show>
 
-      <div class="flex gap-3">
-        <div class="w-52 shrink-0 space-y-1 border-r border-border pr-2">
+      <div class="flex flex-col gap-3 md:flex-row">
+        <div class="w-full shrink-0 space-y-1 border-b border-border pb-2 md:w-52 md:border-b-0 md:border-r md:pb-0 md:pr-2">
           <Index each={props.conflicts}>
             {(conflict) => {
               const resolved = () => resolutions().has(conflict().path);
@@ -162,10 +164,11 @@ function ResolverBody(props: {
               return (
                 <button
                   type="button"
+                  aria-current={active() ? "true" : undefined}
                   onClick={() => select(conflict().path)}
                   class={
-                    "flex w-full items-center gap-2 rounded px-2 py-1 text-left text-xs " +
-                    (active() ? "bg-canvas-inset" : "hover:bg-canvas-subtle")
+                    "tg-focus flex min-h-10 w-full items-center gap-2 rounded px-2 py-1 text-left text-xs sm:min-h-0 " +
+                    (active() ? "bg-canvas-inset font-semibold text-fg" : "hover:bg-canvas-subtle")
                   }
                 >
                   <Show
@@ -186,9 +189,9 @@ function ResolverBody(props: {
         <Show when={current()} keyed>
           {(conflict) => (
             <div class="min-w-0 flex-1 space-y-2">
-              <div class="flex items-center gap-2 text-xs text-muted">
-                <Mono class="text-fg">{conflict.path}</Mono>
-                <span class="rounded bg-neutral-muted px-1.5 py-0.5">{conflict.type}</span>
+              <div class="flex flex-wrap items-center gap-2 text-xs text-muted">
+                <Mono class="break-all text-fg">{conflict.path}</Mono>
+                <span class="rounded bg-neutral-muted px-1.5 py-0.5 text-fg">{conflict.type}</span>
               </div>
 
               <div class="flex flex-wrap gap-2">
@@ -215,7 +218,7 @@ function ResolverBody(props: {
                 </Button>
               </div>
 
-              <div class="flex gap-2">
+              <div class="flex flex-col gap-2 sm:flex-row">
                 <Pane
                   title={<>{props.pr.base.ref} (ours)</>}
                   body={conflict.ours}
@@ -229,17 +232,18 @@ function ResolverBody(props: {
               </div>
 
               <div>
-                <div class="flex items-center justify-between rounded-t-md border border-border bg-canvas-subtle px-2 py-1 text-xs font-semibold text-fg">
-                  <span>Resolved content</span>
+                <div class="flex items-center justify-between gap-2 rounded-t-md border border-border bg-canvas-subtle px-2 py-1 text-xs font-semibold text-fg">
+                  <label for={resolvedId}>Resolved content for {conflict.path}</label>
                   <button
                     type="button"
                     onClick={applyEdit}
-                    class="tg-focus rounded border border-border bg-canvas px-2 py-0.5 text-xs hover:bg-canvas-inset"
+                    class="tg-focus min-h-10 shrink-0 rounded border border-border bg-canvas px-2.5 py-0.5 text-xs hover:bg-canvas-inset sm:min-h-0 sm:px-2"
                   >
                     Apply edit
                   </button>
                 </div>
                 <Textarea
+                  id={resolvedId}
                   rows={5}
                   class={
                     "rounded-t-none " +
@@ -264,15 +268,23 @@ export function ConflictResolver(props: {
   onResolved: (result: MergeResponse) => void;
   onCancel: () => void;
 }): JSX.Element {
-  const [data] = createResource(
+  const [data, { refetch }] = createResource(
     () => [props.owner, props.repo, props.pr.number] as const,
     ([owner, repo, number]) => loadConflicts(owner, repo, number),
   );
 
   return (
     <ErrorBoundary
-      fallback={(err) => (
-        <Banner tone="danger" title="Could not load conflicts">
+      fallback={(err, reset) => (
+        <Banner
+          tone="danger"
+          title="Could not load conflicts"
+          action={
+            <Button size="sm" onClick={() => { void refetch(); reset(); }}>
+              Retry
+            </Button>
+          }
+        >
           {err instanceof ApiError ? err.message : "Unexpected error."}
         </Banner>
       )}

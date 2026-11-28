@@ -40,7 +40,7 @@
   --done-emphasis: #8250df;
   --done-subtle: #fbefff;
   --neutral-emphasis: #59636e;
-  --neutral-muted: rgba(129, 139, 152, 0.2);
+  --neutral-muted: rgba(129, 139, 152, 0.14);
   --shadow-sm: 0 1px 0 rgba(31, 35, 40, 0.04);
   --shadow-md: 0 3px 6px rgba(140, 149, 159, 0.15);
   --overlay-backdrop: rgba(31, 35, 40, 0.5);
@@ -73,7 +73,7 @@
   --done-emphasis: #8957e5;
   --done-subtle: rgba(163, 113, 247, 0.1);
   --neutral-emphasis: #6e7681;
-  --neutral-muted: rgba(110, 118, 129, 0.4);
+  --neutral-muted: rgba(110, 118, 129, 0.28);
   --shadow-sm: 0 0 transparent;
   --shadow-md: 0 3px 6px rgba(1, 4, 9, 0.5);
   --overlay-backdrop: rgba(1, 4, 9, 0.8);
@@ -94,10 +94,19 @@
     --accent-emphasis: #1f6feb;
     --accent-subtle: rgba(56, 139, 253, 0.1);
     --success-fg: #3fb950;
+    --success-emphasis: #238636;
+    --success-subtle: rgba(46, 160, 67, 0.15);
     --danger-fg: #f85149;
+    --danger-emphasis: #da3633;
+    --danger-subtle: rgba(248, 81, 73, 0.1);
     --attention-fg: #d29922;
+    --attention-emphasis: #9e6a03;
+    --attention-subtle: rgba(187, 128, 9, 0.15);
     --done-fg: #ab7df8;
-    --neutral-muted: rgba(110, 118, 129, 0.4);
+    --done-emphasis: #8957e5;
+    --done-subtle: rgba(163, 113, 247, 0.1);
+    --neutral-emphasis: #6e7681;
+    --neutral-muted: rgba(110, 118, 129, 0.28);
     --overlay-backdrop: rgba(1, 4, 9, 0.8);
   }
 }
@@ -128,7 +137,10 @@
   --color-attention-emphasis: var(--attention-emphasis);
   --color-attention-subtle: var(--attention-subtle);
   --color-done: var(--done-fg);
+  --color-done-emphasis: var(--done-emphasis);
   --color-done-subtle: var(--done-subtle);
+  --color-neutral-emphasis: var(--neutral-emphasis);
+  --color-neutral-muted: var(--neutral-muted);
 
   --font-sans:
     -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial,
@@ -138,26 +150,28 @@
     "Liberation Mono", monospace;
 }
 
-html,
-body {
-  margin: 0;
-  padding: 0;
-  overflow-x: clip;
-}
+@layer base {
+  html,
+  body {
+    margin: 0;
+    padding: 0;
+    overflow-x: clip;
+  }
 
-body {
-  background: var(--canvas-default);
-  color: var(--fg-default);
-  font-family: var(--font-sans);
-  font-size: 14px;
-  line-height: 1.5;
-  -webkit-font-smoothing: antialiased;
-  text-rendering: optimizeLegibility;
-}
+  body {
+    background: var(--canvas-default);
+    color: var(--fg-default);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
 
-:where(a) {
-  color: inherit;
-  text-decoration: none;
+  :where(a) {
+    color: inherit;
+    text-decoration: none;
+  }
 }
 
 /* A thin top progress bar the shell shows during route transitions. */

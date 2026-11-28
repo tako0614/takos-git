@@ -53,9 +53,10 @@ export function RunDetail(props: {
     async ([o, r, id]) => (await actionsApi.jobs(o, r, id)).items,
   );
 
-  const run = (): WorkflowRunDto | undefined => runRes.latest;
-  const jobs = (): readonly WorkflowJobDto[] => jobsRes.latest ?? [];
+  const run = (): WorkflowRunDto | undefined => (runRes.error ? undefined : runRes.latest);
+  const jobs = (): readonly WorkflowJobDto[] => (jobsRes.error ? [] : (jobsRes.latest ?? []));
   const notFound = () => runRes.error instanceof ApiError && runRes.error.isNotFound;
+  const loadError = () => (runRes.error && !notFound() ? runRes.error : undefined);
 
   // Poll while the run is live.
   createPolling({
@@ -130,12 +131,36 @@ export function RunDetail(props: {
         when={!notFound()}
         fallback={
           <EmptyState
+            headingLevel="h1"
             icon={<Icons.AlertTriangle class="h-8 w-8" />}
             title="Run not found"
             description="This workflow run doesn't exist or is no longer visible to you."
           />
         }
       >
+        <Show
+          when={!loadError()}
+          fallback={
+            <div class="space-y-3">
+              <h1 class="sr-only">Workflow run error</h1>
+              <Banner
+                tone="danger"
+                title="Couldn't load workflow run"
+                action={
+                  <Button size="sm" disabled={runRes.loading} onClick={refetchAll}>
+                    Retry
+                  </Button>
+                }
+              >
+                {loadError() instanceof ApiError
+                  ? (loadError() as ApiError).message
+                  : loadError() instanceof Error
+                    ? (loadError() as Error).message
+                    : "Unexpected error."}
+              </Banner>
+            </div>
+          }
+        >
         <Show when={run()} fallback={<LoadingBlock label="Loading run…" />}>
           {(r) => (
             <>
@@ -206,7 +231,16 @@ export function RunDetail(props: {
                   Jobs <span class="font-normal text-muted">{jobs().length}</span>
                 </h2>
                 <Show when={jobsRes.error}>
-                  <Banner tone="danger">Couldn't load jobs for this run.</Banner>
+                  <Banner
+                    tone="danger"
+                    action={
+                      <Button size="sm" disabled={jobsRes.loading} onClick={() => void refetchJobs()}>
+                        Retry
+                      </Button>
+                    }
+                  >
+                    Couldn't load jobs for this run.
+                  </Banner>
                 </Show>
                 <Show
                   when={jobs().length > 0}
@@ -236,6 +270,7 @@ export function RunDetail(props: {
               <ArtifactsList owner={props.owner} repo={props.repo} runId={props.runId} />
             </>
           )}
+        </Show>
         </Show>
       </Show>
     </div>

@@ -170,13 +170,14 @@ export function LabelManager(props: {
               </div>
             </label>
           </div>
-          <div class="mt-2 flex flex-wrap gap-1">
+          <div class="mt-2 flex flex-wrap gap-1.5">
             <Index each={SWATCHES}>
               {(hex) => (
                 <button
                   type="button"
                   aria-label={`Use color ${hex()}`}
-                  class="h-5 w-5 rounded-full border border-border"
+                  aria-pressed={newColor().replace(/^#/, "").toLowerCase() === hex().toLowerCase()}
+                  class="tg-focus h-7 w-7 rounded-full border border-border sm:h-5 sm:w-5"
                   style={{ background: `#${hex()}` }}
                   onClick={() => setNewColor(hex())}
                 />
@@ -199,7 +200,13 @@ export function LabelManager(props: {
         </div>
 
         {/* List */}
-        <Show when={error()}>{(msg) => <Banner tone="danger">{msg()}</Banner>}</Show>
+        <Show when={error()}>
+          {(msg) => (
+            <Banner tone="danger" action={<Button size="sm" onClick={() => void reload()}>Retry</Button>}>
+              {msg()}
+            </Banner>
+          )}
+        </Show>
         <Show when={!loading()} fallback={<LoadingBlock label="Loading labels…" />}>
           <Show
             when={labels().length > 0}
@@ -227,9 +234,9 @@ export function LabelManager(props: {
                       <div class="space-y-2">
                         <div class="flex flex-wrap items-center gap-2">
                           <span class="inline-block h-6 w-6 shrink-0 rounded border border-border" style={{ background: isHex6(draftColor()) ? `#${draftColor().replace(/^#/, "")}` : "#8b949e" }} />
-                          <TextInput class="w-40" value={draftName()} onInput={(e) => setDraftName(e.currentTarget.value)} />
-                          <TextInput class="w-28" value={draftColor()} onInput={(e) => setDraftColor(e.currentTarget.value)} />
-                          <TextInput class="min-w-[10rem] flex-1" placeholder="Description" value={draftDesc()} onInput={(e) => setDraftDesc(e.currentTarget.value)} />
+                          <TextInput class="w-40" aria-label="Label name" value={draftName()} onInput={(e) => setDraftName(e.currentTarget.value)} />
+                          <TextInput class="w-28" aria-label="Label color hex" value={draftColor()} onInput={(e) => setDraftColor(e.currentTarget.value)} />
+                          <TextInput class="min-w-[10rem] flex-1" aria-label="Label description" placeholder="Description" value={draftDesc()} onInput={(e) => setDraftDesc(e.currentTarget.value)} />
                         </div>
                         <div class="flex justify-end gap-2">
                           <Button size="sm" onClick={() => setEditName(null)}>Cancel</Button>
@@ -387,8 +394,8 @@ export function MilestoneManager(props: {
             <Icons.Plus class="h-4 w-4" /> New milestone
           </div>
           <div class="space-y-2">
-            <TextInput value={newTitle()} placeholder="Title" onInput={(e) => setNewTitle(e.currentTarget.value)} />
-            <Textarea value={newDesc()} placeholder="Description (optional)" rows={2} onInput={(e) => setNewDesc(e.currentTarget.value)} />
+            <TextInput aria-label="Milestone title" value={newTitle()} placeholder="Title" onInput={(e) => setNewTitle(e.currentTarget.value)} />
+            <Textarea aria-label="Milestone description" value={newDesc()} placeholder="Description (optional)" rows={2} onInput={(e) => setNewDesc(e.currentTarget.value)} />
             <div class="flex flex-wrap items-end gap-2">
               <label>
                 <span class="mb-1 block text-xs text-muted">Due date (optional)</span>
@@ -401,7 +408,13 @@ export function MilestoneManager(props: {
           </div>
         </div>
 
-        <Show when={error()}>{(msg) => <Banner tone="danger">{msg()}</Banner>}</Show>
+        <Show when={error()}>
+          {(msg) => (
+            <Banner tone="danger" action={<Button size="sm" onClick={() => void reload()}>Retry</Button>}>
+              {msg()}
+            </Banner>
+          )}
+        </Show>
         <Show when={!loading()} fallback={<LoadingBlock label="Loading milestones…" />}>
           <Show
             when={milestones().length > 0}
@@ -440,8 +453,8 @@ export function MilestoneManager(props: {
                       }
                     >
                       <div class="space-y-2">
-                        <TextInput value={draftTitle()} onInput={(e) => setDraftTitle(e.currentTarget.value)} />
-                        <Textarea value={draftDesc()} placeholder="Description" rows={2} onInput={(e) => setDraftDesc(e.currentTarget.value)} />
+                        <TextInput aria-label="Milestone title" value={draftTitle()} onInput={(e) => setDraftTitle(e.currentTarget.value)} />
+                        <Textarea aria-label="Milestone description" value={draftDesc()} placeholder="Description" rows={2} onInput={(e) => setDraftDesc(e.currentTarget.value)} />
                         <div class="flex flex-wrap items-end gap-2">
                           <label>
                             <span class="mb-1 block text-xs text-muted">Due date</span>
