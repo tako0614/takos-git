@@ -1,4 +1,4 @@
-import { For, type JSX } from "solid-js";
+import { For, onCleanup, type JSX } from "solid-js";
 import { Portal } from "solid-js/web";
 import { useToast, type ToastKind } from "../store/toast.ts";
 import { cn } from "../lib/cn.ts";
@@ -15,6 +15,31 @@ const TONES: Record<ToastKind, { box: string; icon: JSX.Element }> = {
 /** Renders the toast stack singleton. Mount once in AppShell. */
 export function ToastHost(): JSX.Element {
   const toast = useToast();
+  const hovered = new Set<string>();
+  const focused = new Set<string>();
+
+  const pauseHover = (id: string) => {
+    hovered.add(id);
+    toast.pauseToast(id);
+  };
+  const resumeHover = (id: string) => {
+    hovered.delete(id);
+    if (!focused.has(id)) toast.resumeToast(id);
+  };
+  const pauseFocus = (id: string) => {
+    focused.add(id);
+    toast.pauseToast(id);
+  };
+  const resumeFocus = (id: string) => {
+    focused.delete(id);
+    if (!hovered.has(id)) toast.resumeToast(id);
+  };
+  const dismiss = (id: string) => {
+    hovered.delete(id);
+    focused.delete(id);
+    toast.dismissToast(id);
+  };
+
   return (
     <Portal>
       <div
@@ -23,20 +48,25 @@ export function ToastHost(): JSX.Element {
         class="pointer-events-none fixed bottom-4 right-4 z-[70] flex w-80 max-w-[calc(100vw-2rem)] flex-col gap-2"
       >
         <For each={toast.toasts}>
-          {(item) => (
-            <div
+          {(item) => {
+            onCleanup(() => {
+              hovered.delete(item.id);
+              focused.delete(item.id);
+            });
+            return (
+              <div
               role={item.type === "error" ? "alert" : "status"}
               aria-atomic="true"
               class={cn(
                 "pointer-events-auto flex items-start gap-2 rounded-md border bg-canvas px-3 py-2.5 text-sm shadow-lg",
                 TONES[item.type].box,
               )}
-              onMouseEnter={() => toast.pauseToast(item.id)}
-              onMouseLeave={() => toast.resumeToast(item.id)}
-              onFocusIn={() => toast.pauseToast(item.id)}
+              onMouseEnter={() => pauseHover(item.id)}
+              onMouseLeave={() => resumeHover(item.id)}
+              onFocusIn={() => pauseFocus(item.id)}
               onFocusOut={(e) => {
                 if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
-                  toast.resumeToast(item.id);
+                  resumeFocus(item.id);
                 }
               }}
             >
@@ -45,12 +75,13 @@ export function ToastHost(): JSX.Element {
               <IconButton
                 aria-label="Dismiss"
                 size="sm"
-                onClick={() => toast.dismissToast(item.id)}
+                onClick={() => dismiss(item.id)}
               >
                 <Icons.X class="h-3.5 w-3.5" />
               </IconButton>
             </div>
-          )}
+            );
+          }}
         </For>
       </div>
     </Portal>

@@ -4,12 +4,14 @@
  * and a "New pull request" dialog wired to `pullsApi.create`.
  */
 import {
+  createEffect,
   createMemo,
   createResource,
   createSignal,
   createUniqueId,
   ErrorBoundary,
   For,
+  on,
   onCleanup,
   Show,
   Suspense,
@@ -278,10 +280,25 @@ export function PRList(): JSX.Element {
   const identity = useSubmissionScope();
   const [filter, setFilter] = createSignal<StateFilter>("open");
   const [search, setSearch] = createSignal("");
-  // Cursor history stack ([null] = first page) so Prev walks back real cursors.
-  const [history, setHistory] = createSignal<(string | null)[]>([null]);
+  // Repo-scoped cursor history stack ([null] = first page) so Prev walks back real
+  // cursors and navigating to another repository never leaks a previous repo's cursor.
+  const repoScope = () => `${repo.owner()}/${repo.repo()}`;
+  const [historyState, setHistoryState] = createSignal<{
+    scope: string;
+    stack: (string | null)[];
+  }>({ scope: repoScope(), stack: [null] });
+  const history = () =>
+    historyState().scope === repoScope() ? historyState().stack : [null];
   const cursor = () => history()[history().length - 1];
-  const resetPaging = () => setHistory([null]);
+  const resetPaging = () => setHistoryState({ scope: repoScope(), stack: [null] });
+  const pushCursor = (next: string) =>
+    setHistoryState({ scope: repoScope(), stack: [...history(), next] });
+  const popCursor = () =>
+    setHistoryState({
+      scope: repoScope(),
+      stack: history().length > 1 ? history().slice(0, -1) : [null],
+    });
+  createEffect(on(repoScope, () => resetPaging(), { defer: true }));
   const [showNew, setShowNew] = createSignal(false);
   const searchId = createUniqueId();
   let searchInputEl: HTMLInputElement | undefined;
@@ -500,9 +517,9 @@ export function PRList(): JSX.Element {
         loading={data.loading}
         onNext={() => {
           const next = pageData()?.nextCursor;
-          if (next) setHistory((h) => [...h, next]);
+          if (next) pushCursor(next);
         }}
-        onPrev={() => setHistory((h) => (h.length > 1 ? h.slice(0, -1) : h))}
+        onPrev={popCursor}
       />
     </div>
   );

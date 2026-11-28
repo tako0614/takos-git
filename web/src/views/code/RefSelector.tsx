@@ -263,13 +263,13 @@ export function RefSelector(props: {
                 placeholder={tab() === "branch" ? "Find a branch…" : "Find a tag…"}
                 aria-label="Filter refs"
                 aria-activedescendant={activeDescendant()}
-                class="tg-focus w-full rounded-md border border-border bg-canvas py-1.5 pl-7 pr-8 text-sm text-fg placeholder:text-subtle"
+                class="tg-focus min-h-11 w-full rounded-md border border-border bg-canvas py-1.5 pl-7 pr-11 text-sm text-fg placeholder:text-subtle sm:min-h-0 sm:pr-8"
               />
               <Show when={filter()}>
                 <button
                   type="button"
                   aria-label="Clear ref filter"
-                  class="tg-focus absolute right-1 top-1/2 inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded text-muted hover:bg-canvas-subtle hover:text-fg sm:h-6 sm:w-6"
+                  class="tg-focus absolute right-0 top-1/2 inline-flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded text-muted hover:bg-canvas-subtle hover:text-fg sm:right-1 sm:h-6 sm:w-6"
                   onClick={(e) => {
                     e.stopPropagation();
                     setFilter("");

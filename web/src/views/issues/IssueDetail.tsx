@@ -532,6 +532,26 @@ export function IssueDetail(props: {
                         fallback={<LoadingBlock label="Checking session…" class="py-6" />}
                       >
                       <Show
+                        when={!session.error()}
+                        fallback={
+                          <Banner
+                            tone="danger"
+                            title="Could not verify your session"
+                            action={
+                              <Button size="sm" onClick={() => session.refetch()}>
+                                Retry
+                              </Button>
+                            }
+                          >
+                            {session.error() instanceof ApiError
+                              ? (session.error() as ApiError).message
+                              : session.error() instanceof Error
+                                ? (session.error() as Error).message
+                                : "Could not verify your session."}
+                          </Banner>
+                        }
+                      >
+                      <Show
                         when={session.authenticated()}
                         fallback={
                           <Banner
@@ -608,6 +628,7 @@ export function IssueDetail(props: {
                             {commentBusy() ? "Commenting…" : "Comment"}
                           </Button>
                         </div>
+                      </Show>
                       </Show>
                       </Show>
                     </div>

@@ -471,7 +471,7 @@ function WebhookEditorDialog(props: {
       footer={
         <>
           <Button onClick={() => props.onClose()} disabled={saving()}>Cancel</Button>
-          <Button type="submit" form={formId} variant="primary" disabled={!canSave()}>
+          <Button type="submit" form={formId} variant="primary" disabled={saving()}>
             <Show when={saving()}><Icons.Loader class="h-4 w-4 animate-spin" /></Show>
             {isNew() ? "Add webhook" : "Save changes"}
           </Button>
@@ -480,6 +480,7 @@ function WebhookEditorDialog(props: {
     >
       <form
         id={formId}
+        noValidate
         class="space-y-4"
         onSubmit={(e) => {
           e.preventDefault();

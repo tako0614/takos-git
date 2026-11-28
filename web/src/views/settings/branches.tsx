@@ -5,6 +5,7 @@
  */
 import {
   createEffect,
+  createMemo,
   createResource,
   createSignal,
   createUniqueId,
@@ -259,15 +260,15 @@ function RuleEditorDialog(props: {
   const [checksRaw, setChecksRaw] = createSignal("");
   const patch = (part: Partial<RuleForm>): void => props.onChange({ ...props.value, ...part });
 
-  // Seed raw textarea text when the dialog opens or switches to a different rule,
-  // avoiding round-tripping join("\n") on every keystroke while typing.
+  // Memoize a primitive seed key so replacing `props.value` on every keystroke
+  // while editing an existing rule does not re-trigger and overwrite `checksRaw`.
+  const seedKey = createMemo(() =>
+    props.open ? (props.isNew ? "\0new" : props.value.pattern) : null,
+  );
   createEffect(
-    on(
-      () => [props.open, props.isNew ? null : props.value.pattern] as const,
-      ([open]) => {
-        if (open) setChecksRaw(props.value.requiredStatusChecks.join("\n"));
-      },
-    ),
+    on(seedKey, (key) => {
+      if (key !== null) setChecksRaw(props.value.requiredStatusChecks.join("\n"));
+    }),
   );
 
   const onChecksInput = (text: string): void => {

@@ -296,7 +296,7 @@ function ReleaseRow(props: {
             {(sha) => (
               <Link
                 href={`/${props.owner}/${props.repo}/commit/${sha()}`}
-                class="tg-focus rounded hover:opacity-80"
+                class="tg-focus inline-flex min-h-11 items-center rounded hover:opacity-80 sm:min-h-0"
                 title={`View commit ${sha().slice(0, 7)}`}
               >
                 <Sha value={sha()} />

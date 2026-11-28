@@ -117,7 +117,7 @@ function LatestCommitBar(props: { owner: string; repo: string; refName: string; 
             </A>
             <A
               href={commitHref(props.owner, props.repo, commit().sha)}
-              class="tg-focus shrink-0 rounded hover:opacity-80"
+              class="tg-focus inline-flex min-h-11 shrink-0 items-center rounded hover:opacity-80 sm:min-h-0"
               title={`View commit ${commit().sha.slice(0, 7)}`}
             >
               <Sha value={commit().sha} />

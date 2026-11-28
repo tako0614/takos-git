@@ -125,7 +125,7 @@ export function CompareScreen(props: { owner: string; repo: string; spec: string
                               merge base{" "}
                               <A
                                 href={commitHref(props.owner, props.repo, base())}
-                                class="tg-focus rounded hover:opacity-80"
+                                class="tg-focus inline-flex min-h-11 items-center rounded hover:opacity-80 sm:min-h-0"
                                 title={`View merge base commit ${base().slice(0, 7)}`}
                               >
                                 <Sha value={base()} />

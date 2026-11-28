@@ -156,6 +156,26 @@ export function NewIssueForm(props: { owner: string; repo: string; repositoryId:
         fallback={<LoadingBlock label="Checking session…" />}
       >
       <Show
+        when={!session.error()}
+        fallback={
+          <Banner
+            tone="danger"
+            title="Could not verify your session"
+            action={
+              <Button size="sm" onClick={() => session.refetch()}>
+                Retry
+              </Button>
+            }
+          >
+            {session.error() instanceof ApiError
+              ? (session.error() as ApiError).message
+              : session.error() instanceof Error
+                ? (session.error() as Error).message
+                : "Could not verify your session."}
+          </Banner>
+        }
+      >
+      <Show
         when={session.authenticated()}
         fallback={
           <Banner
@@ -310,6 +330,7 @@ export function NewIssueForm(props: { owner: string; repo: string; repositoryId:
             </section>
           </aside>
         </form>
+      </Show>
       </Show>
       </Show>
     </div>

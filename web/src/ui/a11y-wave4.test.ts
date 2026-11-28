@@ -3,10 +3,12 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
   createEffect,
+  createMemo,
   createResource,
   createRoot,
   createSignal,
   ErrorBoundary,
+  on,
 } from "solid-js";
 import { ApiError } from "../api/client.ts";
 
@@ -141,6 +143,185 @@ describe("Wave 4 reactive resource error handling & cursor pagination (behaviora
     });
     dispose();
   });
+
+  test("Repo-scoped cursor history stack synchronously drops stale cursors on repo switch without leaking", () => {
+    const requestedCursors: Array<{ scope: string; cursor: string | null }> = [];
+    let setOwner!: (v: string) => void;
+    let setRepo!: (v: string) => void;
+    let cursor!: () => string | null;
+    let hasPrev!: () => boolean;
+    let pushCursor!: (next: string) => void;
+
+    const dispose = createRoot((d) => {
+      const [owner, _setOwner] = createSignal("alice");
+      const [repo, _setRepo] = createSignal("demo");
+      setOwner = _setOwner;
+      setRepo = _setRepo;
+      const repoScope = () => `${owner()}/${repo()}`;
+      const [historyState, setHistoryState] = createSignal<{
+        scope: string;
+        stack: (string | null)[];
+      }>({ scope: repoScope(), stack: [null] });
+      const history = () =>
+        historyState().scope === repoScope() ? historyState().stack : [null];
+      cursor = () => history()[history().length - 1];
+      hasPrev = () => history().length > 1;
+      const resetPaging = () => setHistoryState({ scope: repoScope(), stack: [null] });
+      pushCursor = (next: string) =>
+        setHistoryState({ scope: repoScope(), stack: [...history(), next] });
+      createEffect(on(repoScope, () => resetPaging(), { defer: true }));
+
+      // Mirrors createResource source computation tracking [owner, repo, cursor].
+      createEffect(() => {
+        requestedCursors.push({ scope: repoScope(), cursor: cursor() });
+      });
+
+      return d;
+    });
+
+    pushCursor("pr-p2");
+    expect(cursor()).toBe("pr-p2");
+    expect(hasPrev()).toBe(true);
+
+    // Client-side navigation to another repo must immediately use null cursor.
+    setRepo("other");
+    expect(cursor()).toBeNull();
+    expect(hasPrev()).toBe(false);
+
+    // Navigating back to the original repo must also start on Page 1.
+    setRepo("demo");
+    expect(cursor()).toBeNull();
+    expect(hasPrev()).toBe(false);
+
+    // Switching owner resets too.
+    pushCursor("pr-p2");
+    setOwner("bob");
+    expect(cursor()).toBeNull();
+
+    dispose();
+
+    expect(requestedCursors).toEqual([
+      { scope: "alice/demo", cursor: null },
+      { scope: "alice/demo", cursor: "pr-p2" },
+      { scope: "alice/other", cursor: null },
+      { scope: "alice/demo", cursor: null },
+      { scope: "alice/demo", cursor: "pr-p2" },
+      { scope: "bob/demo", cursor: null },
+    ]);
+  });
+
+  test("RuleEditorDialog memoized seedKey preserves raw status checks while editing an existing rule", () => {
+    let setOpen!: (v: boolean) => void;
+    let setIsNew!: (v: boolean) => void;
+    let value!: () => { pattern: string; requiredStatusChecks: string[] };
+    let setValue!: (v: { pattern: string; requiredStatusChecks: string[] }) => void;
+    let checksRaw!: () => string;
+    let onChecksInput!: (text: string) => void;
+
+    const dispose = createRoot((d) => {
+      const [open, _setOpen] = createSignal(true);
+      const [isNew, _setIsNew] = createSignal(false);
+      const [_value, _setValue] = createSignal({
+        pattern: "main",
+        requiredStatusChecks: ["build", "test"],
+      });
+      const [_checksRaw, setChecksRaw] = createSignal("");
+      setOpen = _setOpen;
+      setIsNew = _setIsNew;
+      value = _value;
+      setValue = _setValue;
+      checksRaw = _checksRaw;
+
+      const seedKey = createMemo(() =>
+        open() ? (isNew() ? "\0new" : value().pattern) : null,
+      );
+      createEffect(
+        on(seedKey, (key) => {
+          if (key !== null) setChecksRaw(value().requiredStatusChecks.join("\n"));
+        }),
+      );
+
+      onChecksInput = (text: string) => {
+        setChecksRaw(text);
+        setValue({
+          ...value(),
+          requiredStatusChecks: text
+            .split(/[\n,]/u)
+            .map((s) => s.trim())
+            .filter(Boolean),
+        });
+      };
+
+      return d;
+    });
+
+    expect(checksRaw()).toBe("build\ntest");
+
+    // Pressing Enter and typing comma-separated checks on an existing rule must NOT snap back.
+    onChecksInput("build\ntest\n");
+    expect(checksRaw()).toBe("build\ntest\n");
+    onChecksInput("build\ntest\nlint, ");
+    expect(checksRaw()).toBe("build\ntest\nlint, ");
+    expect(value().requiredStatusChecks).toEqual(["build", "test", "lint"]);
+
+    // Closing and opening another existing rule re-seeds cleanly.
+    setOpen(false);
+    setValue({ pattern: "release/*", requiredStatusChecks: ["deploy-check"] });
+    setOpen(true);
+    expect(checksRaw()).toBe("deploy-check");
+
+    // Switching to a new rule re-seeds empty.
+    setOpen(false);
+    setIsNew(true);
+    setValue({ pattern: "", requiredStatusChecks: [] });
+    setOpen(true);
+    expect(checksRaw()).toBe("");
+
+    dispose();
+  });
+
+  test("ToastHost independent hover/focus tracking keeps toast paused while either remains active", () => {
+    const hovered = new Set<string>();
+    const focused = new Set<string>();
+    let paused = false;
+
+    const pauseHover = (id: string) => {
+      hovered.add(id);
+      paused = true;
+    };
+    const resumeHover = (id: string) => {
+      hovered.delete(id);
+      if (!focused.has(id)) paused = false;
+    };
+    const pauseFocus = (id: string) => {
+      focused.add(id);
+      paused = true;
+    };
+    const resumeFocus = (id: string) => {
+      focused.delete(id);
+      if (!hovered.has(id)) paused = false;
+    };
+
+    pauseHover("t1");
+    pauseFocus("t1");
+    expect(paused).toBe(true);
+
+    // Mouse leaves while keyboard focus stays on Dismiss -> must remain paused.
+    resumeHover("t1");
+    expect(paused).toBe(true);
+
+    // Focus leaves -> now resumes.
+    resumeFocus("t1");
+    expect(paused).toBe(false);
+
+    // Reverse order: focus leaves while mouse is still hovering -> remains paused.
+    pauseFocus("t1");
+    pauseHover("t1");
+    resumeFocus("t1");
+    expect(paused).toBe(true);
+    resumeHover("t1");
+    expect(paused).toBe(false);
+  });
 });
 
 describe("Wave 4 UI/UX, color-scheme, dialog/toast/menu, forms & mobile 44px invariants", () => {
@@ -179,7 +360,9 @@ describe("Wave 4 UI/UX, color-scheme, dialog/toast/menu, forms & mobile 44px inv
     expect(confirm).toContain('role="alertdialog"');
     expect(confirm).toContain("aria-describedby={descId}");
     expect(confirm).toContain("autofocus={state().danger ? true : undefined}");
-    expect(toast).toContain("onFocusIn={() => toast.pauseToast(item.id)}");
+    expect(toast).toContain("onFocusIn={() => pauseFocus(item.id)}");
+    expect(toast).toContain("if (!focused.has(id)) toast.resumeToast(id);");
+    expect(toast).toContain("if (!hovered.has(id)) toast.resumeToast(id);");
     expect(toast).toContain("onFocusOut=");
     expect(menu).toContain('e.key === "ArrowDown" || e.key === "ArrowUp"');
     expect(relTime).toContain("Number.isFinite(ms)");
@@ -188,6 +371,7 @@ describe("Wave 4 UI/UX, color-scheme, dialog/toast/menu, forms & mobile 44px inv
 
   test("Code, Home, Issues, Pulls, Actions, Releases, and Settings views fix resource guards, labels, landmarks, forms, and mobile targets", () => {
     const fields = read("ui/Fields.tsx");
+    const footer = read("app/Footer.tsx");
     const breadcrumb = read("ui/Breadcrumb.tsx");
     const repoLayout = read("app/RepoLayout.tsx");
     const pathBreadcrumb = read("views/code/PathBreadcrumb.tsx");
@@ -213,6 +397,7 @@ describe("Wave 4 UI/UX, color-scheme, dialog/toast/menu, forms & mobile 44px inv
 
     expect(fields).toContain('"min-h-11 sm:min-h-0"');
     expect(fields).toContain('"min-h-11 pr-8 sm:min-h-0"');
+    expect(footer).toContain("min-h-11 min-w-11 items-center justify-center");
     expect(breadcrumb).toContain('aria-label={props["aria-label"] ?? "Breadcrumb"}');
     expect(repoLayout).toContain('aria-label="Repository breadcrumb"');
     expect(pathBreadcrumb).toContain('aria-label="File path"');
@@ -222,16 +407,22 @@ describe("Wave 4 UI/UX, color-scheme, dialog/toast/menu, forms & mobile 44px inv
     expect(blob).toContain("refetchBlame()");
     expect(refSel).toContain("Promise.allSettled");
     expect(refSel).toContain("tabError()");
+    expect(refSel).toContain("tg-focus min-h-11 w-full");
+    expect(refSel).toContain("inline-flex h-11 w-11");
     expect(commits).toContain("h-11 w-11 items-center justify-center rounded-full");
     expect(home).toContain("history().length > 1");
     expect(issueList).toContain("labels.error ? [] : (labels.latest?.items ?? [])");
     expect(issueList).toContain("milestones.error ? [] : (milestones.latest?.items ?? [])");
     expect(issueList).toContain("page.error ? undefined : page.latest");
+    expect(issueList).toContain("historyState().scope === repoScope()");
     expect(issueDetail).toContain('title="Could not load comments"');
+    expect(issueDetail).toContain("when={!session.error()}");
     expect(newIssue).toContain("<ButtonLink as={A}");
+    expect(newIssue).toContain("when={!session.error()}");
     expect(prList).toContain("data.error ? undefined : data.latest");
     expect(prList).toContain("const items = pageData()?.items ?? [];");
     expect(prList).toContain("history().length > 1");
+    expect(prList).toContain("historyState().scope === repoScope()");
     expect(prDetail).toContain("wanted to merge");
     expect(mergeBox).toContain("Merge commit message (optional)");
     expect(prChecks).toContain('role="img"');
@@ -242,8 +433,11 @@ describe("Wave 4 UI/UX, color-scheme, dialog/toast/menu, forms & mobile 44px inv
     expect(releaseForm).toContain("<legend");
     expect(general).toContain("branchData.error ? [] : (branchData.latest?.branches ?? [])");
     expect(branches).toContain("checksRaw()");
+    expect(branches).toContain("const seedKey = createMemo(");
     expect(branches).toContain('class="min-w-11 sm:min-w-0"');
     expect(webhooks).toContain("secretTouched()");
+    expect(webhooks).toContain("noValidate");
+    expect(webhooks).toContain("disabled={saving()}");
     expect(webhooks).toContain('class="min-w-11 sm:min-w-0"');
     expect(webhooks).toContain("aria-controls={showLog() ? logId : undefined}");
   });
