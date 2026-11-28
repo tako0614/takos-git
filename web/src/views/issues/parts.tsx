@@ -4,7 +4,7 @@
  * GitHub-style timeline comment card. Everything renders through the frozen
  * design system (never `innerHTML`; user text always goes through `Markdown`).
  */
-import { createSignal, Index, Show, type JSX } from "solid-js";
+import { children as resolveChildren, createSignal, createUniqueId, Index, Show, type JSX } from "solid-js";
 import { moveTabFocus } from "../../lib/a11y.ts";
 import { cn } from "../../lib/cn.ts";
 import { computeLabelChipStyle } from "../../lib/label-color.ts";
@@ -103,11 +103,18 @@ export function MarkdownEditor(props: {
   placeholder?: string;
   id?: string;
   "aria-label"?: string;
+  editorLabel?: string;
+  textareaRef?: (el: HTMLTextAreaElement) => void;
   disabled?: boolean;
   rows?: number;
   class?: string;
 }): JSX.Element {
   const [tab, setTab] = createSignal<"write" | "preview">("write");
+  const tabsId = createUniqueId();
+  const writeTabId = `${tabsId}-tab-write`;
+  const previewTabId = `${tabsId}-tab-preview`;
+  const writePanelId = `${tabsId}-panel-write`;
+  const previewPanelId = `${tabsId}-panel-preview`;
   const tabClass = (active: boolean) =>
     cn(
       "tg-focus min-h-11 rounded-md px-3 py-1 text-sm sm:min-h-0",
@@ -123,15 +130,17 @@ export function MarkdownEditor(props: {
     <div class={cn("rounded-md border border-border bg-canvas", props.class)}>
       <div
         role="tablist"
-        aria-label="Comment editor"
+        aria-label={props.editorLabel ?? "Markdown editor"}
         class="flex items-center gap-1 border-b border-border bg-canvas-subtle px-2 py-1.5"
       >
         <button
+          id={writeTabId}
           type="button"
           role="tab"
           data-tab-id="write"
           tabIndex={tab() === "write" ? 0 : -1}
           aria-selected={tab() === "write"}
+          aria-controls={tab() === "write" ? writePanelId : undefined}
           class={tabClass(tab() === "write")}
           onClick={() => setTab("write")}
           onKeyDown={onTabKeyDown}
@@ -139,11 +148,13 @@ export function MarkdownEditor(props: {
           Write
         </button>
         <button
+          id={previewTabId}
           type="button"
           role="tab"
           data-tab-id="preview"
           tabIndex={tab() === "preview" ? 0 : -1}
           aria-selected={tab() === "preview"}
+          aria-controls={tab() === "preview" ? previewPanelId : undefined}
           class={tabClass(tab() === "preview")}
           onClick={() => setTab("preview")}
           onKeyDown={onTabKeyDown}
@@ -151,16 +162,27 @@ export function MarkdownEditor(props: {
           Preview
         </button>
       </div>
-      <div class="p-2">
+      <div
+        role="tabpanel"
+        id={tab() === "write" ? writePanelId : previewPanelId}
+        aria-labelledby={tab() === "write" ? writeTabId : previewTabId}
+        class="p-2"
+      >
         <Show
           when={tab() === "write"}
           fallback={
-            <div class="min-h-[96px] border-b border-border px-2 pb-3 pt-1">
-              <Markdown source={props.value} />
+            <div class="min-h-[96px] px-2 pb-3 pt-1">
+              <Show
+                when={props.value.trim().length > 0}
+                fallback={<p class="text-sm text-muted">Nothing to preview.</p>}
+              >
+                <Markdown source={props.value} />
+              </Show>
             </div>
           }
         >
           <Textarea
+            ref={props.textareaRef}
             id={props.id}
             aria-label={props["aria-label"] ?? (props.id ? undefined : (props.placeholder ?? "Comment"))}
             value={props.value}
@@ -190,6 +212,7 @@ export function TimelineComment(props: {
   body?: string | null;
   children?: JSX.Element;
 }): JSX.Element {
+  const headerActions = resolveChildren(() => props.headerActions);
   return (
     <div class="flex gap-3">
       <Avatar name={principalName(props.author)} size={40} class="mt-0.5" />
@@ -210,8 +233,8 @@ export function TimelineComment(props: {
             </span>
           </Show>
           {props.headerExtra}
-          <Show when={props.headerActions}>
-            <span class="ml-auto flex items-center gap-1">{props.headerActions}</span>
+          <Show when={headerActions()}>
+            {(actions) => <span class="ml-auto flex items-center gap-1">{actions()}</span>}
           </Show>
         </div>
         <div class="px-4 py-3">

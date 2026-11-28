@@ -90,6 +90,18 @@ export function WebhooksSettingsView(): JSX.Element {
   const [editorOpen, setEditorOpen] = createSignal(false);
   const [editing, setEditing] = createSignal<HookForm>(blankHook());
   const [editId, setEditId] = createSignal<string | null>(null);
+  const [deletingId, setDeletingId] = createSignal<string | null>(null);
+  const repoScope = () => `${repo.owner()}/${repo.repo()}`;
+  createEffect(
+    on(
+      repoScope,
+      () => {
+        setEditorOpen(false);
+        setDeletingId(null);
+      },
+      { defer: true },
+    ),
+  );
 
   function openNew(): void {
     setEditing(blankHook());
@@ -118,19 +130,25 @@ export function WebhooksSettingsView(): JSX.Element {
   }
 
   async function deleteHook(hook: WebhookDto): Promise<void> {
+    if (deletingId()) return;
+    const targetOwner = repo.owner();
+    const targetRepo = repo.repo();
     const ok = await confirmDialog.confirm({
       title: "Delete webhook",
       message: `Delete the webhook to ${hook.url}? Delivery history will be removed.`,
       confirmText: "Delete",
       danger: true,
     });
-    if (!ok) return;
+    if (!ok || repo.owner() !== targetOwner || repo.repo() !== targetRepo) return;
+    setDeletingId(hook.id);
     try {
-      await webhooksApi.remove(repo.owner(), repo.repo(), hook.id);
+      await webhooksApi.remove(targetOwner, targetRepo, hook.id);
       toast.success("Webhook deleted.");
       reload();
     } catch (err) {
       toast.error(describeError(err));
+    } finally {
+      setDeletingId(null);
     }
   }
 
@@ -183,6 +201,7 @@ export function WebhooksSettingsView(): JSX.Element {
                       owner={repo.owner()}
                       repo={repo.repo()}
                       pinging={pingBusy() === hook().id}
+                      deleting={deletingId() === hook().id}
                       refreshKey={pingVersion()}
                       onPing={() => ping(hook().id)}
                       onEdit={() => openEdit(hook())}
@@ -222,6 +241,7 @@ function WebhookRow(props: {
   owner: string;
   repo: string;
   pinging: boolean;
+  deleting: boolean;
   refreshKey: number;
   onPing: () => void;
   onEdit: () => void;
@@ -240,23 +260,26 @@ function WebhookRow(props: {
         <Label tone={props.hook.active ? "success" : "default"}>
           {props.hook.active ? "Active" : "Inactive"}
         </Label>
-        <Button size="sm" disabled={props.pinging} onClick={() => props.onPing()}>
+        <Button size="sm" disabled={props.pinging || props.deleting} onClick={() => props.onPing()}>
           <Show when={props.pinging} fallback={<Icons.Zap class="h-4 w-4" />}>
             <Icons.Loader class="h-4 w-4 animate-spin" />
           </Show>
           Ping
         </Button>
-        <Button size="sm" onClick={() => props.onEdit()}>
+        <Button size="sm" disabled={props.deleting} onClick={() => props.onEdit()}>
           <Icons.Edit class="h-4 w-4" /> Edit
         </Button>
         <Button
           size="sm"
           variant="danger"
           class="min-w-11 sm:min-w-0"
+          disabled={props.deleting}
           onClick={() => props.onDelete()}
           aria-label={`Delete webhook ${props.hook.url}`}
         >
-          <Icons.Trash class="h-4 w-4" />
+          <Show when={props.deleting} fallback={<Icons.Trash class="h-4 w-4" />}>
+            <Icons.Loader class="h-4 w-4 animate-spin" />
+          </Show>
         </Button>
         <Button
           size="sm"
@@ -341,9 +364,9 @@ function DeliveryRow(props: { delivery: WebhookDeliveryDto }): JSX.Element {
     <div class="flex flex-wrap items-center gap-3 border-b border-border px-4 py-2.5 text-sm last:border-b-0">
       <Show
         when={succeeded()}
-        fallback={<Icons.X class="h-4 w-4 shrink-0 text-danger" aria-label="Failed" />}
+        fallback={<Icons.X role="img" class="h-4 w-4 shrink-0 text-danger" aria-label="Failed" />}
       >
-        <Icons.Check class="h-4 w-4 shrink-0 text-success" aria-label="Succeeded" />
+        <Icons.Check role="img" class="h-4 w-4 shrink-0 text-success" aria-label="Succeeded" />
       </Show>
       <Mono class="font-semibold">{d().event}</Mono>
       <Label tone={succeeded() ? "success" : "danger"}>
@@ -526,11 +549,18 @@ function WebhookEditorDialog(props: {
 
         <fieldset class="space-y-2">
           <legend class="text-sm font-semibold text-fg">Which events should trigger this webhook?</legend>
-          <label class="flex cursor-pointer items-start gap-3 rounded-md border border-border p-3 hover:bg-canvas-subtle">
+          <label
+            class={
+              "flex min-h-11 cursor-pointer items-start gap-3 rounded-md border p-3 transition-colors sm:min-h-0 " +
+              (props.value.everything
+                ? "border-accent-emphasis bg-accent-subtle/40"
+                : "border-border hover:bg-canvas-subtle")
+            }
+          >
             <input
               type="radio"
               name="hook-scope"
-              class="mt-1"
+              class="tg-focus mt-1 accent-accent"
               checked={props.value.everything}
               onChange={() => patch({ everything: true })}
             />
@@ -539,11 +569,18 @@ function WebhookEditorDialog(props: {
               <span class="block text-xs text-muted">Deliver a payload for every supported event.</span>
             </span>
           </label>
-          <label class="flex cursor-pointer items-start gap-3 rounded-md border border-border p-3 hover:bg-canvas-subtle">
+          <label
+            class={
+              "flex min-h-11 cursor-pointer items-start gap-3 rounded-md border p-3 transition-colors sm:min-h-0 " +
+              (!props.value.everything
+                ? "border-accent-emphasis bg-accent-subtle/40"
+                : "border-border hover:bg-canvas-subtle")
+            }
+          >
             <input
               type="radio"
               name="hook-scope"
-              class="mt-1"
+              class="tg-focus mt-1 accent-accent"
               checked={!props.value.everything}
               onChange={() => patch({ everything: false })}
             />

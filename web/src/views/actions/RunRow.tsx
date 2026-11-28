@@ -22,7 +22,10 @@ export function RunRow(props: {
       </span>
       <div class="min-w-0 flex-1">
         <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
-          <Link href={href()} class="font-semibold text-fg hover:text-accent">
+          <Link
+            href={href()}
+            class="inline-flex min-h-11 min-w-11 items-center font-semibold text-fg hover:text-accent sm:min-h-0 sm:min-w-0"
+          >
             {title()}
           </Link>
           <span class="text-xs text-muted">#{run().runNumber}</span>

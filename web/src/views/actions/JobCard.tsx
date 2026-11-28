@@ -82,7 +82,7 @@ export function JobCard(props: {
     <div class="overflow-hidden rounded-md border border-border bg-canvas">
       <button
         type="button"
-        class="tg-focus flex w-full items-center gap-3 px-3 py-2.5 text-left hover:bg-canvas-subtle"
+        class="tg-focus flex min-h-11 w-full items-center gap-3 px-3 py-2.5 text-left hover:bg-canvas-subtle sm:min-h-0"
         aria-expanded={open()}
         aria-controls={open() ? panelId : undefined}
         onClick={() => setOpen((v) => !v)}

@@ -218,6 +218,7 @@ export function ReleasesView(): JSX.Element {
         open={formOpen()}
         owner={owner()}
         repo={name()}
+        defaultBranch={repo.detail()?.defaultBranch ?? "main"}
         editing={editing()}
         onClose={() => setFormOpen(false)}
         onSaved={onSaved}

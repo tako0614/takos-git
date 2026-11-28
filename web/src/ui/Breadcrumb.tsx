@@ -32,7 +32,7 @@ export function Breadcrumb(props: {
             {crumb.href ? (
               <A
                 href={crumb.href}
-                class="tg-focus inline-flex min-h-11 items-center rounded px-1 text-accent hover:underline sm:min-h-0 sm:px-0"
+                class="tg-focus inline-flex min-h-11 items-center rounded px-1 min-w-11 justify-center text-accent hover:underline sm:min-h-0 sm:min-w-0 sm:justify-start sm:px-0"
               >
                 {crumb.label}
               </A>

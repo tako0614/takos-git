@@ -25,6 +25,7 @@ import {
   EmptyState,
   ExternalLink,
   Icons,
+  Link,
   LoadingBlock,
   Sha,
   type BannerTone,
@@ -100,7 +101,10 @@ function Row(props: {
         </Show>
       </div>
       <Show when={props.href}>
-        <ExternalLink href={props.href!} class="shrink-0 text-xs text-accent hover:underline">
+        <ExternalLink
+          href={props.href!}
+          class="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center px-2 text-xs sm:min-h-0 sm:min-w-0 sm:px-0"
+        >
           Details
         </ExternalLink>
       </Show>
@@ -159,7 +163,14 @@ export function PRChecks(props: { owner: string; repo: string; sha: string }): J
           <div class="space-y-4">
             <Banner tone={overall().tone} title={overall().title}>
               <span class="inline-flex items-center gap-1">
-                Head commit <Sha value={props.sha} />
+                Head commit{" "}
+                <Link
+                  href={`/${props.owner}/${props.repo}/commit/${props.sha}`}
+                  class="inline-flex min-h-11 items-center hover:opacity-80 sm:min-h-0"
+                  title={`View commit ${props.sha.slice(0, 7)}`}
+                >
+                  <Sha value={props.sha} />
+                </Link>
               </span>
             </Banner>
 

@@ -1,15 +1,20 @@
-import { createEffect, createSignal, on, Show, type JSX } from "solid-js";
+import { createEffect, createResource, createSignal, on, Show, type JSX } from "solid-js";
 import {
   ApiError,
   releasesApi,
+  reposApi,
   type ReleaseDto,
 } from "../../api";
-import { Banner, Button, Dialog, Field, TextInput, Textarea, useToast } from "../../ui";
+import { Banner, Button, Dialog, Field, TextInput, useToast } from "../../ui";
+import { BranchCombobox } from "../code/BranchCombobox.tsx";
+import { MarkdownEditor } from "../issues/parts.tsx";
 
 interface ReleaseFormProps {
   open: boolean;
   owner: string;
   repo: string;
+  /** Repo default branch shown as placeholder and default badge in the target picker. */
+  defaultBranch?: string;
   /** When set, the dialog edits this release; otherwise it creates one. */
   editing?: ReleaseDto | null;
   onClose: () => void;
@@ -25,6 +30,7 @@ interface ReleaseFormProps {
 export function ReleaseForm(props: ReleaseFormProps): JSX.Element {
   const toast = useToast();
   const isEdit = () => !!props.editing;
+  const fallbackBranch = () => props.defaultBranch || "main";
 
   const [tag, setTag] = createSignal("");
   const [target, setTarget] = createSignal("");
@@ -34,6 +40,20 @@ export function ReleaseForm(props: ReleaseFormProps): JSX.Element {
   const [prerelease, setPrerelease] = createSignal(false);
   const [saving, setSaving] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
+
+  const [branchRes, { refetch: refetchBranches }] = createResource(
+    () => (props.open && !isEdit() ? ([props.owner, props.repo] as const) : false),
+    ([o, r]) => reposApi.branches(o, r),
+  );
+  const branches = () => (branchRes.error ? [] : (branchRes.latest?.branches ?? []));
+  const branchesError = () =>
+    branchRes.error
+      ? (branchRes.error instanceof ApiError
+          ? branchRes.error.message
+          : branchRes.error instanceof Error
+            ? branchRes.error.message
+            : "Could not load branches.")
+      : null;
 
   // Re-seed the form fields whenever the dialog (re)opens or its edit target
   // changes, from the editing release or a blank create form.
@@ -119,12 +139,24 @@ export function ReleaseForm(props: ReleaseFormProps): JSX.Element {
           </Field>
 
           <Show when={!isEdit()}>
-            <Field label="Target" for="release-target" hint="Branch, tag or commit SHA the tag points at. Defaults to the repo's default branch.">
-              <TextInput
+            <Field
+              label="Target"
+              for="release-target"
+              hint={`Branch, tag or commit SHA the tag points at. Defaults to ${fallbackBranch()}.`}
+            >
+              <BranchCombobox
                 id="release-target"
-                placeholder="main"
+                name="release-target"
                 value={target()}
-                onInput={(e) => setTarget(e.currentTarget.value)}
+                onInput={setTarget}
+                branches={branches()}
+                defaultBranch={fallbackBranch()}
+                loading={branchRes.loading}
+                error={branchesError()}
+                onRetry={() => void refetchBranches()}
+                placeholder={fallbackBranch()}
+                listboxLabel="Target branches"
+                disabled={saving()}
               />
             </Field>
           </Show>
@@ -139,12 +171,14 @@ export function ReleaseForm(props: ReleaseFormProps): JSX.Element {
           </Field>
 
           <Field label="Describe this release" for="release-body" hint="Markdown supported.">
-            <Textarea
+            <MarkdownEditor
               id="release-body"
+              editorLabel="Release notes editor"
               rows={8}
               placeholder="Write release notes…"
               value={body()}
-              onInput={(e) => setBody(e.currentTarget.value)}
+              disabled={saving()}
+              onInput={setBody}
             />
           </Field>
 

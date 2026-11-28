@@ -7,7 +7,7 @@ import { toSafeHref } from "../lib/safeHref.ts";
 export function Link(props: AnchorProps): JSX.Element {
   const [local, rest] = splitProps(props, ["class", "children"]);
   return (
-    <A class={cn("text-accent hover:underline", local.class)} {...rest}>
+    <A class={cn("tg-focus rounded text-accent hover:underline", local.class)} {...rest}>
       {local.children}
     </A>
   );
@@ -30,7 +30,7 @@ export function ExternalLink(props: ExternalLinkProps): JSX.Element {
       {safe() ? (
         <a
           href={safe() as string}
-          class={cn("text-accent hover:underline", local.class)}
+          class={cn("tg-focus rounded text-accent hover:underline", local.class)}
           rel="noopener noreferrer nofollow"
           {...rest}
         >

@@ -333,7 +333,7 @@ export function GeneralSettingsView(): JSX.Element {
       {/* Visibility dialog */}
       <Dialog
         open={visOpen()}
-        onClose={() => setVisOpen(false)}
+        onClose={() => !savingVis() && setVisOpen(false)}
         title="Change visibility"
         footer={
           <>
@@ -353,11 +353,18 @@ export function GeneralSettingsView(): JSX.Element {
           <legend class="sr-only">Repository visibility</legend>
           <For each={VISIBILITIES}>
             {(opt) => (
-              <label class="flex cursor-pointer items-start gap-3 rounded-md border border-border p-3 hover:bg-canvas-subtle">
+              <label
+                class={
+                  "flex min-h-11 cursor-pointer items-start gap-3 rounded-md border p-3 transition-colors sm:min-h-0 " +
+                  (visChoice() === opt.value
+                    ? "border-accent-emphasis bg-accent-subtle/40"
+                    : "border-border hover:bg-canvas-subtle")
+                }
+              >
                 <input
                   type="radio"
                   name="visibility"
-                  class="mt-1"
+                  class="tg-focus mt-1 accent-accent"
                   value={opt.value}
                   checked={visChoice() === opt.value}
                   onChange={() => setVisChoice(opt.value)}

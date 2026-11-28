@@ -26,7 +26,7 @@ function decodeSegment(segment: string): string {
   }
 }
 
-export function formatDocumentTitle(pathname: string): string {
+export function formatDocumentTitle(pathname: string, search = ""): string {
   const segments = pathname.split("/").filter(Boolean).map(decodeSegment);
   if (segments.length === 0) return `Repositories — ${PRODUCT_TITLE}`;
   if (segments.length === 1) return PRODUCT_TITLE;
@@ -40,14 +40,18 @@ export function formatDocumentTitle(pathname: string): string {
   if (section === "pulls" && detail && /^\d+$/u.test(detail)) return `Pull request #${detail} · ${repoLabel} — ${PRODUCT_TITLE}`;
   if (section === "commit" && detail) return `Commit ${detail.slice(0, 7)} · ${repoLabel} — ${PRODUCT_TITLE}`;
   if (section === "actions" && detail === "runs" && segments[4]) return `Run · ${repoLabel} — ${PRODUCT_TITLE}`;
+  if (section === "releases" && search) {
+    const tag = new URLSearchParams(search).get("tag")?.trim();
+    if (tag) return `Release ${tag} · ${repoLabel} — ${PRODUCT_TITLE}`;
+  }
 
   const sectionLabel = REPO_SECTIONS[section];
   if (sectionLabel) return `${sectionLabel} · ${repoLabel} — ${PRODUCT_TITLE}`;
   return `${repoLabel} — ${PRODUCT_TITLE}`;
 }
 
-export function applyDocumentTitle(pathname: string): void {
+export function applyDocumentTitle(pathname: string, search = ""): void {
   if (typeof document !== "undefined") {
-    document.title = formatDocumentTitle(pathname);
+    document.title = formatDocumentTitle(pathname, search);
   }
 }

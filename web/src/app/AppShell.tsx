@@ -33,8 +33,8 @@ export function AppShell(props: { children?: JSX.Element }): JSX.Element {
     if (typeof document !== "undefined") document.title = initialTitle;
   });
   createEffect(() => {
-    // Subscribe to path changes; clear a live error state and update <title>.
-    applyDocumentTitle(location.pathname);
+    // Subscribe to path/search changes; clear a live error state and update <title>.
+    applyDocumentTitle(location.pathname, location.search);
     resetBoundary?.();
     resetBoundary = undefined;
   });

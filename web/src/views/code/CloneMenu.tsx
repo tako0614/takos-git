@@ -1,4 +1,5 @@
-import { createSignal, createUniqueId, Show, type JSX } from "solid-js";
+import { createEffect, createSignal, createUniqueId, onCleanup, Show, type JSX } from "solid-js";
+import { computeHorizontalShift, viewportWidth } from "../../lib/floating-clamp.ts";
 import { createReactiveListener } from "../../lib/lifecycle.ts";
 import { Icons } from "../../ui/index.ts";
 import { CopyButton } from "./CopyButton.tsx";
@@ -10,10 +11,38 @@ import { CopyButton } from "./CopyButton.tsx";
  */
 export function CloneMenu(props: { cloneUrl: string }): JSX.Element {
   const [open, setOpen] = createSignal(false);
+  const [shiftX, setShiftX] = createSignal(0);
   const menuId = createUniqueId();
   const cloneUrlId = createUniqueId();
   let root: HTMLDivElement | undefined;
   let triggerBtn: HTMLButtonElement | undefined;
+  let dialogEl: HTMLDivElement | undefined;
+  let urlInputEl: HTMLInputElement | undefined;
+
+  const updateShift = () => {
+    if (!dialogEl || typeof window === "undefined") return;
+    const prev = shiftX();
+    const rect = dialogEl.getBoundingClientRect();
+    const unshifted = { left: rect.left - prev, right: rect.right - prev };
+    setShiftX(computeHorizontalShift(unshifted, viewportWidth()));
+  };
+
+  createEffect(() => {
+    if (!open()) {
+      setShiftX(0);
+      return;
+    }
+    const frame = requestAnimationFrame(updateShift);
+    onCleanup(() => cancelAnimationFrame(frame));
+  });
+  if (typeof window !== "undefined") {
+    createReactiveListener({
+      active: open,
+      target: window,
+      type: "resize",
+      handler: updateShift as EventListener,
+    });
+  }
 
   const onDocClick = (e: MouseEvent) => {
     if (!root) return;
@@ -39,6 +68,7 @@ export function CloneMenu(props: { cloneUrl: string }): JSX.Element {
       return;
     }
     setOpen(true);
+    queueMicrotask(() => urlInputEl?.focus());
   };
   createReactiveListener({
     active: open,
@@ -81,10 +111,12 @@ export function CloneMenu(props: { cloneUrl: string }): JSX.Element {
 
       <Show when={open()}>
         <div
+          ref={dialogEl}
           id={menuId}
           role="dialog"
           aria-label="Clone repository"
-          class="absolute right-0 z-40 mt-1 w-80 max-w-[calc(100vw-2rem)] overflow-hidden rounded-md border border-border bg-canvas p-3 shadow-lg"
+          style={shiftX() ? { transform: `translateX(${shiftX()}px)` } : undefined}
+          class="absolute right-0 z-40 mt-1 w-80 max-w-[calc(100vw-1rem)] overflow-hidden rounded-md border border-border bg-canvas p-3 shadow-lg"
         >
           <div class="flex items-center gap-2 text-sm font-semibold text-fg">
             <Icons.Terminal class="h-4 w-4 text-muted" /> Clone
@@ -96,12 +128,13 @@ export function CloneMenu(props: { cloneUrl: string }): JSX.Element {
           </label>
           <div class="mt-1 flex items-center gap-1 rounded-md border border-border bg-canvas-subtle">
             <input
+              ref={urlInputEl}
               id={cloneUrlId}
               name="cloneUrl"
               type="text"
               readonly
               value={props.cloneUrl}
-              class="min-w-0 flex-1 bg-transparent px-2 py-1.5 font-mono text-xs text-fg outline-none"
+              class="tg-focus min-h-11 min-w-0 flex-1 rounded-l-md bg-transparent px-2 py-1.5 font-mono text-xs text-fg sm:min-h-0"
               onFocus={(e) => e.currentTarget.select()}
             />
             <CopyButton

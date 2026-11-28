@@ -6,6 +6,7 @@ import {
   type JSX,
 } from "solid-js";
 import { useNavigate } from "@solidjs/router";
+import { useSession } from "../../store/session.tsx";
 import {
   Avatar,
   Banner,
@@ -37,6 +38,7 @@ export function RunDetail(props: {
   repo: string;
   runId: string;
 }): JSX.Element {
+  const session = useSession();
   const toast = useToast();
   const { confirm } = useConfirmDialog();
   const navigate = useNavigate();
@@ -219,20 +221,22 @@ export function RunDetail(props: {
                     </div>
                   </div>
 
-                  <div class="flex shrink-0 items-center gap-2">
-                    <Button variant="default" onClick={() => void doRerun()} disabled={busy() !== null}>
-                      <Show when={busy() === "rerun"} fallback={<><Icons.Refresh class="h-4 w-4" /> Re-run</>}>
-                        <Icons.Loader class="h-4 w-4 animate-spin" /> Re-running…
-                      </Show>
-                    </Button>
-                    <Show when={!isTerminal(r().status)}>
-                      <Button variant="danger" onClick={() => void doCancel()} disabled={busy() !== null}>
-                        <Show when={busy() === "cancel"} fallback={<><Icons.Square class="h-4 w-4" /> Cancel</>}>
-                          <Icons.Loader class="h-4 w-4 animate-spin" /> Cancelling…
+                  <Show when={session.authenticated()}>
+                    <div class="flex shrink-0 items-center gap-2">
+                      <Button variant="default" onClick={() => void doRerun()} disabled={busy() !== null}>
+                        <Show when={busy() === "rerun"} fallback={<><Icons.Refresh class="h-4 w-4" /> Re-run</>}>
+                          <Icons.Loader class="h-4 w-4 animate-spin" /> Re-running…
                         </Show>
                       </Button>
-                    </Show>
-                  </div>
+                      <Show when={!isTerminal(r().status)}>
+                        <Button variant="danger" onClick={() => void doCancel()} disabled={busy() !== null}>
+                          <Show when={busy() === "cancel"} fallback={<><Icons.Square class="h-4 w-4" /> Cancel</>}>
+                            <Icons.Loader class="h-4 w-4 animate-spin" /> Cancelling…
+                          </Show>
+                        </Button>
+                      </Show>
+                    </div>
+                  </Show>
                 </div>
               </Box>
 
