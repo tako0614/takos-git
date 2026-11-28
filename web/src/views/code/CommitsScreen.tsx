@@ -66,18 +66,19 @@ export function CommitsScreen(props: {
         />
         <h1 class="text-base font-semibold text-fg">Commits</h1>
         <Show when={path()}>
-          <span class="inline-flex items-center gap-1.5 rounded-full border border-border bg-canvas-subtle pl-2.5 pr-1 py-0.5 text-xs text-muted sm:pr-2">
+          <span class="inline-flex max-w-full min-w-0 items-center gap-1.5 rounded-full border border-border bg-canvas-subtle py-0.5 pl-2.5 pr-1 text-xs text-muted sm:pr-2">
             <Icons.FileText class="h-3.5 w-3.5 shrink-0" />
             <A
               href={blobHref(props.owner, props.repo, props.refName, path())}
-              class="tg-focus inline-flex min-h-11 items-center rounded font-mono hover:text-accent hover:underline sm:min-h-0"
+              class="tg-focus inline-flex min-h-11 min-w-0 items-center truncate rounded font-mono hover:text-accent hover:underline sm:min-h-0"
+              title={path()}
             >
-              {path()}
+              <span class="truncate">{path()}</span>
             </A>
             <A
               href={commitsHref(props.owner, props.repo, props.refName)}
               aria-label="Clear file filter"
-              class="tg-focus inline-flex h-11 w-11 items-center justify-center rounded-full text-subtle hover:bg-canvas-inset hover:text-fg sm:h-5 sm:w-5"
+              class="tg-focus shrink-0 inline-flex h-11 w-11 items-center justify-center rounded-full text-subtle hover:bg-canvas-inset hover:text-fg sm:h-5 sm:w-5"
             >
               <Icons.X class="h-3.5 w-3.5 sm:h-3 sm:w-3" />
             </A>
@@ -125,7 +126,10 @@ export function CommitsScreen(props: {
                         )
                       }
                       action={
-                        <A href={treeHref(props.owner, props.repo, props.refName)} class="text-accent hover:underline">
+                        <A
+                          href={treeHref(props.owner, props.repo, props.refName)}
+                          class="tg-focus inline-flex min-h-11 items-center rounded px-2 text-accent hover:underline sm:min-h-0 sm:px-0"
+                        >
                           Browse files
                         </A>
                       }

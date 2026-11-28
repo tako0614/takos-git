@@ -38,46 +38,48 @@ function CommitRow(props: { owner: string; repo: string; commit: CommitSummary }
   const bodyId = createUniqueId();
   const authorLabel = () => props.commit.author.name || props.commit.author.email || "?";
   return (
-    <div class="flex items-start gap-3 border-b border-border px-4 py-3 last:border-b-0">
-      <Icons.GitCommit class="mt-1 h-4 w-4 shrink-0 text-muted" />
-      <Avatar name={authorLabel()} size={20} class="mt-0.5" />
-      <div class="min-w-0 flex-1">
-        <div class="flex items-center gap-1.5">
-          <A
-            href={`/${props.owner}/${props.repo}/commit/${props.commit.sha}`}
-            class="tg-focus truncate rounded text-sm font-medium text-fg hover:text-accent hover:underline"
-            title={title()}
-          >
-            {title()}
-          </A>
-          <Show when={hasBody()}>
-            <button
-              type="button"
-              aria-expanded={expanded()}
-              aria-controls={expanded() ? bodyId : undefined}
-              aria-label={expanded() ? "Hide commit description" : "Show commit description"}
-              title={expanded() ? "Hide commit description" : "Show commit description"}
-              onClick={() => setExpanded((v) => !v)}
-              class="tg-focus inline-flex h-11 min-w-11 shrink-0 items-center justify-center rounded border border-border bg-canvas-subtle px-1.5 text-xs font-semibold leading-4 text-muted hover:bg-canvas-inset hover:text-fg sm:h-5 sm:min-w-0"
+    <div class="flex flex-col gap-2 border-b border-border px-4 py-3 last:border-b-0 sm:flex-row sm:items-start sm:gap-3">
+      <div class="flex min-w-0 flex-1 items-start gap-3">
+        <Icons.GitCommit class="mt-1 h-4 w-4 shrink-0 text-muted" />
+        <Avatar name={authorLabel()} size={20} class="mt-0.5 shrink-0" />
+        <div class="min-w-0 flex-1">
+          <div class="flex flex-wrap items-center gap-1.5">
+            <A
+              href={`/${props.owner}/${props.repo}/commit/${props.commit.sha}`}
+              class="tg-focus inline-flex min-h-11 max-w-full items-center truncate rounded text-sm font-medium text-fg hover:text-accent hover:underline sm:min-h-0"
+              title={title()}
             >
-              …
-            </button>
+              <span class="truncate">{title()}</span>
+            </A>
+            <Show when={hasBody()}>
+              <button
+                type="button"
+                aria-expanded={expanded()}
+                aria-controls={expanded() ? bodyId : undefined}
+                aria-label={expanded() ? "Hide commit description" : "Show commit description"}
+                title={expanded() ? "Hide commit description" : "Show commit description"}
+                onClick={() => setExpanded((v) => !v)}
+                class="tg-focus inline-flex h-11 min-w-11 shrink-0 items-center justify-center rounded border border-border bg-canvas-subtle px-1.5 text-xs font-semibold leading-4 text-muted hover:bg-canvas-inset hover:text-fg sm:h-5 sm:min-w-0"
+              >
+                …
+              </button>
+            </Show>
+          </div>
+          <div class="text-xs text-muted">
+            <span class="font-medium text-fg">{authorLabel()}</span>{" "}
+            committed <RelativeTime epochMs={props.commit.committer.date} />
+          </div>
+          <Show when={hasBody() && expanded()}>
+            <pre
+              id={bodyId}
+              class="mt-2 whitespace-pre-wrap break-words rounded-md border border-border bg-canvas-subtle px-3 py-2 font-mono text-xs text-muted"
+            >
+              {body()}
+            </pre>
           </Show>
         </div>
-        <div class="text-xs text-muted">
-          <span class="font-medium text-fg">{authorLabel()}</span>{" "}
-          committed <RelativeTime epochMs={props.commit.committer.date} />
-        </div>
-        <Show when={hasBody() && expanded()}>
-          <pre
-            id={bodyId}
-            class="mt-2 whitespace-pre-wrap break-words rounded-md border border-border bg-canvas-subtle px-3 py-2 font-mono text-xs text-muted"
-          >
-            {body()}
-          </pre>
-        </Show>
       </div>
-      <div class="flex shrink-0 items-center gap-1">
+      <div class="flex shrink-0 items-center gap-1 pl-14 sm:pl-0">
         <A
           href={`/${props.owner}/${props.repo}/commit/${props.commit.sha}`}
           class="tg-focus inline-flex min-h-11 items-center rounded-md border border-border bg-canvas-subtle px-2.5 py-1 font-mono text-xs text-fg hover:bg-canvas-inset sm:min-h-0 sm:px-2"

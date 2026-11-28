@@ -70,9 +70,9 @@ function PrRow(props: { pr: PullRequestDto; owner: string; repo: string }): JSX.
         <div class="flex flex-wrap items-center gap-2">
           <A
             href={`/${props.owner}/${props.repo}/pulls/${props.pr.number}`}
-            class="truncate font-semibold text-fg hover:text-accent hover:underline"
+            class="tg-focus inline-flex min-h-11 max-w-full items-center truncate rounded font-semibold text-fg hover:text-accent hover:underline sm:min-h-0"
           >
-            {props.pr.title}
+            <span class="truncate">{props.pr.title}</span>
           </A>
           <Show when={props.pr.draft && !props.pr.merged}>
             <Label tone="default">Draft</Label>

@@ -112,10 +112,10 @@ function LatestCommitBar(props: { owner: string; repo: string; refName: string; 
             <Icons.GitCommit class="h-3.5 w-3.5 shrink-0 text-muted" />
             <A
               href={commitHref(props.owner, props.repo, commit().sha)}
-              class="tg-focus min-w-0 flex-1 truncate rounded text-fg hover:text-accent hover:underline"
+              class="tg-focus inline-flex min-h-11 min-w-0 flex-1 items-center truncate rounded text-fg hover:text-accent hover:underline sm:min-h-0"
               title={commit().message}
             >
-              {commitTitle(commit().message)}
+              <span class="truncate">{commitTitle(commit().message)}</span>
             </A>
             <A
               href={commitHref(props.owner, props.repo, commit().sha)}
@@ -275,7 +275,10 @@ export function DirectoryScreen(props: {
                         </>
                       }
                       action={
-                        <A href={treeHref(props.owner, props.repo, props.refName)} class="text-accent hover:underline">
+                        <A
+                          href={treeHref(props.owner, props.repo, props.refName)}
+                          class="tg-focus inline-flex min-h-11 items-center rounded px-2 text-accent hover:underline sm:min-h-0 sm:px-0"
+                        >
                           Back to root
                         </A>
                       }

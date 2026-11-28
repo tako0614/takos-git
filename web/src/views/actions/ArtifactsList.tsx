@@ -75,7 +75,7 @@ export function ArtifactsList(props: {
                   <div class="min-w-0">
                     <a
                       href={actionsApi.artifactDownloadUrl(props.owner, props.repo, artifact.id)}
-                      class="tg-focus inline-flex items-center gap-2 truncate text-sm font-medium text-accent hover:underline"
+                      class="tg-focus inline-flex min-h-11 max-w-full items-center gap-2 truncate rounded text-sm font-medium text-accent hover:underline sm:min-h-0"
                       rel="noopener"
                     >
                       <Icons.Archive class="h-4 w-4 shrink-0" />

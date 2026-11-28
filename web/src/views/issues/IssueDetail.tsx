@@ -218,9 +218,18 @@ export function IssueDetail(props: {
 
   const [editingBody, setEditingBody] = createSignal(false);
   const [bodyDraft, setBodyDraft] = createSignal("");
+  let editBodyBtn: HTMLButtonElement | undefined;
   let bodyDraftRevision = 0;
   const updateBodyDraft = (value: string) => { bodyDraftRevision += 1; setBodyDraft(value); };
-  const cancelBodyEdit = () => { bodyDraftRevision += 1; setEditingBody(false); };
+  const restoreEditBodyFocus = () => {
+    if (editBodyBtn) editBodyBtn.focus();
+    else queueMicrotask(() => editBodyBtn?.focus());
+  };
+  const cancelBodyEdit = (restoreFocus = false) => {
+    bodyDraftRevision += 1;
+    setEditingBody(false);
+    if (restoreFocus) restoreEditBodyFocus();
+  };
   const beginEditBody = () => {
     updateBodyDraft(issue()?.body ?? "");
     setEditingBody(true);
@@ -228,7 +237,10 @@ export function IssueDetail(props: {
   const saveBody = async () => {
     if (busy()) return;
     const revision = bodyDraftRevision;
-    if (await patchIssue({ body: bodyDraft() }) && bodyDraftRevision === revision) setEditingBody(false);
+    if (await patchIssue({ body: bodyDraft() }) && bodyDraftRevision === revision) {
+      setEditingBody(false);
+      restoreEditBodyFocus();
+    }
   };
 
   // --- comment composer -----------------------------------------------------
@@ -441,12 +453,14 @@ export function IssueDetail(props: {
                       fallback={
                         <div class="space-y-2 sm:ml-[52px]">
                           <MarkdownEditor
+                            editorLabel="Issue description editor"
+                            textareaRef={(el) => { queueMicrotask(() => el.focus()); }}
                             value={bodyDraft()}
                             onInput={updateBodyDraft}
                             placeholder="Leave a comment"
                           />
                           <div class="flex justify-end gap-2">
-                            <Button onClick={cancelBodyEdit}>Cancel</Button>
+                            <Button onClick={() => cancelBodyEdit(true)}>Cancel</Button>
                             <Button variant="primary" disabled={busy()} onClick={saveBody}>
                               {metadataBusy() ? "Saving…" : "Save"}
                             </Button>
@@ -461,7 +475,12 @@ export function IssueDetail(props: {
                         emphasis
                         headerActions={
                           <Show when={session.authenticated()}>
-                            <IconButton aria-label="Edit issue description" size="sm" onClick={beginEditBody}>
+                            <IconButton
+                              ref={(el) => { editBodyBtn = el; }}
+                              aria-label="Edit issue description"
+                              size="sm"
+                              onClick={beginEditBody}
+                            >
                               <Icons.Edit class="h-4 w-4" />
                             </IconButton>
                           </Show>
@@ -776,12 +795,21 @@ function CommentItem(props: {
   const [editing, setEditing] = createSignal(false);
   const [draft, setDraft] = createSignal("");
   const [metadataBusy, setBusy] = createSignal(false);
-  const [commentBusy, setCommentBusy] = createSignal(false);
-  const busy = () => metadataBusy() || commentBusy();
+  const busy = () => metadataBusy();
+  let actionsContainer: HTMLSpanElement | undefined;
+  const restoreActionsFocus = () => {
+    queueMicrotask(() => {
+      actionsContainer?.querySelector<HTMLElement>("button")?.focus();
+    });
+  };
 
   const begin = () => {
     setDraft(props.comment.body);
     setEditing(true);
+  };
+  const cancel = () => {
+    setEditing(false);
+    restoreActionsFocus();
   };
   const save = async () => {
     setBusy(true);
@@ -794,6 +822,7 @@ function CommentItem(props: {
       );
       props.onChange(comment);
       setEditing(false);
+      restoreActionsFocus();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : "Could not save comment.");
     } finally {
@@ -827,31 +856,39 @@ function CommentItem(props: {
       edited={props.comment.updatedAt > props.comment.createdAt}
       headerActions={
         <Show when={props.canManage && !editing()}>
-          <Menu
-            align="right"
-            triggerLabel="Comment actions"
-            trigger={
-              <span class="inline-flex h-11 w-11 items-center justify-center rounded-md text-muted hover:bg-canvas-inset hover:text-fg sm:h-7 sm:w-7">
-                <Icons.MoreHorizontal class="h-4 w-4" />
-              </span>
-            }
-            items={[
-              { label: "Edit", onSelect: begin },
-              { label: "Delete", onSelect: () => void remove(), danger: true, separated: true },
-            ]}
-          />
+          <span ref={actionsContainer}>
+            <Menu
+              align="right"
+              triggerLabel="Comment actions"
+              trigger={
+                <span class="inline-flex h-11 w-11 items-center justify-center rounded-md text-muted hover:bg-canvas-inset hover:text-fg sm:h-7 sm:w-7">
+                  <Icons.MoreHorizontal class="h-4 w-4" />
+                </span>
+              }
+              items={[
+                { label: "Edit", onSelect: begin },
+                { label: "Delete", onSelect: () => void remove(), danger: true, separated: true },
+              ]}
+            />
+          </span>
         </Show>
       }
     >
       <Show when={editing()} fallback={<Markdown source={props.comment.body} />}>
         <div class="space-y-2">
-          <MarkdownEditor value={draft()} onInput={setDraft} disabled={busy()} />
+          <MarkdownEditor
+            editorLabel="Comment editor"
+            textareaRef={(el) => { queueMicrotask(() => el.focus()); }}
+            value={draft()}
+            onInput={setDraft}
+            disabled={busy()}
+          />
           <div class="flex justify-end gap-2">
-            <Button onClick={() => setEditing(false)} disabled={busy()}>
+            <Button onClick={cancel} disabled={busy()}>
               Cancel
             </Button>
             <Button variant="primary" onClick={save} disabled={busy() || !draft().trim()}>
-              Update comment
+              {busy() ? "Updating…" : "Update comment"}
             </Button>
           </div>
         </div>

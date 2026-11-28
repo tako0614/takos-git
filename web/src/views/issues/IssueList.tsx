@@ -168,20 +168,28 @@ export function IssueList(props: { owner: string; repo: string }): JSX.Element {
     resetPaging();
   };
 
+  const menuOption = (active: boolean, content: JSX.Element) => (
+    <span class="flex items-center gap-2">
+      <Icons.Check class={`h-3.5 w-3.5 shrink-0 ${active ? "text-success" : "text-transparent"}`} />
+      <span class="min-w-0 truncate">{content}</span>
+    </span>
+  );
+
   const labelItems = (): MenuItem[] => [
-    { label: "All labels", onSelect: () => pickLabel(undefined) },
+    { label: menuOption(labelFilter() === undefined, "All labels"), onSelect: () => pickLabel(undefined) },
     ...(labels.error
       ? [{ label: "Failed to load labels — Retry", onSelect: () => void refetchLabels(), separated: true }]
       : labelList().map(
           (l): MenuItem => ({
-            label: (
-              <span class="flex items-center gap-2">
+            label: menuOption(
+              labelFilter() === l.name,
+              <span class="inline-flex items-center gap-2">
                 <span
-                  class="inline-block h-3 w-3 rounded-full border border-border"
+                  class="inline-block h-3 w-3 shrink-0 rounded-full border border-border"
                   style={{ background: `#${l.color.replace(/^#/, "")}` }}
                 />
                 {l.name}
-              </span>
+              </span>,
             ),
             onSelect: () => pickLabel(l.name),
           }),
@@ -189,28 +197,29 @@ export function IssueList(props: { owner: string; repo: string }): JSX.Element {
   ];
 
   const milestoneItems = (): MenuItem[] => [
-    { label: "All milestones", onSelect: () => pickMilestone(undefined) },
+    { label: menuOption(milestoneFilter() === undefined, "All milestones"), onSelect: () => pickMilestone(undefined) },
     ...(milestones.error
       ? [{ label: "Failed to load milestones — Retry", onSelect: () => void refetchMilestones(), separated: true }]
       : milestoneList()
           .filter((m) => m.state === "open")
           .map(
             (m): MenuItem => ({
-              label: m.title,
+              label: menuOption(milestoneFilter() === m.number, m.title),
               onSelect: () => pickMilestone(m.number),
             }),
           )),
   ];
 
   const assigneeItems = (): MenuItem[] => [
-    { label: "Everyone", onSelect: () => pickAssignee(undefined) },
+    { label: menuOption(assigneeFilter() === undefined, "Everyone"), onSelect: () => pickAssignee(undefined) },
     ...collaboratorList().map(
       (c): MenuItem => ({
-        label: (
-          <span class="flex items-center gap-2">
+        label: menuOption(
+          assigneeFilter() === c.principal.subject,
+          <span class="inline-flex items-center gap-2">
             <Avatar name={principalName(c.principal)} size={18} />
             {principalName(c.principal)}
-          </span>
+          </span>,
         ),
         onSelect: () => pickAssignee(c.principal.subject),
       }),
@@ -311,13 +320,48 @@ export function IssueList(props: { owner: string; repo: string }): JSX.Element {
         <div class="mb-3 flex flex-wrap items-center gap-2 text-sm">
           <span class="text-muted">Filters:</span>
           <Show when={labelFilter()}>
-            {(l) => <Label tone="accent">label: {l()}</Label>}
+            {(l) => (
+              <Label tone="accent" class="py-0 pl-2.5 pr-0.5 sm:py-0.5 sm:pr-1">
+                <span>label: {l()}</span>
+                <button
+                  type="button"
+                  aria-label={`Remove label filter: ${l()}`}
+                  title="Remove label filter"
+                  class="tg-focus inline-flex h-11 w-11 items-center justify-center rounded-full text-accent hover:bg-accent-emphasis/15 sm:h-5 sm:w-5"
+                  onClick={() => pickLabel(undefined)}
+                >
+                  <Icons.X class="h-3.5 w-3.5 sm:h-3 sm:w-3" />
+                </button>
+              </Label>
+            )}
           </Show>
           <Show when={milestoneFilter() !== undefined}>
-            <Label tone="accent">milestone: {activeMilestoneLabel()}</Label>
+            <Label tone="accent" class="py-0 pl-2.5 pr-0.5 sm:py-0.5 sm:pr-1">
+              <span>milestone: {activeMilestoneLabel()}</span>
+              <button
+                type="button"
+                aria-label={`Remove milestone filter: ${activeMilestoneLabel()}`}
+                title="Remove milestone filter"
+                class="tg-focus inline-flex h-11 w-11 items-center justify-center rounded-full text-accent hover:bg-accent-emphasis/15 sm:h-5 sm:w-5"
+                onClick={() => pickMilestone(undefined)}
+              >
+                <Icons.X class="h-3.5 w-3.5 sm:h-3 sm:w-3" />
+              </button>
+            </Label>
           </Show>
           <Show when={assigneeFilter()}>
-            <Label tone="accent">assignee: {activeAssigneeLabel()}</Label>
+            <Label tone="accent" class="py-0 pl-2.5 pr-0.5 sm:py-0.5 sm:pr-1">
+              <span>assignee: {activeAssigneeLabel()}</span>
+              <button
+                type="button"
+                aria-label={`Remove assignee filter: ${activeAssigneeLabel()}`}
+                title="Remove assignee filter"
+                class="tg-focus inline-flex h-11 w-11 items-center justify-center rounded-full text-accent hover:bg-accent-emphasis/15 sm:h-5 sm:w-5"
+                onClick={() => pickAssignee(undefined)}
+              >
+                <Icons.X class="h-3.5 w-3.5 sm:h-3 sm:w-3" />
+              </button>
+            </Label>
           </Show>
           <button
             type="button"
@@ -460,7 +504,7 @@ function IssueRow(props: { issue: IssueDto; base: string }): JSX.Element {
         <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
           <A
             href={`${props.base}/issues/${i().number}`}
-            class="text-[15px] font-semibold text-fg hover:text-accent"
+            class="tg-focus inline-flex min-h-11 items-center rounded text-[15px] font-semibold text-fg hover:text-accent sm:min-h-0"
           >
             {i().title}
           </A>

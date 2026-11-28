@@ -19,7 +19,9 @@ import {
 } from "solid-js";
 import { useParams } from "@solidjs/router";
 import { useRepo } from "../../app/RepoLayout.tsx";
+import { useSession } from "../../store/session.tsx";
 import {
+  Banner,
   Button,
   Icons,
   Pagination,
@@ -54,6 +56,7 @@ const EVENT_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
 
 export function ActionsView(): JSX.Element {
   const repo = useRepo();
+  const session = useSession();
   const [dispatchOpen, setDispatchOpen] = createSignal(false);
 
   // Repo-scoped filters and cursor stack so client-side repo switches never
@@ -112,12 +115,17 @@ export function ActionsView(): JSX.Element {
     actionsApi.runs(s.owner, s.repo, s.filter),
   );
 
-  const [workflowsRes] = createResource(
+  const [workflowsRes, { refetch: refetchWorkflows }] = createResource(
     () => [repo.owner(), repo.repo()] as const,
     async ([o, r]) => (await actionsApi.workflows(o, r)).items,
   );
   const workflows = (): readonly WorkflowDto[] =>
     workflowsRes.error ? [] : (workflowsRes.latest ?? []);
+  const workflowsError = (): string | null => {
+    const e = workflowsRes.error;
+    if (!e) return null;
+    return e instanceof ApiError ? e.message : "Could not load workflow definitions.";
+  };
 
   const runsPage = () => (runsRes.error ? undefined : runsRes.latest);
   const items = () => runsPage()?.items ?? [];
@@ -157,11 +165,29 @@ export function ActionsView(): JSX.Element {
           <Button variant="default" onClick={() => void refetch()} aria-label="Refresh runs">
             <Icons.Refresh class="h-4 w-4" /> Refresh
           </Button>
-          <Button variant="primary" onClick={() => setDispatchOpen(true)}>
-            <Icons.Play class="h-4 w-4" /> Run workflow
-          </Button>
+          <Show when={session.authenticated()}>
+            <Button variant="primary" onClick={() => setDispatchOpen(true)}>
+              <Icons.Play class="h-4 w-4" /> Run workflow
+            </Button>
+          </Show>
         </div>
       </div>
+
+      <Show when={workflowsError()}>
+        {(msg) => (
+          <Banner
+            tone="warning"
+            title="Could not load workflow list"
+            action={
+              <Button size="sm" disabled={workflowsRes.loading} onClick={() => void refetchWorkflows()}>
+                Retry
+              </Button>
+            }
+          >
+            {msg()}
+          </Banner>
+        )}
+      </Show>
 
       {/* Filter bar */}
       <div class="flex flex-wrap items-center gap-2">

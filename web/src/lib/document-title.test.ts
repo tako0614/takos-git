@@ -15,6 +15,8 @@ describe("formatDocumentTitle", () => {
     expect(formatDocumentTitle("/tako/sample-service/pulls/7/files")).toBe("Pull request #7 · tako/sample-service — Takos Git");
     expect(formatDocumentTitle("/tako/sample-service/commit/a1b2c3d4e5f6")).toBe("Commit a1b2c3d · tako/sample-service — Takos Git");
     expect(formatDocumentTitle("/tako/sample-service/actions/runs/run_1")).toBe("Run · tako/sample-service — Takos Git");
+    expect(formatDocumentTitle("/tako/sample-service/releases")).toBe("Releases · tako/sample-service — Takos Git");
+    expect(formatDocumentTitle("/tako/sample-service/releases", "?tag=v1.2.0")).toBe("Release v1.2.0 · tako/sample-service — Takos Git");
     expect(formatDocumentTitle("/tako/sample-service/settings/webhooks")).toBe("Settings · tako/sample-service — Takos Git");
   });
 });

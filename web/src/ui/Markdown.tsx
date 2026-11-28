@@ -46,7 +46,7 @@ function renderInline(text: string): Inline[] {
       const href = m ? toSafeHref(m[2]) : null;
       if (m && href) {
         nodes.push(
-          <a href={href} rel="noopener noreferrer nofollow" class="text-accent hover:underline">
+          <a href={href} rel="noopener noreferrer nofollow" class="tg-focus rounded text-accent hover:underline">
             {m[1]}
           </a>,
         );

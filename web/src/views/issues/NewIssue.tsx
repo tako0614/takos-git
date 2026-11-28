@@ -206,6 +206,7 @@ export function NewIssueForm(props: { owner: string; repo: string; repositoryId:
             <Field label="Description" for="issue-body">
               <MarkdownEditor
                 id="issue-body"
+                editorLabel="Issue description editor"
                 value={body()}
                 onInput={changeBody}
                 placeholder="Leave a comment"

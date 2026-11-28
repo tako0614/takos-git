@@ -94,10 +94,10 @@ export function ReleaseAssets(props: ReleaseAssetsProps): JSX.Element {
               <Icons.Package class="h-4 w-4 shrink-0 text-muted" />
               <a
                 href={assetHref(asset())}
-                class="tg-focus min-w-0 flex-1 truncate rounded text-sm font-medium text-accent hover:underline"
+                class="tg-focus inline-flex min-h-11 min-w-0 flex-1 items-center truncate rounded text-sm font-medium text-accent hover:underline sm:min-h-0"
                 download={asset().name}
               >
-                {asset().name}
+                <span class="truncate">{asset().name}</span>
               </a>
               <span class="shrink-0 text-xs text-muted">
                 {formatBytes(asset().size)}

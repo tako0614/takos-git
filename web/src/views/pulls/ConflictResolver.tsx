@@ -71,6 +71,11 @@ function ResolverBody(props: {
 
   const current = () => props.conflicts.find((c) => c.path === selected());
   const currentResolution = () => resolutions().get(selected());
+  const hasUnappliedEdit = () => {
+    const res = currentResolution();
+    if (!res) return true;
+    return !res.delete && edit() !== res.content;
+  };
 
   const select = (path: string) => {
     setSelected(path);
@@ -205,6 +210,7 @@ function ResolverBody(props: {
               <div class="flex flex-wrap gap-2">
                 <Button
                   size="sm"
+                  aria-pressed={currentResolution()?.source === "ours"}
                   variant={currentResolution()?.source === "ours" ? "primary" : "default"}
                   onClick={acceptOurs}
                 >
@@ -212,6 +218,7 @@ function ResolverBody(props: {
                 </Button>
                 <Button
                   size="sm"
+                  aria-pressed={currentResolution()?.source === "theirs"}
                   variant={currentResolution()?.source === "theirs" ? "primary" : "default"}
                   onClick={acceptTheirs}
                 >
@@ -219,6 +226,7 @@ function ResolverBody(props: {
                 </Button>
                 <Button
                   size="sm"
+                  aria-pressed={currentResolution()?.source === "delete"}
                   variant={currentResolution()?.source === "delete" ? "danger" : "default"}
                   onClick={acceptDelete}
                 >
@@ -240,14 +248,26 @@ function ResolverBody(props: {
               </div>
 
               <div>
-                <div class="flex items-center justify-between gap-2 rounded-t-md border border-border bg-canvas-subtle px-2 py-1 text-xs font-semibold text-fg">
-                  <label for={resolvedId}>Resolved content for {conflict.path}</label>
+                <div class="flex flex-wrap items-center justify-between gap-2 rounded-t-md border border-border bg-canvas-subtle px-2 py-1 text-xs font-semibold text-fg">
+                  <div class="flex min-w-0 items-center gap-2">
+                    <label for={resolvedId} class="truncate">Resolved content for {conflict.path}</label>
+                    <Show when={currentResolution() && hasUnappliedEdit()}>
+                      <span class="shrink-0 rounded-full bg-attention-subtle px-2 py-0.5 text-[11px] font-medium text-attention">
+                        Unapplied edits
+                      </span>
+                    </Show>
+                  </div>
                   <button
                     type="button"
                     onClick={applyEdit}
-                    class="tg-focus min-h-11 shrink-0 rounded border border-border bg-canvas px-2.5 py-0.5 text-xs hover:bg-canvas-inset sm:min-h-0 sm:px-2"
+                    class={
+                      "tg-focus min-h-11 shrink-0 rounded border px-2.5 py-0.5 text-xs sm:min-h-0 sm:px-2 " +
+                      (hasUnappliedEdit()
+                        ? "border-accent-emphasis bg-accent-emphasis font-medium text-white hover:brightness-110"
+                        : "border-border bg-canvas text-fg hover:bg-canvas-inset")
+                    }
                   >
-                    Apply edit
+                    {currentResolution()?.source === "manual" && !hasUnappliedEdit() ? "Edit applied" : "Apply edit"}
                   </button>
                 </div>
                 <Textarea

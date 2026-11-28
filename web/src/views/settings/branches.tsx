@@ -98,6 +98,18 @@ export function BranchesSettingsView(): JSX.Element {
   const [editorOpen, setEditorOpen] = createSignal(false);
   const [editing, setEditing] = createSignal<RuleForm>(blankRule());
   const [isNew, setIsNew] = createSignal(true);
+  const [deletingPattern, setDeletingPattern] = createSignal<string | null>(null);
+  const repoScope = () => `${repo.owner()}/${repo.repo()}`;
+  createEffect(
+    on(
+      repoScope,
+      () => {
+        setEditorOpen(false);
+        setDeletingPattern(null);
+      },
+      { defer: true },
+    ),
+  );
 
   function openNew(): void {
     setEditing(blankRule());
@@ -111,19 +123,25 @@ export function BranchesSettingsView(): JSX.Element {
   }
 
   async function deleteRule(pattern: string): Promise<void> {
+    if (deletingPattern()) return;
+    const targetOwner = repo.owner();
+    const targetRepo = repo.repo();
     const ok = await confirmDialog.confirm({
       title: "Delete protection rule",
       message: `Remove the protection rule for "${pattern}"? Writes to matching branches will no longer be restricted.`,
       confirmText: "Delete rule",
       danger: true,
     });
-    if (!ok) return;
+    if (!ok || repo.owner() !== targetOwner || repo.repo() !== targetRepo) return;
+    setDeletingPattern(pattern);
     try {
-      await branchProtectionApi.remove(repo.owner(), repo.repo(), pattern);
+      await branchProtectionApi.remove(targetOwner, targetRepo, pattern);
       toast.success(`Deleted rule for ${pattern}.`);
       reload();
     } catch (err) {
       toast.error(describeError(err));
+    } finally {
+      setDeletingPattern(null);
     }
   }
 
@@ -171,7 +189,12 @@ export function BranchesSettingsView(): JSX.Element {
               <Box>
                 <Index each={rules() ?? []}>
                   {(rule) => (
-                    <RuleRow rule={rule()} onEdit={() => openEdit(rule())} onDelete={() => deleteRule(rule().pattern)} />
+                    <RuleRow
+                      rule={rule()}
+                      deleting={deletingPattern() === rule().pattern}
+                      onEdit={() => openEdit(rule())}
+                      onDelete={() => deleteRule(rule().pattern)}
+                    />
                   )}
                 </Index>
               </Box>
@@ -196,6 +219,7 @@ export function BranchesSettingsView(): JSX.Element {
 
 function RuleRow(props: {
   rule: BranchProtectionRuleDto;
+  deleting: boolean;
   onEdit: () => void;
   onDelete: () => void;
 }): JSX.Element {
@@ -221,17 +245,20 @@ function RuleRow(props: {
           </Show>
         </div>
       </div>
-      <Button size="sm" onClick={() => props.onEdit()}>
+      <Button size="sm" disabled={props.deleting} onClick={() => props.onEdit()}>
         <Icons.Edit class="h-4 w-4" /> Edit
       </Button>
       <Button
         size="sm"
         variant="danger"
         class="min-w-11 sm:min-w-0"
+        disabled={props.deleting}
         onClick={() => props.onDelete()}
         aria-label={`Delete rule ${props.rule.pattern}`}
       >
-        <Icons.Trash class="h-4 w-4" />
+        <Show when={props.deleting} fallback={<Icons.Trash class="h-4 w-4" />}>
+          <Icons.Loader class="h-4 w-4 animate-spin" />
+        </Show>
       </Button>
     </div>
   );
@@ -294,6 +321,7 @@ function RuleEditorDialog(props: {
         allowForcePush: props.value.allowForcePush,
         allowDeletions: props.value.allowDeletions,
       });
+      toast.success(props.isNew ? `Created rule for ${pattern}.` : `Updated rule for ${pattern}.`);
       props.onSaved();
     } catch (err) {
       toast.error(describeError(err));

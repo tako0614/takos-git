@@ -18,53 +18,55 @@ function CommitRow(props: { owner: string; repo: string; commit: CommitSummary }
   const [expanded, setExpanded] = createSignal(false);
   const bodyId = createUniqueId();
   return (
-    <div class="flex items-start gap-3 px-4 py-3">
-      <Avatar name={c().author.name || c().author.email || "?"} size={32} class="mt-0.5" />
-      <div class="min-w-0 flex-1">
-        <div class="flex items-center gap-1.5">
-          <A
-            href={commitHref(props.owner, props.repo, c().sha)}
-            class="tg-focus truncate rounded font-semibold text-fg hover:text-accent hover:underline"
-            title={commitTitle(c().message)}
-          >
-            {commitTitle(c().message)}
-          </A>
-          <Show when={hasBody()}>
-            <button
-              type="button"
-              aria-expanded={expanded()}
-              aria-controls={expanded() ? bodyId : undefined}
-              aria-label={expanded() ? "Hide commit description" : "Show commit description"}
-              title={expanded() ? "Hide commit description" : "Show commit description"}
-              onClick={() => setExpanded((v) => !v)}
-              class="tg-focus inline-flex h-11 min-w-11 shrink-0 items-center justify-center rounded border border-border bg-canvas-subtle px-1.5 text-xs font-semibold leading-4 text-muted hover:bg-canvas-inset hover:text-fg sm:h-5 sm:min-w-0"
+    <div class="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-start sm:gap-3">
+      <div class="flex min-w-0 flex-1 items-start gap-3">
+        <Avatar name={c().author.name || c().author.email || "?"} size={32} class="mt-0.5 shrink-0" />
+        <div class="min-w-0 flex-1">
+          <div class="flex flex-wrap items-center gap-1.5">
+            <A
+              href={commitHref(props.owner, props.repo, c().sha)}
+              class="tg-focus inline-flex min-h-11 max-w-full items-center truncate rounded font-semibold text-fg hover:text-accent hover:underline sm:min-h-0"
+              title={commitTitle(c().message)}
             >
-              …
-            </button>
-          </Show>
-          <Show when={c().pathStatus}>
-            {(status) => (
-              <span class={`shrink-0 text-xs font-semibold uppercase ${PATH_STATUS_TONE[status()] ?? "text-muted"}`}>
-                {status()}
-              </span>
-            )}
+              <span class="truncate">{commitTitle(c().message)}</span>
+            </A>
+            <Show when={hasBody()}>
+              <button
+                type="button"
+                aria-expanded={expanded()}
+                aria-controls={expanded() ? bodyId : undefined}
+                aria-label={expanded() ? "Hide commit description" : "Show commit description"}
+                title={expanded() ? "Hide commit description" : "Show commit description"}
+                onClick={() => setExpanded((v) => !v)}
+                class="tg-focus inline-flex h-11 min-w-11 shrink-0 items-center justify-center rounded border border-border bg-canvas-subtle px-1.5 text-xs font-semibold leading-4 text-muted hover:bg-canvas-inset hover:text-fg sm:h-5 sm:min-w-0"
+              >
+                …
+              </button>
+            </Show>
+            <Show when={c().pathStatus}>
+              {(status) => (
+                <span class={`shrink-0 text-xs font-semibold uppercase ${PATH_STATUS_TONE[status()] ?? "text-muted"}`}>
+                  {status()}
+                </span>
+              )}
+            </Show>
+          </div>
+          <div class="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted">
+            <span class="font-medium text-fg/80">{c().author.name || c().author.email}</span>
+            <span>committed</span>
+            <RelativeTime epochMs={c().author.date} />
+          </div>
+          <Show when={hasBody() && expanded()}>
+            <pre
+              id={bodyId}
+              class="mt-2 whitespace-pre-wrap break-words rounded-md border border-border bg-canvas-subtle px-3 py-2 font-mono text-xs text-muted"
+            >
+              {body()}
+            </pre>
           </Show>
         </div>
-        <div class="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted">
-          <span class="font-medium text-fg/80">{c().author.name || c().author.email}</span>
-          <span>committed</span>
-          <RelativeTime epochMs={c().author.date} />
-        </div>
-        <Show when={hasBody() && expanded()}>
-          <pre
-            id={bodyId}
-            class="mt-2 whitespace-pre-wrap break-words rounded-md border border-border bg-canvas-subtle px-3 py-2 font-mono text-xs text-muted"
-          >
-            {body()}
-          </pre>
-        </Show>
       </div>
-      <div class="flex shrink-0 items-center gap-1">
+      <div class="flex shrink-0 items-center gap-1 pl-11 sm:pl-0">
         <A
           href={commitHref(props.owner, props.repo, c().sha)}
           class="tg-focus inline-flex min-h-11 items-center rounded-md border border-border bg-canvas-subtle px-2.5 py-1 font-mono text-xs text-muted hover:bg-canvas-inset hover:text-fg sm:min-h-0 sm:px-2"

@@ -1,6 +1,8 @@
 import {
+  createMemo,
   createResource,
   createSignal,
+  createUniqueId,
   ErrorBoundary,
   For,
   Show,
@@ -22,9 +24,11 @@ import {
   LoadingBlock,
   Pagination,
   RelativeTime,
+  TextInput,
   VisibilityBadge,
 } from "../../ui/index.ts";
 import { NewRepository } from "./NewRepository.tsx";
+import { filterRepositories } from "./filter-repos.ts";
 
 /** One repository row in the dashboard list. */
 function RepoRow(props: { repo: RepositoryDto }): JSX.Element {
@@ -32,8 +36,11 @@ function RepoRow(props: { repo: RepositoryDto }): JSX.Element {
     <div class="flex items-start justify-between gap-4 border-b border-border px-4 py-4 last:border-b-0">
       <div class="min-w-0">
         <div class="flex flex-wrap items-center gap-2">
-          <A href={`/${props.repo.owner}/${props.repo.name}`} class="min-w-0 truncate text-base font-semibold text-accent hover:underline">
-            {props.repo.owner}/{props.repo.name}
+          <A
+            href={`/${props.repo.owner}/${props.repo.name}`}
+            class="tg-focus inline-flex min-h-11 min-w-0 max-w-full items-center truncate rounded text-base font-semibold text-accent hover:underline sm:min-h-0"
+          >
+            <span class="truncate">{props.repo.owner}/{props.repo.name}</span>
           </A>
           <VisibilityBadge visibility={props.repo.visibility} />
           <Show when={props.repo.forkOf}>
@@ -65,6 +72,9 @@ function RepoRow(props: { repo: RepositoryDto }): JSX.Element {
 export function HomeView(): JSX.Element {
   const session = useSession();
   const [creating, setCreating] = createSignal(false);
+  const [query, setQuery] = createSignal("");
+  const filterId = createUniqueId();
+  let filterInputEl: HTMLInputElement | undefined;
   // Cursor history stack ([null] = first page) so Prev walks back real cursors.
   const [history, setHistory] = createSignal<(string | null)[]>([null]);
   const cursor = () => history()[history().length - 1];
@@ -85,9 +95,13 @@ export function HomeView(): JSX.Element {
     },
   );
 
+  const items = () => (data.error ? [] : (data()?.items ?? []));
+  const filtered = createMemo(() => filterRepositories(items(), query()));
+  const hasFilter = () => query().trim().length > 0;
+
   return (
     <PageContainer>
-      <div class="mb-5 flex items-center justify-between">
+      <div class="mb-5 flex flex-wrap items-center justify-between gap-2">
         <h1 class="text-xl font-semibold">Repositories</h1>
         <Show when={session.authenticated()}>
           <Button variant="primary" onClick={() => setCreating(true)}>
@@ -97,7 +111,7 @@ export function HomeView(): JSX.Element {
       </div>
 
       <Show when={session.authenticated()}>
-        <NewRepository open={creating()} onClose={() => setCreating(false)} onCreated={() => { resetPaging(); void refetch(); }} />
+        <NewRepository open={creating()} onClose={() => setCreating(false)} onCreated={() => { setQuery(""); resetPaging(); void refetch(); }} />
       </Show>
 
       <Show when={session.state() && !session.authenticated() && session.configured()}>
@@ -127,7 +141,7 @@ export function HomeView(): JSX.Element {
       >
         <Suspense fallback={<LoadingBlock label="Loading repositories…" />}>
           <Show
-            when={(data()?.items.length ?? 0) > 0}
+            when={items().length > 0}
             fallback={
               <EmptyState
                 icon={<Icons.Database class="h-8 w-8" />}
@@ -147,9 +161,72 @@ export function HomeView(): JSX.Element {
               />
             }
           >
-            <Box>
-              <For each={data()?.items}>{(repo) => <RepoRow repo={repo} />}</For>
-            </Box>
+            <div class="mb-4 flex flex-wrap items-center gap-3">
+              <div class="relative min-w-[200px] flex-1 sm:max-w-md">
+                <label for={filterId} class="sr-only">Filter repositories</label>
+                <Icons.Search class="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
+                <TextInput
+                  ref={filterInputEl}
+                  id={filterId}
+                  name="repoFilter"
+                  class="min-h-11 pl-8 pr-11 sm:min-h-0 sm:pr-8"
+                  placeholder="Find a repository…"
+                  value={query()}
+                  onInput={(e) => setQuery(e.currentTarget.value)}
+                  onKeyDown={(e) => {
+                    if (e.isComposing || e.keyCode === 229) return;
+                    if (e.key === "Escape" && query()) {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setQuery("");
+                    }
+                  }}
+                />
+                <Show when={query()}>
+                  <button
+                    type="button"
+                    aria-label="Clear repository filter"
+                    class="tg-focus absolute right-0 top-1/2 inline-flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded text-muted hover:bg-canvas-subtle hover:text-fg sm:right-1 sm:h-6 sm:w-6"
+                    onClick={() => {
+                      setQuery("");
+                      filterInputEl?.focus();
+                    }}
+                  >
+                    <Icons.X class="h-3.5 w-3.5" />
+                  </button>
+                </Show>
+              </div>
+              <Show when={hasFilter()}>
+                <span role="status" class="text-xs text-muted">
+                  Showing {filtered().length} of {items().length} {items().length === 1 ? "repository" : "repositories"}
+                </span>
+              </Show>
+            </div>
+
+            <Show
+              when={filtered().length > 0}
+              fallback={
+                <EmptyState
+                  icon={<Icons.Search class="h-8 w-8" />}
+                  title="No matching repositories"
+                  description="No repository on this page matches your filter."
+                  action={
+                    <Button
+                      onClick={() => {
+                        setQuery("");
+                        filterInputEl?.focus();
+                      }}
+                    >
+                      Clear filter
+                    </Button>
+                  }
+                />
+              }
+            >
+              <Box>
+                <For each={filtered()}>{(repo) => <RepoRow repo={repo} />}</For>
+              </Box>
+            </Show>
             <Pagination
               hasNext={!!data()?.nextCursor}
               hasPrev={history().length > 1}
