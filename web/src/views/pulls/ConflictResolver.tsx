@@ -29,7 +29,7 @@ import {
   useToast,
 } from "../../ui/index.ts";
 import { loadConflicts } from "./api-local.ts";
-import type { DetailedConflict, Resolution } from "./types.ts";
+import { hasUnappliedConflictEdit, type DetailedConflict, type Resolution } from "./types.ts";
 
 function Pane(props: { title: JSX.Element; body: string | null; active: boolean }): JSX.Element {
   return (
@@ -65,23 +65,22 @@ function ResolverBody(props: {
   const [resolutions, setResolutions] = createSignal<Map<string, Resolution>>(new Map());
   const [selected, setSelected] = createSignal(props.conflicts[0]?.path ?? "");
   const [edit, setEdit] = createSignal(props.conflicts[0]?.ours ?? props.conflicts[0]?.theirs ?? "");
+  const [editDirty, setEditDirty] = createSignal(false);
   const [submitting, setSubmitting] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
   const resolvedId = createUniqueId();
 
   const current = () => props.conflicts.find((c) => c.path === selected());
   const currentResolution = () => resolutions().get(selected());
-  const hasUnappliedEdit = () => {
-    const res = currentResolution();
-    if (!res) return true;
-    return !res.delete && edit() !== res.content;
-  };
+  const hasUnappliedEdit = () =>
+    hasUnappliedConflictEdit(currentResolution(), edit(), editDirty());
 
   const select = (path: string) => {
     setSelected(path);
     const res = resolutions().get(path);
     const conflict = props.conflicts.find((c) => c.path === path);
     setEdit(res?.content ?? conflict?.ours ?? conflict?.theirs ?? "");
+    setEditDirty(false);
   };
 
   const setResolution = (r: Resolution) => {
@@ -97,6 +96,7 @@ function ResolverBody(props: {
     if (c) {
       const content = c.ours ?? "";
       setEdit(content);
+      setEditDirty(false);
       setResolution({ path: c.path, content, delete: false, source: "ours" });
     }
   };
@@ -105,16 +105,23 @@ function ResolverBody(props: {
     if (c) {
       const content = c.theirs ?? "";
       setEdit(content);
+      setEditDirty(false);
       setResolution({ path: c.path, content, delete: false, source: "theirs" });
     }
   };
   const acceptDelete = () => {
     const c = current();
-    if (c) setResolution({ path: c.path, content: "", delete: true, source: "delete" });
+    if (c) {
+      setEditDirty(false);
+      setResolution({ path: c.path, content: "", delete: true, source: "delete" });
+    }
   };
   const applyEdit = () => {
     const c = current();
-    if (c) setResolution({ path: c.path, content: edit(), delete: false, source: "manual" });
+    if (c) {
+      setEditDirty(false);
+      setResolution({ path: c.path, content: edit(), delete: false, source: "manual" });
+    }
   };
 
   const allResolved = () =>
@@ -278,7 +285,10 @@ function ResolverBody(props: {
                     (currentResolution()?.source === "manual" ? "bg-accent-subtle" : "")
                   }
                   value={edit()}
-                  onInput={(e) => setEdit(e.currentTarget.value)}
+                  onInput={(e) => {
+                    setEdit(e.currentTarget.value);
+                    setEditDirty(true);
+                  }}
                 />
               </div>
             </div>

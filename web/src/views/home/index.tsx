@@ -95,7 +95,8 @@ export function HomeView(): JSX.Element {
     },
   );
 
-  const items = () => (data.error ? [] : (data()?.items ?? []));
+  const pageData = () => (data.error ? undefined : data.latest);
+  const items = () => pageData()?.items ?? [];
   const filtered = createMemo(() => filterRepositories(items(), query()));
   const hasFilter = () => query().trim().length > 0;
 
@@ -139,106 +140,128 @@ export function HomeView(): JSX.Element {
           </Banner>
         )}
       >
-        <Suspense fallback={<LoadingBlock label="Loading repositories…" />}>
-          <Show
-            when={items().length > 0}
-            fallback={
-              <EmptyState
-                icon={<Icons.Database class="h-8 w-8" />}
-                title="No repositories yet"
-                description={
-                  session.authenticated()
-                    ? "Repositories you can access will appear here. Create one to get started."
-                    : "Repositories you can access will appear here. Sign in and use New to create one."
-                }
-                action={
-                  <Show when={session.authenticated()}>
-                    <Button variant="primary" onClick={() => setCreating(true)}>
-                      <Icons.Plus class="h-4 w-4" /> New repository
-                    </Button>
-                  </Show>
-                }
-              />
-            }
-          >
-            <div class="mb-4 flex flex-wrap items-center gap-3">
-              <div class="relative min-w-[200px] flex-1 sm:max-w-md">
-                <label for={filterId} class="sr-only">Filter repositories</label>
-                <Icons.Search class="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
-                <TextInput
-                  ref={filterInputEl}
-                  id={filterId}
-                  name="repoFilter"
-                  class="min-h-11 pl-8 pr-11 sm:min-h-0 sm:pr-8"
-                  placeholder="Find a repository…"
-                  value={query()}
-                  onInput={(e) => setQuery(e.currentTarget.value)}
-                  onKeyDown={(e) => {
-                    if (e.isComposing || e.keyCode === 229) return;
-                    if (e.key === "Escape" && query()) {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      setQuery("");
-                    }
-                  }}
-                />
-                <Show when={query()}>
-                  <button
-                    type="button"
-                    aria-label="Clear repository filter"
-                    class="tg-focus absolute right-0 top-1/2 inline-flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded text-muted hover:bg-canvas-subtle hover:text-fg sm:right-1 sm:h-6 sm:w-6"
-                    onClick={() => {
-                      setQuery("");
-                      filterInputEl?.focus();
-                    }}
-                  >
-                    <Icons.X class="h-3.5 w-3.5" />
-                  </button>
-                </Show>
-              </div>
-              <Show when={hasFilter()}>
-                <span role="status" class="text-xs text-muted">
-                  Showing {filtered().length} of {items().length} {items().length === 1 ? "repository" : "repositories"}
-                </span>
-              </Show>
-            </div>
-
-            <Show
-              when={filtered().length > 0}
-              fallback={
-                <EmptyState
-                  icon={<Icons.Search class="h-8 w-8" />}
-                  title="No matching repositories"
-                  description="No repository on this page matches your filter."
-                  action={
-                    <Button
-                      onClick={() => {
-                        setQuery("");
-                        filterInputEl?.focus();
-                      }}
-                    >
-                      Clear filter
-                    </Button>
-                  }
-                />
+        <Show
+          when={!data.error}
+          fallback={
+            <Banner
+              tone="danger"
+              title="Could not load repositories"
+              action={
+                <Button size="sm" disabled={data.loading} onClick={() => void refetch()}>
+                  Retry
+                </Button>
               }
             >
-              <Box>
-                <For each={filtered()}>{(repo) => <RepoRow repo={repo} />}</For>
-              </Box>
-            </Show>
-            <Pagination
-              hasNext={!!data()?.nextCursor}
-              hasPrev={history().length > 1}
-              loading={data.loading}
-              onNext={() => {
-                const next = data()?.nextCursor;
-                if (next) setHistory((h) => [...h, next]);
-              }}
-              onPrev={() => setHistory((h) => (h.length > 1 ? h.slice(0, -1) : h))}
-            />
+              {data.error instanceof ApiError ? data.error.message : "Unexpected error."}
+            </Banner>
+          }
+        >
+          <Show
+            when={!data.loading || pageData()}
+            fallback={<LoadingBlock label="Loading repositories…" />}
+          >
+            <Suspense fallback={<LoadingBlock label="Loading repositories…" />}>
+              <Show
+                when={items().length > 0}
+                fallback={
+                  <EmptyState
+                    icon={<Icons.Database class="h-8 w-8" />}
+                    title="No repositories yet"
+                    description={
+                      session.authenticated()
+                        ? "Repositories you can access will appear here. Create one to get started."
+                        : "Repositories you can access will appear here. Sign in and use New to create one."
+                    }
+                    action={
+                      <Show when={session.authenticated()}>
+                        <Button variant="primary" onClick={() => setCreating(true)}>
+                          <Icons.Plus class="h-4 w-4" /> New repository
+                        </Button>
+                      </Show>
+                    }
+                  />
+                }
+              >
+                <div class="mb-4 flex flex-wrap items-center gap-3">
+                  <div class="relative min-w-[200px] flex-1 sm:max-w-md">
+                    <label for={filterId} class="sr-only">Filter repositories</label>
+                    <Icons.Search class="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
+                    <TextInput
+                      ref={filterInputEl}
+                      id={filterId}
+                      name="repoFilter"
+                      class="min-h-11 pl-8 pr-11 sm:min-h-0 sm:pr-8"
+                      placeholder="Find a repository…"
+                      value={query()}
+                      onInput={(e) => setQuery(e.currentTarget.value)}
+                      onKeyDown={(e) => {
+                        if (e.isComposing || e.keyCode === 229) return;
+                        if (e.key === "Escape" && query()) {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setQuery("");
+                        }
+                      }}
+                    />
+                    <Show when={query()}>
+                      <button
+                        type="button"
+                        aria-label="Clear repository filter"
+                        class="tg-focus absolute right-0 top-1/2 inline-flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded text-muted hover:bg-canvas-subtle hover:text-fg sm:right-1 sm:h-6 sm:w-6"
+                        onClick={() => {
+                          setQuery("");
+                          filterInputEl?.focus();
+                        }}
+                      >
+                        <Icons.X class="h-3.5 w-3.5" />
+                      </button>
+                    </Show>
+                  </div>
+                  <Show when={hasFilter()}>
+                    <span role="status" class="text-xs text-muted">
+                      Showing {filtered().length} of {items().length} {items().length === 1 ? "repository" : "repositories"}
+                    </span>
+                  </Show>
+                </div>
+
+                <Show
+                  when={filtered().length > 0}
+                  fallback={
+                    <EmptyState
+                      icon={<Icons.Search class="h-8 w-8" />}
+                      title="No matching repositories"
+                      description="No repository on this page matches your filter."
+                      action={
+                        <Button
+                          onClick={() => {
+                            setQuery("");
+                            filterInputEl?.focus();
+                          }}
+                        >
+                          Clear filter
+                        </Button>
+                      }
+                    />
+                  }
+                >
+                  <Box>
+                    <For each={filtered()}>{(repo) => <RepoRow repo={repo} />}</For>
+                  </Box>
+                </Show>
+                <Pagination
+                  hasNext={!!pageData()?.nextCursor}
+                  hasPrev={history().length > 1}
+                  loading={data.loading}
+                  onNext={() => {
+                    const next = pageData()?.nextCursor;
+                    if (next) setHistory((h) => [...h, next]);
+                  }}
+                  onPrev={() => setHistory((h) => (h.length > 1 ? h.slice(0, -1) : h))}
+                />
+              </Show>
+            </Suspense>
           </Show>
-        </Suspense>
+        </Show>
       </ErrorBoundary>
     </PageContainer>
   );

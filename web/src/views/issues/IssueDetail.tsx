@@ -23,6 +23,7 @@ import { issuesApi } from "../../api/issues.ts";
 import { collaboratorsApi } from "../../api/admin.ts";
 import { ApiError } from "../../api/client.ts";
 import { useSession } from "../../store/session.tsx";
+import { createOneShotFocus, focusConnected } from "../../lib/a11y.ts";
 import { useSubmissionScope } from "../../lib/submission-scope.ts";
 import type { SubmissionContext } from "../../api/issues.ts";
 import {
@@ -220,24 +221,29 @@ export function IssueDetail(props: {
   const [bodyDraft, setBodyDraft] = createSignal("");
   let editBodyBtn: HTMLButtonElement | undefined;
   let bodyDraftRevision = 0;
+  const bodyEditorFocus = createOneShotFocus<HTMLTextAreaElement>();
   const updateBodyDraft = (value: string) => { bodyDraftRevision += 1; setBodyDraft(value); };
   const restoreEditBodyFocus = () => {
-    if (editBodyBtn) editBodyBtn.focus();
-    else queueMicrotask(() => editBodyBtn?.focus());
+    queueMicrotask(() => {
+      focusConnected(editBodyBtn);
+    });
   };
   const cancelBodyEdit = (restoreFocus = false) => {
     bodyDraftRevision += 1;
+    bodyEditorFocus.disarm();
     setEditingBody(false);
     if (restoreFocus) restoreEditBodyFocus();
   };
   const beginEditBody = () => {
     updateBodyDraft(issue()?.body ?? "");
+    bodyEditorFocus.arm();
     setEditingBody(true);
   };
   const saveBody = async () => {
     if (busy()) return;
     const revision = bodyDraftRevision;
     if (await patchIssue({ body: bodyDraft() }) && bodyDraftRevision === revision) {
+      bodyEditorFocus.disarm();
       setEditingBody(false);
       restoreEditBodyFocus();
     }
@@ -454,7 +460,7 @@ export function IssueDetail(props: {
                         <div class="space-y-2 sm:ml-[52px]">
                           <MarkdownEditor
                             editorLabel="Issue description editor"
-                            textareaRef={(el) => { queueMicrotask(() => el.focus()); }}
+                            textareaRef={bodyEditorFocus.ref}
                             value={bodyDraft()}
                             onInput={updateBodyDraft}
                             placeholder="Leave a comment"
@@ -797,17 +803,20 @@ function CommentItem(props: {
   const [metadataBusy, setBusy] = createSignal(false);
   const busy = () => metadataBusy();
   let actionsContainer: HTMLSpanElement | undefined;
+  const commentEditorFocus = createOneShotFocus<HTMLTextAreaElement>();
   const restoreActionsFocus = () => {
     queueMicrotask(() => {
-      actionsContainer?.querySelector<HTMLElement>("button")?.focus();
+      focusConnected(actionsContainer?.querySelector<HTMLElement>("button"));
     });
   };
 
   const begin = () => {
     setDraft(props.comment.body);
+    commentEditorFocus.arm();
     setEditing(true);
   };
   const cancel = () => {
+    commentEditorFocus.disarm();
     setEditing(false);
     restoreActionsFocus();
   };
@@ -821,6 +830,7 @@ function CommentItem(props: {
         draft(),
       );
       props.onChange(comment);
+      commentEditorFocus.disarm();
       setEditing(false);
       restoreActionsFocus();
     } catch (err) {
@@ -878,7 +888,7 @@ function CommentItem(props: {
         <div class="space-y-2">
           <MarkdownEditor
             editorLabel="Comment editor"
-            textareaRef={(el) => { queueMicrotask(() => el.focus()); }}
+            textareaRef={commentEditorFocus.ref}
             value={draft()}
             onInput={setDraft}
             disabled={busy()}

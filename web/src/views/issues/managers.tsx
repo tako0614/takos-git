@@ -14,6 +14,7 @@ import {
 } from "solid-js";
 import { issuesApi } from "../../api/issues.ts";
 import { ApiError } from "../../api/client.ts";
+import { focusConnected, handleInlineEditEscape } from "../../lib/a11y.ts";
 import { useSession } from "../../store/session.tsx";
 import {
   Banner,
@@ -66,6 +67,20 @@ export function LabelManager(props: {
   const [draftName, setDraftName] = createSignal("");
   const [draftColor, setDraftColor] = createSignal("");
   const [draftDesc, setDraftDesc] = createSignal("");
+  let contentEl: HTMLDivElement | undefined;
+  const editButtons = new Map<string, HTMLButtonElement>();
+  const restoreEditFocus = (name: string) => {
+    if (!props.open) return;
+    queueMicrotask(() => {
+      if (!props.open) return;
+      focusConnected(editButtons.get(name), contentEl?.closest<HTMLElement>('[role="dialog"]'));
+    });
+  };
+  const cancelEdit = (name: string) => {
+    if (busy()) return;
+    setEditName(null);
+    restoreEditFocus(name);
+  };
 
   const reload = async () => {
     setLoading(true);
@@ -82,6 +97,7 @@ export function LabelManager(props: {
   createEffect(() => {
     props.owner;
     props.repo;
+    editButtons.clear();
     setEditName(null);
     setNewName("");
     setNewDesc("");
@@ -119,21 +135,25 @@ export function LabelManager(props: {
     setDraftDesc(l.description ?? "");
   };
   const saveEdit = async (original: string) => {
-    if (!draftName().trim() || !isHex6(draftColor())) return;
+    const nextName = draftName().trim();
+    if (!nextName || !isHex6(draftColor())) return;
+    let saved = false;
     setBusy(true);
     try {
       await issuesExtraApi.updateLabel(props.owner, props.repo, original, {
-        name: draftName().trim(),
+        name: nextName,
         color: draftColor().replace(/^#/, ""),
         description: draftDesc().trim() || null,
       });
       setEditName(null);
       await reload();
       props.onChanged();
+      saved = true;
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : "Could not update label.");
     } finally {
       setBusy(false);
+      if (saved) restoreEditFocus(nextName);
     }
   };
   const remove = async (l: LabelDto) => {
@@ -160,7 +180,7 @@ export function LabelManager(props: {
 
   return (
     <Dialog open={props.open} onClose={() => !busy() && props.onClose()} title="Manage labels" size="lg">
-      <div class="space-y-4">
+      <div ref={contentEl} class="space-y-4">
         {/* Create */}
         <Show when={canWrite()}>
         <form
@@ -260,7 +280,12 @@ export function LabelManager(props: {
                           <LabelChip label={label()} />
                           <span class="min-w-0 flex-1 truncate text-sm text-muted">{label().description}</span>
                           <Show when={canWrite()}>
-                            <Button size="sm" disabled={busy()} onClick={() => beginEdit(label())}>
+                            <Button
+                              ref={(el) => { editButtons.set(label().name, el); }}
+                              size="sm"
+                              disabled={busy()}
+                              onClick={() => beginEdit(label())}
+                            >
                               <Icons.Edit class="h-3.5 w-3.5" /> Edit
                             </Button>
                             <IconButton aria-label={`Delete ${label().name}`} disabled={busy()} onClick={() => void remove(label())}>
@@ -277,17 +302,18 @@ export function LabelManager(props: {
                           void saveEdit(label().name);
                         }}
                         on:keydown={(e) => {
-                          if (e.isComposing || e.keyCode === 229) return;
-                          if (e.key === "Escape") {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            setEditName(null);
-                          }
+                          handleInlineEditEscape(e, busy(), () => cancelEdit(label().name));
                         }}
                       >
                         <div class="flex flex-wrap items-center gap-2">
                           <span class="inline-block h-6 w-6 shrink-0 rounded border border-border" style={{ background: isHex6(draftColor()) ? `#${draftColor().replace(/^#/, "")}` : "#8b949e" }} />
-                          <TextInput class="w-40" aria-label="Label name" value={draftName()} onInput={(e) => setDraftName(e.currentTarget.value)} />
+                          <TextInput
+                            ref={(el) => { queueMicrotask(() => { if (el.isConnected) el.focus(); }); }}
+                            class="w-40"
+                            aria-label="Label name"
+                            value={draftName()}
+                            onInput={(e) => setDraftName(e.currentTarget.value)}
+                          />
                           <TextInput
                             class="w-28"
                             aria-label="Label color hex"
@@ -301,7 +327,7 @@ export function LabelManager(props: {
                           <p role="alert" class="text-xs text-danger">Enter a 6-digit hex color (e.g. d73a4a).</p>
                         </Show>
                         <div class="flex justify-end gap-2">
-                          <Button type="button" size="sm" disabled={busy()} onClick={() => setEditName(null)}>Cancel</Button>
+                          <Button type="button" size="sm" disabled={busy()} onClick={() => cancelEdit(label().name)}>Cancel</Button>
                           <Button type="submit" size="sm" variant="primary" disabled={busy() || !draftName().trim() || !isHex6(draftColor())}>
                             {busy() ? "Saving…" : "Save"}
                           </Button>
@@ -344,6 +370,20 @@ export function MilestoneManager(props: {
   const [draftTitle, setDraftTitle] = createSignal("");
   const [draftDesc, setDraftDesc] = createSignal("");
   const [draftDue, setDraftDue] = createSignal("");
+  let contentEl: HTMLDivElement | undefined;
+  const editButtons = new Map<number, HTMLButtonElement>();
+  const restoreEditFocus = (number: number) => {
+    if (!props.open) return;
+    queueMicrotask(() => {
+      if (!props.open) return;
+      focusConnected(editButtons.get(number), contentEl?.closest<HTMLElement>('[role="dialog"]'));
+    });
+  };
+  const cancelEdit = (number: number) => {
+    if (busy()) return;
+    setEditNumber(null);
+    restoreEditFocus(number);
+  };
 
   const reload = async () => {
     setLoading(true);
@@ -360,6 +400,7 @@ export function MilestoneManager(props: {
   createEffect(() => {
     props.owner;
     props.repo;
+    editButtons.clear();
     setEditNumber(null);
     setNewTitle("");
     setNewDesc("");
@@ -406,6 +447,7 @@ export function MilestoneManager(props: {
   };
   const saveEdit = async (number: number) => {
     if (!draftTitle().trim()) return;
+    let saved = false;
     setBusy(true);
     try {
       await issuesExtraApi.updateMilestone(props.owner, props.repo, number, {
@@ -416,10 +458,12 @@ export function MilestoneManager(props: {
       setEditNumber(null);
       await reload();
       props.onChanged();
+      saved = true;
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : "Could not update milestone.");
     } finally {
       setBusy(false);
+      if (saved) restoreEditFocus(number);
     }
   };
   const toggleState = async (m: MilestoneDto) => {
@@ -458,7 +502,7 @@ export function MilestoneManager(props: {
 
   return (
     <Dialog open={props.open} onClose={() => !busy() && props.onClose()} title="Manage milestones" size="lg">
-      <div class="space-y-4">
+      <div ref={contentEl} class="space-y-4">
         <Show when={canWrite()}>
         <form
           class="rounded-md border border-border p-3"
@@ -525,7 +569,12 @@ export function MilestoneManager(props: {
                             </div>
                           </div>
                           <Show when={canWrite()}>
-                            <Button size="sm" disabled={busy()} onClick={() => beginEdit(m())}>
+                            <Button
+                              ref={(el) => { editButtons.set(m().number, el); }}
+                              size="sm"
+                              disabled={busy()}
+                              onClick={() => beginEdit(m())}
+                            >
                               <Icons.Edit class="h-3.5 w-3.5" /> Edit
                             </Button>
                             <Button size="sm" onClick={() => void toggleState(m())} disabled={busy()}>
@@ -545,15 +594,15 @@ export function MilestoneManager(props: {
                           void saveEdit(m().number);
                         }}
                         on:keydown={(e) => {
-                          if (e.isComposing || e.keyCode === 229) return;
-                          if (e.key === "Escape") {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            setEditNumber(null);
-                          }
+                          handleInlineEditEscape(e, busy(), () => cancelEdit(m().number));
                         }}
                       >
-                        <TextInput aria-label="Milestone title" value={draftTitle()} onInput={(e) => setDraftTitle(e.currentTarget.value)} />
+                        <TextInput
+                          ref={(el) => { queueMicrotask(() => { if (el.isConnected) el.focus(); }); }}
+                          aria-label="Milestone title"
+                          value={draftTitle()}
+                          onInput={(e) => setDraftTitle(e.currentTarget.value)}
+                        />
                         <Textarea aria-label="Milestone description" value={draftDesc()} placeholder="Description" rows={2} onInput={(e) => setDraftDesc(e.currentTarget.value)} />
                         <div class="flex flex-wrap items-end gap-2">
                           <label>
@@ -561,7 +610,7 @@ export function MilestoneManager(props: {
                             <TextInput type="date" value={draftDue()} onInput={(e) => setDraftDue(e.currentTarget.value)} />
                           </label>
                           <div class="ml-auto flex gap-2">
-                            <Button type="button" size="sm" disabled={busy()} onClick={() => setEditNumber(null)}>Cancel</Button>
+                            <Button type="button" size="sm" disabled={busy()} onClick={() => cancelEdit(m().number)}>Cancel</Button>
                             <Button type="submit" size="sm" variant="primary" disabled={busy() || !draftTitle().trim()}>
                               {busy() ? "Saving…" : "Save"}
                             </Button>

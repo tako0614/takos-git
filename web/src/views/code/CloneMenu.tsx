@@ -134,7 +134,7 @@ export function CloneMenu(props: { cloneUrl: string }): JSX.Element {
               type="text"
               readonly
               value={props.cloneUrl}
-              class="tg-focus min-w-0 flex-1 rounded-l-md bg-transparent px-2 py-1.5 font-mono text-xs text-fg"
+              class="tg-focus min-h-11 min-w-0 flex-1 rounded-l-md bg-transparent px-2 py-1.5 font-mono text-xs text-fg sm:min-h-0"
               onFocus={(e) => e.currentTarget.select()}
             />
             <CopyButton

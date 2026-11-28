@@ -4,7 +4,7 @@
  * GitHub-style timeline comment card. Everything renders through the frozen
  * design system (never `innerHTML`; user text always goes through `Markdown`).
  */
-import { createSignal, createUniqueId, Index, Show, type JSX } from "solid-js";
+import { children as resolveChildren, createSignal, createUniqueId, Index, Show, type JSX } from "solid-js";
 import { moveTabFocus } from "../../lib/a11y.ts";
 import { cn } from "../../lib/cn.ts";
 import { computeLabelChipStyle } from "../../lib/label-color.ts";
@@ -212,6 +212,7 @@ export function TimelineComment(props: {
   body?: string | null;
   children?: JSX.Element;
 }): JSX.Element {
+  const headerActions = resolveChildren(() => props.headerActions);
   return (
     <div class="flex gap-3">
       <Avatar name={principalName(props.author)} size={40} class="mt-0.5" />
@@ -232,8 +233,8 @@ export function TimelineComment(props: {
             </span>
           </Show>
           {props.headerExtra}
-          <Show when={props.headerActions}>
-            <span class="ml-auto flex items-center gap-1">{props.headerActions}</span>
+          <Show when={headerActions()}>
+            {(actions) => <span class="ml-auto flex items-center gap-1">{actions()}</span>}
           </Show>
         </div>
         <div class="px-4 py-3">

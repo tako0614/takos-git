@@ -30,3 +30,18 @@ export interface Resolution {
   readonly delete: boolean;
   readonly source: "ours" | "theirs" | "manual" | "delete";
 }
+
+/**
+ * Report whether the conflict editor textarea has unapplied edits relative to
+ * the currently selected file's recorded resolution. When a file is marked for
+ * deletion, any subsequent edit to the textarea (`dirty === true`) surfaces as
+ * unapplied so the user can apply their edited content instead of deleting.
+ */
+export function hasUnappliedConflictEdit(
+  resolution: Resolution | undefined,
+  draft: string,
+  dirty: boolean,
+): boolean {
+  if (!resolution) return true;
+  return resolution.delete ? dirty : draft !== resolution.content;
+}
