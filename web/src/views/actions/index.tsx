@@ -203,6 +203,12 @@ export function ActionsView(): JSX.Element {
         error={errorText()}
         filtered={isFiltered()}
         onRetry={() => void refetch()}
+        onClearFilters={() => {
+          setWorkflow("");
+          setStatus("");
+          setEvent("");
+          resetPaging();
+        }}
       />
 
       <Pagination

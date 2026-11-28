@@ -4,10 +4,13 @@
  * `branchProtectionApi` (list / put / remove).
  */
 import {
+  createEffect,
   createResource,
   createSignal,
+  createUniqueId,
   For,
   Index,
+  on,
   Show,
   Suspense,
   type JSX,
@@ -220,11 +223,24 @@ function RuleRow(props: {
       <Button size="sm" onClick={() => props.onEdit()}>
         <Icons.Edit class="h-4 w-4" /> Edit
       </Button>
-      <Button size="sm" variant="danger" onClick={() => props.onDelete()} aria-label={`Delete rule ${props.rule.pattern}`}>
+      <Button
+        size="sm"
+        variant="danger"
+        class="min-w-11 sm:min-w-0"
+        onClick={() => props.onDelete()}
+        aria-label={`Delete rule ${props.rule.pattern}`}
+      >
         <Icons.Trash class="h-4 w-4" />
       </Button>
     </div>
   );
+}
+
+function parseStatusChecks(text: string): string[] {
+  return text
+    .split(/[\n,]/u)
+    .map((s) => s.trim())
+    .filter(Boolean);
 }
 
 function RuleEditorDialog(props: {
@@ -238,17 +254,26 @@ function RuleEditorDialog(props: {
   repo: string;
 }): JSX.Element {
   const toast = useToast();
+  const formId = createUniqueId();
   const [saving, setSaving] = createSignal(false);
+  const [checksRaw, setChecksRaw] = createSignal("");
   const patch = (part: Partial<RuleForm>): void => props.onChange({ ...props.value, ...part });
 
-  const checksText = (): string => props.value.requiredStatusChecks.join("\n");
-  const setChecksText = (text: string): void =>
-    patch({
-      requiredStatusChecks: text
-        .split(/[\n,]/u)
-        .map((s) => s.trim())
-        .filter(Boolean),
-    });
+  // Seed raw textarea text when the dialog opens or switches to a different rule,
+  // avoiding round-tripping join("\n") on every keystroke while typing.
+  createEffect(
+    on(
+      () => [props.open, props.isNew ? null : props.value.pattern] as const,
+      ([open]) => {
+        if (open) setChecksRaw(props.value.requiredStatusChecks.join("\n"));
+      },
+    ),
+  );
+
+  const onChecksInput = (text: string): void => {
+    setChecksRaw(text);
+    patch({ requiredStatusChecks: parseStatusChecks(text) });
+  };
 
   const canSave = (): boolean => props.value.pattern.trim().length > 0 && !saving();
 
@@ -285,16 +310,24 @@ function RuleEditorDialog(props: {
       footer={
         <>
           <Button onClick={() => props.onClose()} disabled={saving()}>Cancel</Button>
-          <Button variant="primary" onClick={save} disabled={!canSave()}>
+          <Button type="submit" form={formId} variant="primary" disabled={!canSave()}>
             <Show when={saving()}><Icons.Loader class="h-4 w-4 animate-spin" /></Show>
             {props.isNew ? "Create rule" : "Save changes"}
           </Button>
         </>
       }
     >
-      <div class="space-y-4">
+      <form
+        id={formId}
+        class="space-y-4"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void save();
+        }}
+      >
         <Field
           label="Branch name pattern"
+          required={props.isNew}
           hint="Exact name or glob, e.g. main, develop, release/*."
           for="rule-pattern"
         >
@@ -303,6 +336,7 @@ function RuleEditorDialog(props: {
             value={props.value.pattern}
             readonly={!props.isNew}
             disabled={!props.isNew}
+            autofocus={props.isNew ? true : undefined}
             placeholder="main"
             onInput={(e) => patch({ pattern: e.currentTarget.value })}
           />
@@ -354,8 +388,8 @@ function RuleEditorDialog(props: {
           <Textarea
             id="rule-checks"
             rows={3}
-            value={checksText()}
-            onInput={(e) => setChecksText(e.currentTarget.value)}
+            value={checksRaw()}
+            onInput={(e) => onChecksInput(e.currentTarget.value)}
             placeholder={"build\ntest"}
           />
         </Field>
@@ -392,7 +426,7 @@ function RuleEditorDialog(props: {
             />
           </div>
         </div>
-      </div>
+      </form>
     </Dialog>
   );
 }

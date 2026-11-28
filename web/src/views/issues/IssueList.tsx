@@ -110,8 +110,17 @@ export function IssueList(props: { owner: string; repo: string }): JSX.Element {
     }
   });
 
+  const labelList = () =>
+    labels.error ? [] : (labels.latest?.items ?? []);
+  const milestoneList = () =>
+    milestones.error ? [] : (milestones.latest?.items ?? []);
+  const collaboratorList = () =>
+    collaborators.error ? [] : (collaborators.latest?.items ?? []);
+
+  const pageData = () => (page.error ? undefined : page.latest);
+
   const visible = createMemo(() => {
-    const items = page()?.items ?? [];
+    const items = pageData()?.items ?? [];
     const q = search().trim().toLowerCase();
     return q ? items.filter((i) => i.title.toLowerCase().includes(q)) : items;
   });
@@ -120,6 +129,19 @@ export function IssueList(props: { owner: string; repo: string }): JSX.Element {
     labelFilter() !== undefined ||
     milestoneFilter() !== undefined ||
     assigneeFilter() !== undefined;
+
+  const activeMilestoneLabel = () => {
+    const num = milestoneFilter();
+    if (num === undefined) return "";
+    return milestoneList().find((m) => m.number === num)?.title ?? `#${num}`;
+  };
+
+  const activeAssigneeLabel = () => {
+    const sub = assigneeFilter();
+    if (!sub) return "";
+    const match = collaboratorList().find((c) => c.principal.subject === sub);
+    return match ? principalName(match.principal) : sub;
+  };
 
   const clearFilters = () => {
     setLabelFilter(undefined);
@@ -131,37 +153,41 @@ export function IssueList(props: { owner: string; repo: string }): JSX.Element {
 
   const labelItems = (): MenuItem[] => [
     { label: "All labels", onSelect: () => pickLabel(undefined) },
-    ...(labels()?.items ?? []).map(
-      (l): MenuItem => ({
-        label: (
-          <span class="flex items-center gap-2">
-            <span
-              class="inline-block h-3 w-3 rounded-full border border-border"
-              style={{ background: `#${l.color.replace(/^#/, "")}` }}
-            />
-            {l.name}
-          </span>
-        ),
-        onSelect: () => pickLabel(l.name),
-      }),
-    ),
+    ...(labels.error
+      ? [{ label: "Failed to load labels — Retry", onSelect: () => void refetchLabels(), separated: true }]
+      : labelList().map(
+          (l): MenuItem => ({
+            label: (
+              <span class="flex items-center gap-2">
+                <span
+                  class="inline-block h-3 w-3 rounded-full border border-border"
+                  style={{ background: `#${l.color.replace(/^#/, "")}` }}
+                />
+                {l.name}
+              </span>
+            ),
+            onSelect: () => pickLabel(l.name),
+          }),
+        )),
   ];
 
   const milestoneItems = (): MenuItem[] => [
     { label: "All milestones", onSelect: () => pickMilestone(undefined) },
-    ...(milestones()?.items ?? [])
-      .filter((m) => m.state === "open")
-      .map(
-        (m): MenuItem => ({
-          label: m.title,
-          onSelect: () => pickMilestone(m.number),
-        }),
-      ),
+    ...(milestones.error
+      ? [{ label: "Failed to load milestones — Retry", onSelect: () => void refetchMilestones(), separated: true }]
+      : milestoneList()
+          .filter((m) => m.state === "open")
+          .map(
+            (m): MenuItem => ({
+              label: m.title,
+              onSelect: () => pickMilestone(m.number),
+            }),
+          )),
   ];
 
   const assigneeItems = (): MenuItem[] => [
     { label: "Everyone", onSelect: () => pickAssignee(undefined) },
-    ...(collaborators()?.items ?? []).map(
+    ...collaboratorList().map(
       (c): MenuItem => ({
         label: (
           <span class="flex items-center gap-2">
@@ -271,12 +297,16 @@ export function IssueList(props: { owner: string; repo: string }): JSX.Element {
             {(l) => <Label tone="accent">label: {l()}</Label>}
           </Show>
           <Show when={milestoneFilter() !== undefined}>
-            <Label tone="accent">milestone #{milestoneFilter()}</Label>
+            <Label tone="accent">milestone: {activeMilestoneLabel()}</Label>
           </Show>
           <Show when={assigneeFilter()}>
-            {(a) => <Label tone="accent">assignee: {a()}</Label>}
+            <Label tone="accent">assignee: {activeAssigneeLabel()}</Label>
           </Show>
-          <button type="button" class="tg-focus rounded px-1 text-accent hover:underline" onClick={clearFilters}>
+          <button
+            type="button"
+            class="tg-focus inline-flex min-h-11 items-center rounded px-2 text-accent hover:underline sm:min-h-0 sm:px-1"
+            onClick={clearFilters}
+          >
             Clear filters
           </button>
         </div>
@@ -303,7 +333,7 @@ export function IssueList(props: { owner: string; repo: string }): JSX.Element {
             <button
               type="button"
               aria-pressed={state() === "open"}
-              class={`tg-focus flex min-h-10 items-center gap-1.5 rounded px-1 sm:min-h-0 ${
+              class={`tg-focus flex min-h-11 items-center gap-1.5 rounded px-1.5 sm:min-h-0 sm:px-1 ${
                 state() === "open" ? "font-semibold text-fg" : "text-muted hover:text-fg"
               }`}
               onClick={() => pickState("open")}
@@ -313,7 +343,7 @@ export function IssueList(props: { owner: string; repo: string }): JSX.Element {
             <button
               type="button"
               aria-pressed={state() === "closed"}
-              class={`tg-focus flex min-h-10 items-center gap-1.5 rounded px-1 sm:min-h-0 ${
+              class={`tg-focus flex min-h-11 items-center gap-1.5 rounded px-1.5 sm:min-h-0 sm:px-1 ${
                 state() === "closed" ? "font-semibold text-fg" : "text-muted hover:text-fg"
               }`}
               onClick={() => pickState("closed")}
@@ -322,51 +352,75 @@ export function IssueList(props: { owner: string; repo: string }): JSX.Element {
             </button>
           </div>
 
-          <Suspense fallback={<LoadingBlock label="Loading issues…" />}>
-            <Show
-              when={visible().length > 0}
-              fallback={
-                <EmptyState
-                  class="border-0"
-                  icon={<Icons.Inbox class="h-8 w-8" />}
-                  title={hasFilterOrSearch() ? "No matching issues" : `No ${state()} issues`}
-                  description={
-                    hasFilterOrSearch()
-                      ? "No issue matches the current search or filters."
-                      : state() === "open"
-                        ? "There aren't any open issues. Open one to start the conversation."
-                        : "No issues have been closed yet."
-                  }
+          <Show
+            when={!page.error}
+            fallback={
+              <div class="p-4">
+                <Banner
+                  tone="danger"
+                  title="Could not load issues"
                   action={
-                    <Show
-                      when={hasFilterOrSearch()}
-                      fallback={
-                        <Show when={session.authenticated()}>
-                          <ButtonLink as={A} href={`${base()}/issues/new`} variant="primary">
-                            <Icons.Plus class="h-4 w-4" /> New issue
-                          </ButtonLink>
+                    <Button size="sm" disabled={page.loading} onClick={() => void refetch()}>
+                      Retry
+                    </Button>
+                  }
+                >
+                  {page.error instanceof ApiError ? page.error.message : "Unexpected error."}
+                </Banner>
+              </div>
+            }
+          >
+            <Show
+              when={!page.loading || pageData()}
+              fallback={<LoadingBlock label="Loading issues…" />}
+            >
+              <Suspense fallback={<LoadingBlock label="Loading issues…" />}>
+                <Show
+                  when={visible().length > 0}
+                  fallback={
+                    <EmptyState
+                      class="border-0"
+                      icon={<Icons.Inbox class="h-8 w-8" />}
+                      title={hasFilterOrSearch() ? "No matching issues" : `No ${state()} issues`}
+                      description={
+                        hasFilterOrSearch()
+                          ? "No issue matches the current search or filters."
+                          : state() === "open"
+                            ? "There aren't any open issues. Open one to start the conversation."
+                            : "No issues have been closed yet."
+                      }
+                      action={
+                        <Show
+                          when={hasFilterOrSearch()}
+                          fallback={
+                            <Show when={session.authenticated()}>
+                              <ButtonLink as={A} href={`${base()}/issues/new`} variant="primary">
+                                <Icons.Plus class="h-4 w-4" /> New issue
+                              </ButtonLink>
+                            </Show>
+                          }
+                        >
+                          <Button onClick={clearFilters}>Clear filters</Button>
                         </Show>
                       }
-                    >
-                      <Button onClick={clearFilters}>Clear filters</Button>
-                    </Show>
+                    />
                   }
-                />
-              }
-            >
-              <Index each={visible()}>
-                {(issue) => <IssueRow issue={issue()} base={base()} />}
-              </Index>
+                >
+                  <Index each={visible()}>
+                    {(issue) => <IssueRow issue={issue()} base={base()} />}
+                  </Index>
+                </Show>
+              </Suspense>
             </Show>
-          </Suspense>
+          </Show>
         </Box>
 
         <Pagination
-          hasNext={!!page()?.nextCursor}
+          hasNext={!!pageData()?.nextCursor}
           hasPrev={history().length > 1}
           loading={page.loading}
           onNext={() => {
-            const next = page()?.nextCursor;
+            const next = pageData()?.nextCursor;
             if (next) setHistory((h) => [...h, next]);
           }}
           onPrev={() => setHistory((h) => (h.length > 1 ? h.slice(0, -1) : h))}
@@ -427,7 +481,8 @@ function IssueRow(props: { issue: IssueDto; base: string }): JSX.Element {
         <Show when={i().commentCount > 0}>
           <A
             href={`${props.base}/issues/${i().number}`}
-            class="flex items-center gap-1 text-xs text-muted hover:text-accent"
+            aria-label={`${i().commentCount} ${i().commentCount === 1 ? "comment" : "comments"}`}
+            class="tg-focus inline-flex min-h-11 min-w-11 items-center justify-center gap-1 rounded text-xs text-muted hover:text-accent sm:min-h-0 sm:min-w-0"
           >
             <Icons.MessageSquare class="h-3.5 w-3.5" /> {i().commentCount}
           </A>

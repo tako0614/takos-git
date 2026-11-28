@@ -153,12 +153,18 @@ export function LabelManager(props: {
     <Dialog open={props.open} onClose={props.onClose} title="Manage labels" size="lg">
       <div class="space-y-4">
         {/* Create */}
-        <div class="rounded-md border border-border p-3">
+        <form
+          class="rounded-md border border-border p-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void create();
+          }}
+        >
           <div class="mb-2 flex items-center gap-2 text-sm font-semibold">
             <Icons.Plus class="h-4 w-4" /> New label
           </div>
           <div class="flex flex-wrap items-end gap-2">
-            <label class="flex-1">
+            <label class="min-w-[10rem] flex-1">
               <span class="mb-1 block text-xs text-muted">Name</span>
               <TextInput value={newName()} placeholder="Label name" onInput={(e) => setNewName(e.currentTarget.value)} />
             </label>
@@ -166,10 +172,20 @@ export function LabelManager(props: {
               <span class="mb-1 block text-xs text-muted">Color</span>
               <div class="flex items-center gap-2">
                 <span class="inline-block h-6 w-6 shrink-0 rounded border border-border" style={{ background: previewColor() }} />
-                <TextInput class="w-28" value={newColor()} onInput={(e) => setNewColor(e.currentTarget.value)} />
+                <TextInput
+                  class="w-28"
+                  aria-invalid={newColor().trim().length > 0 && !isHex6(newColor()) ? "true" : undefined}
+                  value={newColor()}
+                  onInput={(e) => setNewColor(e.currentTarget.value)}
+                />
               </div>
             </label>
           </div>
+          <Show when={newColor().trim().length > 0 && !isHex6(newColor())}>
+            <p role="alert" class="mt-1 text-xs text-danger">
+              Enter a 6-digit hex color (e.g. d73a4a).
+            </p>
+          </Show>
           <div class="mt-2 flex flex-wrap gap-1">
             <Index each={SWATCHES}>
               {(hex) => (
@@ -188,12 +204,12 @@ export function LabelManager(props: {
               )}
             </Index>
           </div>
-          <div class="mt-2 flex items-end gap-2">
-            <label class="flex-1">
+          <div class="mt-2 flex flex-wrap items-end gap-2">
+            <label class="min-w-[10rem] flex-1">
               <span class="mb-1 block text-xs text-muted">Description (optional)</span>
               <TextInput value={newDesc()} onInput={(e) => setNewDesc(e.currentTarget.value)} />
             </label>
-            <Button variant="primary" disabled={busy() || !newName().trim() || !isHex6(newColor())} onClick={create}>
+            <Button type="submit" variant="primary" disabled={busy() || !newName().trim() || !isHex6(newColor())}>
               Create
             </Button>
           </div>
@@ -201,7 +217,7 @@ export function LabelManager(props: {
             <span class="text-xs text-muted">Preview: </span>
             <LabelChip label={{ name: newName().trim() || "label", color: newColor(), description: newDesc() || null, createdAt: 0 }} />
           </div>
-        </div>
+        </form>
 
         {/* List */}
         <Show when={error()}>
@@ -223,7 +239,7 @@ export function LabelManager(props: {
                     <Show
                       when={editName() === label().name}
                       fallback={
-                        <div class="flex items-center gap-3">
+                        <div class="flex flex-wrap items-center gap-3">
                           <LabelChip label={label()} />
                           <span class="min-w-0 flex-1 truncate text-sm text-muted">{label().description}</span>
                           <Button size="sm" onClick={() => beginEdit(label())}>
@@ -239,9 +255,18 @@ export function LabelManager(props: {
                         <div class="flex flex-wrap items-center gap-2">
                           <span class="inline-block h-6 w-6 shrink-0 rounded border border-border" style={{ background: isHex6(draftColor()) ? `#${draftColor().replace(/^#/, "")}` : "#8b949e" }} />
                           <TextInput class="w-40" aria-label="Label name" value={draftName()} onInput={(e) => setDraftName(e.currentTarget.value)} />
-                          <TextInput class="w-28" aria-label="Label color hex" value={draftColor()} onInput={(e) => setDraftColor(e.currentTarget.value)} />
+                          <TextInput
+                            class="w-28"
+                            aria-label="Label color hex"
+                            aria-invalid={draftColor().trim().length > 0 && !isHex6(draftColor()) ? "true" : undefined}
+                            value={draftColor()}
+                            onInput={(e) => setDraftColor(e.currentTarget.value)}
+                          />
                           <TextInput class="min-w-[10rem] flex-1" aria-label="Label description" placeholder="Description" value={draftDesc()} onInput={(e) => setDraftDesc(e.currentTarget.value)} />
                         </div>
+                        <Show when={draftColor().trim().length > 0 && !isHex6(draftColor())}>
+                          <p role="alert" class="text-xs text-danger">Enter a 6-digit hex color (e.g. d73a4a).</p>
+                        </Show>
                         <div class="flex justify-end gap-2">
                           <Button size="sm" onClick={() => setEditName(null)}>Cancel</Button>
                           <Button size="sm" variant="primary" disabled={busy() || !draftName().trim() || !isHex6(draftColor())} onClick={() => void saveEdit(label().name)}>
@@ -393,7 +418,13 @@ export function MilestoneManager(props: {
   return (
     <Dialog open={props.open} onClose={props.onClose} title="Manage milestones" size="lg">
       <div class="space-y-4">
-        <div class="rounded-md border border-border p-3">
+        <form
+          class="rounded-md border border-border p-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void create();
+          }}
+        >
           <div class="mb-2 flex items-center gap-2 text-sm font-semibold">
             <Icons.Plus class="h-4 w-4" /> New milestone
           </div>
@@ -405,12 +436,12 @@ export function MilestoneManager(props: {
                 <span class="mb-1 block text-xs text-muted">Due date (optional)</span>
                 <TextInput type="date" value={newDue()} onInput={(e) => setNewDue(e.currentTarget.value)} />
               </label>
-              <Button class="ml-auto" variant="primary" disabled={busy() || !newTitle().trim()} onClick={create}>
+              <Button type="submit" class="ml-auto" variant="primary" disabled={busy() || !newTitle().trim()}>
                 Create
               </Button>
             </div>
           </div>
-        </div>
+        </form>
 
         <Show when={error()}>
           {(msg) => (

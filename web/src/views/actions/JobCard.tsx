@@ -1,5 +1,6 @@
 import {
   createSignal,
+  createUniqueId,
   onCleanup,
   createEffect,
   Index,
@@ -40,6 +41,7 @@ export function JobCard(props: {
   const [detailSteps, setDetailSteps] = createSignal<readonly WorkflowStepDto[] | null>(null);
   const [loading, setLoading] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
+  const panelId = createUniqueId();
   let disposed = false;
 
   const live = () => !isTerminal(props.job.status);
@@ -82,6 +84,7 @@ export function JobCard(props: {
         type="button"
         class="tg-focus flex w-full items-center gap-3 px-3 py-2.5 text-left hover:bg-canvas-subtle"
         aria-expanded={open()}
+        aria-controls={open() ? panelId : undefined}
         onClick={() => setOpen((v) => !v)}
       >
         <Icons.ChevronDown
@@ -119,9 +122,19 @@ export function JobCard(props: {
       </button>
 
       <Show when={open()}>
-        <div class="border-t border-border px-3 py-3">
+        <div id={panelId} class="border-t border-border px-3 py-3">
           <Show when={error()}>
-            <div class="mb-2 text-xs text-danger">{error()}</div>
+            <div class="mb-2 flex items-center justify-between gap-2 rounded-md border border-danger-emphasis/40 bg-danger-subtle px-3 py-2 text-xs text-danger">
+              <span>{error()}</span>
+              <button
+                type="button"
+                disabled={loading()}
+                class="tg-focus inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded border border-border bg-canvas-subtle px-3 py-1 text-xs font-medium text-fg hover:bg-canvas-inset disabled:opacity-60 sm:min-h-0 sm:min-w-0 sm:px-2"
+                onClick={() => void fetchDetail(true)}
+              >
+                Retry
+              </button>
+            </div>
           </Show>
 
           <Show when={steps().length > 0}>

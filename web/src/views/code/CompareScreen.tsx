@@ -1,5 +1,7 @@
 import { createMemo, createResource, Show, Suspense, type JSX } from "solid-js";
+import { A } from "@solidjs/router";
 import { compareRouteSpec } from "./compare-route.ts";
+import { commitHref } from "./helpers.ts";
 import { reposApi } from "../../api/repos.ts";
 import { ApiError } from "../../api/client.ts";
 import type { CompareResponse } from "../../api/types.ts";
@@ -120,7 +122,14 @@ export function CompareScreen(props: { owner: string; repo: string; spec: string
                         <Show when={data().mergeBaseSha}>
                           {(base) => (
                             <span class="ml-auto flex items-center gap-1.5 text-xs text-muted">
-                              merge base <Sha value={base()} />
+                              merge base{" "}
+                              <A
+                                href={commitHref(props.owner, props.repo, base())}
+                                class="tg-focus rounded hover:opacity-80"
+                                title={`View merge base commit ${base().slice(0, 7)}`}
+                              >
+                                <Sha value={base()} />
+                              </A>
                             </span>
                           )}
                         </Show>

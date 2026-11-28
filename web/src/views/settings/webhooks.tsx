@@ -5,10 +5,13 @@
  * appear in the log after they run.
  */
 import {
+  createEffect,
   createResource,
   createSignal,
+  createUniqueId,
   For,
   Index,
+  on,
   Show,
   Suspense,
   type JSX,
@@ -100,10 +103,12 @@ export function WebhooksSettingsView(): JSX.Element {
   }
 
   const [pingBusy, setPingBusy] = createSignal<string | null>(null);
+  const [pingVersion, setPingVersion] = createSignal(0);
   async function ping(id: string): Promise<void> {
     setPingBusy(id);
     try {
       await webhooksApi.ping(repo.owner(), repo.repo(), id);
+      setPingVersion((v) => v + 1);
       toast.success("Ping delivered. Check the recent deliveries below.");
     } catch (err) {
       toast.error(describeError(err));
@@ -178,6 +183,7 @@ export function WebhooksSettingsView(): JSX.Element {
                       owner={repo.owner()}
                       repo={repo.repo()}
                       pinging={pingBusy() === hook().id}
+                      refreshKey={pingVersion()}
                       onPing={() => ping(hook().id)}
                       onEdit={() => openEdit(hook())}
                       onDelete={() => deleteHook(hook())}
@@ -216,11 +222,13 @@ function WebhookRow(props: {
   owner: string;
   repo: string;
   pinging: boolean;
+  refreshKey: number;
   onPing: () => void;
   onEdit: () => void;
   onDelete: () => void;
 }): JSX.Element {
   const [showLog, setShowLog] = createSignal(false);
+  const logId = createUniqueId();
   return (
     <Box>
       <div class="flex flex-wrap items-center gap-3 px-4 py-3">
@@ -241,13 +249,20 @@ function WebhookRow(props: {
         <Button size="sm" onClick={() => props.onEdit()}>
           <Icons.Edit class="h-4 w-4" /> Edit
         </Button>
-        <Button size="sm" variant="danger" onClick={() => props.onDelete()} aria-label={`Delete webhook ${props.hook.url}`}>
+        <Button
+          size="sm"
+          variant="danger"
+          class="min-w-11 sm:min-w-0"
+          onClick={() => props.onDelete()}
+          aria-label={`Delete webhook ${props.hook.url}`}
+        >
           <Icons.Trash class="h-4 w-4" />
         </Button>
         <Button
           size="sm"
           variant="invisible"
           aria-expanded={showLog()}
+          aria-controls={showLog() ? logId : undefined}
           onClick={() => setShowLog((v) => !v)}
         >
           <Show when={showLog()} fallback={<Icons.ChevronRight class="h-4 w-4" />}>
@@ -257,47 +272,65 @@ function WebhookRow(props: {
         </Button>
       </div>
       <Show when={showLog()}>
-        <div class="border-t border-border">
-          <DeliveryLog owner={props.owner} repo={props.repo} hookId={props.hook.id} />
+        <div id={logId} class="border-t border-border">
+          <DeliveryLog
+            owner={props.owner}
+            repo={props.repo}
+            hookId={props.hook.id}
+            refreshKey={props.refreshKey}
+          />
         </div>
       </Show>
     </Box>
   );
 }
 
-function DeliveryLog(props: { owner: string; repo: string; hookId: string }): JSX.Element {
+function DeliveryLog(props: {
+  owner: string;
+  repo: string;
+  hookId: string;
+  refreshKey: number;
+}): JSX.Element {
   const [deliveries, { refetch }] = createResource(
-    () => [props.owner, props.repo, props.hookId] as const,
+    () => [props.owner, props.repo, props.hookId, props.refreshKey] as const,
     async ([o, r, id]) => (await webhooksApi.deliveries(o, r, id)).items,
   );
   return (
-    <Suspense fallback={<div class="px-4 py-4"><LoadingBlock label="Loading deliveries…" /></div>}>
-      <Show when={deliveries.error}>
-        <div class="px-4 py-3">
-          <Banner
-            tone="danger"
-            title="Could not load deliveries"
-            action={
-              <Button size="sm" disabled={deliveries.loading} onClick={() => void refetch()}>
-                Retry
-              </Button>
-            }
-          >
-            {describeError(deliveries.error)}
-          </Banner>
-        </div>
-      </Show>
-      <Show when={!deliveries.error}>
-        <Show
-          when={(deliveries()?.length ?? 0) > 0}
-          fallback={<p class="px-4 py-4 text-sm text-muted">No deliveries yet. Use “Ping” to send a test event.</p>}
-        >
-          <Index each={deliveries() ?? []}>
-            {(delivery) => <DeliveryRow delivery={delivery()} />}
-          </Index>
+    <div>
+      <div class="flex items-center justify-between border-b border-border bg-canvas-subtle px-4 py-1.5 text-xs text-muted">
+        <span>Recent deliveries</span>
+        <Button size="sm" variant="invisible" disabled={deliveries.loading} onClick={() => void refetch()}>
+          <Icons.Refresh class={`h-3.5 w-3.5 ${deliveries.loading ? "animate-spin" : ""}`} /> Refresh
+        </Button>
+      </div>
+      <Suspense fallback={<div class="px-4 py-4"><LoadingBlock label="Loading deliveries…" /></div>}>
+        <Show when={deliveries.error}>
+          <div class="px-4 py-3">
+            <Banner
+              tone="danger"
+              title="Could not load deliveries"
+              action={
+                <Button size="sm" disabled={deliveries.loading} onClick={() => void refetch()}>
+                  Retry
+                </Button>
+              }
+            >
+              {describeError(deliveries.error)}
+            </Banner>
+          </div>
         </Show>
-      </Show>
-    </Suspense>
+        <Show when={!deliveries.error}>
+          <Show
+            when={(deliveries()?.length ?? 0) > 0}
+            fallback={<p class="px-4 py-4 text-sm text-muted">No deliveries yet. Use “Ping” to send a test event.</p>}
+          >
+            <Index each={deliveries() ?? []}>
+              {(delivery) => <DeliveryRow delivery={delivery()} />}
+            </Index>
+          </Show>
+        </Show>
+      </Suspense>
+    </div>
   );
 }
 
@@ -322,7 +355,14 @@ function DeliveryRow(props: { delivery: WebhookDeliveryDto }): JSX.Element {
       <span class="ml-auto text-xs text-muted">
         <RelativeTime epochMs={d().createdAt} />
       </span>
-      <Button size="sm" variant="invisible" disabled title="Redelivery is not available in the UI yet" aria-label="Redeliver">
+      <Button
+        size="sm"
+        variant="invisible"
+        class="min-w-11 sm:min-w-0"
+        disabled
+        title="Redelivery is not available in the UI yet"
+        aria-label="Redeliver"
+      >
         <Icons.Refresh class="h-4 w-4" />
       </Button>
     </div>
@@ -340,9 +380,26 @@ function WebhookEditorDialog(props: {
   repo: string;
 }): JSX.Element {
   const toast = useToast();
+  const formId = createUniqueId();
   const [saving, setSaving] = createSignal(false);
+  const [urlTouched, setUrlTouched] = createSignal(false);
+  const [secretTouched, setSecretTouched] = createSignal(false);
+  const [submitAttempted, setSubmitAttempted] = createSignal(false);
   const isNew = (): boolean => props.editId === null;
   const patch = (part: Partial<HookForm>): void => props.onChange({ ...props.value, ...part });
+
+  createEffect(
+    on(
+      () => [props.open, props.editId] as const,
+      ([open]) => {
+        if (open) {
+          setUrlTouched(false);
+          setSecretTouched(false);
+          setSubmitAttempted(false);
+        }
+      },
+    ),
+  );
 
   const toggleEvent = (id: string, on: boolean): void => {
     const set = new Set(props.value.events);
@@ -362,10 +419,19 @@ function WebhookEditorDialog(props: {
   const hasEvents = (): boolean => props.value.everything || props.value.events.length > 0;
   const hasRequiredSecret = (): boolean =>
     !isNew() || props.value.secret.trim().length > 0;
+  const urlError = (): string | undefined =>
+    (urlTouched() || submitAttempted()) && !validUrl()
+      ? "Enter a valid http:// or https:// URL."
+      : undefined;
+  const secretError = (): string | undefined =>
+    isNew() && (secretTouched() || submitAttempted()) && !hasRequiredSecret()
+      ? "Enter a signing secret."
+      : undefined;
   const canSave = (): boolean =>
     validUrl() && hasEvents() && hasRequiredSecret() && !saving();
 
   async function save(): Promise<void> {
+    setSubmitAttempted(true);
     if (!canSave()) return;
     const events = props.value.everything ? ["*"] : props.value.events;
     const secret = props.value.secret.trim();
@@ -405,28 +471,45 @@ function WebhookEditorDialog(props: {
       footer={
         <>
           <Button onClick={() => props.onClose()} disabled={saving()}>Cancel</Button>
-          <Button variant="primary" onClick={save} disabled={!canSave()}>
+          <Button type="submit" form={formId} variant="primary" disabled={!canSave()}>
             <Show when={saving()}><Icons.Loader class="h-4 w-4 animate-spin" /></Show>
             {isNew() ? "Add webhook" : "Save changes"}
           </Button>
         </>
       }
     >
-      <div class="space-y-4">
-        <Field label="Payload URL" hint="An http(s) endpoint that receives POST payloads." for="hook-url">
+      <form
+        id={formId}
+        class="space-y-4"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void save();
+        }}
+      >
+        <Field
+          label="Payload URL"
+          required
+          hint="An http(s) endpoint that receives POST payloads."
+          error={urlError()}
+          for="hook-url"
+        >
           <TextInput
             id="hook-url"
             type="url"
             inputmode="url"
+            autofocus
             placeholder="https://example.com/webhook"
             value={props.value.url}
             onInput={(e) => patch({ url: e.currentTarget.value })}
+            onBlur={() => setUrlTouched(true)}
           />
         </Field>
 
         <Field
           label="Secret"
+          required={isNew()}
           hint={isNew() ? "Required. Used to sign each delivery (X-Hub-Signature-256)." : "Leave blank to keep the current secret."}
+          error={secretError()}
           for="hook-secret"
         >
           <TextInput
@@ -436,11 +519,9 @@ function WebhookEditorDialog(props: {
             placeholder={isNew() ? "" : "••••••••"}
             value={props.value.secret}
             onInput={(e) => patch({ secret: e.currentTarget.value })}
+            onBlur={() => setSecretTouched(true)}
           />
         </Field>
-        <Show when={isNew() && !hasRequiredSecret()}>
-          <p class="-mt-2 text-xs text-danger">Enter a signing secret.</p>
-        </Show>
 
         <fieldset class="space-y-2">
           <legend class="text-sm font-semibold text-fg">Which events should trigger this webhook?</legend>
@@ -506,7 +587,7 @@ function WebhookEditorDialog(props: {
           <ComingSoon>Redelivery</ComingSoon>
           Individual deliveries can be replayed once redelivery lands in the UI.
         </p>
-      </div>
+      </form>
     </Dialog>
   );
 }

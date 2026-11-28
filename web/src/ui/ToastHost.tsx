@@ -33,6 +33,12 @@ export function ToastHost(): JSX.Element {
               )}
               onMouseEnter={() => toast.pauseToast(item.id)}
               onMouseLeave={() => toast.resumeToast(item.id)}
+              onFocusIn={() => toast.pauseToast(item.id)}
+              onFocusOut={(e) => {
+                if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+                  toast.resumeToast(item.id);
+                }
+              }}
             >
               <span class="mt-0.5 shrink-0">{TONES[item.type].icon}</span>
               <span class="min-w-0 flex-1 break-words text-fg">{item.message}</span>

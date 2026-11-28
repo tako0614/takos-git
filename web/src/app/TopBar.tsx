@@ -10,7 +10,7 @@ function ProductMark(): JSX.Element {
   return (
     <A
       href="/"
-      class="tg-focus flex min-h-11 items-center gap-2 rounded-md px-1 sm:min-h-0 sm:px-0"
+      class="tg-focus flex min-h-11 min-w-11 items-center justify-center gap-2 rounded-md px-1 sm:min-h-0 sm:min-w-0 sm:justify-start sm:px-0"
       aria-label="Takos Git home"
     >
       <img src="/icons/takos-git.svg" alt="" class="h-6 w-6" />
@@ -126,6 +126,18 @@ function SessionWidget(): JSX.Element {
       fallback={<Spinner />}
     >
       <Show
+        when={!session.error()}
+        fallback={
+          <button
+            type="button"
+            class="tg-focus inline-flex min-h-11 items-center gap-1 rounded-md border border-border bg-canvas-subtle px-3 py-1.5 text-xs font-medium text-fg hover:bg-canvas-inset sm:min-h-0"
+            onClick={() => session.refetch()}
+          >
+            <Icons.Refresh class="h-3.5 w-3.5" /> Retry sign-in
+          </button>
+        }
+      >
+      <Show
         when={session.authenticated()}
         fallback={
           <Show
@@ -155,6 +167,7 @@ function SessionWidget(): JSX.Element {
             { label: "Sign out", danger: true, onSelect: () => void session.signOut(), separated: true },
           ]}
         />
+      </Show>
       </Show>
     </Show>
   );

@@ -146,8 +146,15 @@ export function CommitDetailScreen(props: { owner: string; repo: string; sha: st
                     <DiffSummary files={data().diff.files} />
                     <Show when={data().diff.base}>
                       {(base) => (
-                        <span class="text-xs text-muted">
-                          vs <Sha value={base()} />
+                        <span class="inline-flex items-center gap-1 text-xs text-muted">
+                          vs{" "}
+                          <A
+                            href={commitHref(props.owner, props.repo, base())}
+                            class="tg-focus rounded hover:opacity-80"
+                            title={`View base commit ${base().slice(0, 7)}`}
+                          >
+                            <Sha value={base()} />
+                          </A>
                         </span>
                       )}
                     </Show>

@@ -1,11 +1,11 @@
 import { type JSX } from "solid-js";
 import { Breadcrumb, type Crumb } from "../../ui/index.ts";
-import { pathCrumbs, repoBase, treeHref } from "./helpers.ts";
+import { pathCrumbs, treeHref } from "./helpers.ts";
 
 /**
  * File-path breadcrumb: `repo / dir / dir / name`. Directory crumbs link to the
  * tree at that ref; the final crumb (current dir or file) is inert. The repo
- * crumb returns to the code overview.
+ * crumb returns to the root of the current ref.
  */
 export function PathBreadcrumb(props: {
   owner: string;
@@ -19,7 +19,7 @@ export function PathBreadcrumb(props: {
   const items = (): Crumb[] => {
     const crumbs = pathCrumbs(props.path);
     const list: Crumb[] = [
-      { label: props.repo, href: repoBase(props.owner, props.repo) },
+      { label: props.repo, href: treeHref(props.owner, props.repo, props.refName) },
     ];
     crumbs.forEach((crumb, index) => {
       const last = index === crumbs.length - 1;
@@ -30,5 +30,5 @@ export function PathBreadcrumb(props: {
     });
     return list;
   };
-  return <Breadcrumb class={props.class} items={items()} />;
+  return <Breadcrumb aria-label="File path" class={props.class} items={items()} />;
 }

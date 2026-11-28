@@ -7,6 +7,7 @@ import {
   createEffect,
   createResource,
   createSignal,
+  createUniqueId,
   For,
   Show,
   type JSX,
@@ -72,10 +73,11 @@ export function GeneralSettingsView(): JSX.Element {
   }
 
   // --- default branch -------------------------------------------------------
-  const [branchData] = createResource(
+  const [branchData, { refetch: refetchBranches }] = createResource(
     () => [repo.owner(), repo.repo()] as const,
     ([o, r]) => reposApi.branches(o, r),
   );
+  const branches = () => (branchData.error ? [] : (branchData.latest?.branches ?? []));
   const [branchChoice, setBranchChoice] = createSignal<string>("");
   const [savingBranch, setSavingBranch] = createSignal(false);
   const currentDefault = (): string => branchChoice() || detail()?.defaultBranch || "";
@@ -138,6 +140,7 @@ export function GeneralSettingsView(): JSX.Element {
   const [delOpen, setDelOpen] = createSignal(false);
   const [delConfirm, setDelConfirm] = createSignal("");
   const [deleting, setDeleting] = createSignal(false);
+  const deleteFormId = createUniqueId();
   const fullName = (): string => detail()?.fullName ?? `${repo.owner()}/${repo.repo()}`;
 
   async function deleteRepo(): Promise<void> {
@@ -219,15 +222,15 @@ export function GeneralSettingsView(): JSX.Element {
             <Field label="Branch" class="min-w-[240px] flex-1" for="default-branch">
               <Select
                 id="default-branch"
-                disabled={archived() || savingBranch() || branchData.loading}
+                disabled={archived() || savingBranch() || branchData.loading || Boolean(branchData.error)}
                 value={currentDefault()}
                 onChange={(e) => setBranchChoice(e.currentTarget.value)}
               >
                 <Show
-                  when={(branchData()?.branches.length ?? 0) > 0}
+                  when={branches().length > 0}
                   fallback={<option value={detail()?.defaultBranch ?? ""}>{detail()?.defaultBranch ?? "—"}</option>}
                 >
-                  <For each={branchData()?.branches ?? []}>
+                  <For each={branches()}>
                     {(b) => <option value={b.name}>{b.name}{b.default ? " (current)" : ""}</option>}
                   </For>
                 </Show>
@@ -236,13 +239,27 @@ export function GeneralSettingsView(): JSX.Element {
             <div class="pb-1.5">
               <Button
                 variant="primary"
-                disabled={archived() || savingBranch() || currentDefault() === detail()?.defaultBranch}
+                disabled={archived() || savingBranch() || Boolean(branchData.error) || currentDefault() === detail()?.defaultBranch}
                 onClick={saveDefaultBranch}
               >
                 Update
               </Button>
             </div>
           </div>
+          <Show when={branchData.error}>
+            <Banner
+              tone="danger"
+              class="mt-3"
+              title="Could not load branches"
+              action={
+                <Button size="sm" disabled={branchData.loading} onClick={() => void refetchBranches()}>
+                  Retry
+                </Button>
+              }
+            >
+              {describeError(branchData.error)}
+            </Banner>
+          </Show>
         </SettingsSection>
 
         {/* Danger zone */}
@@ -329,26 +346,40 @@ export function GeneralSettingsView(): JSX.Element {
         footer={
           <>
             <Button onClick={() => setDelOpen(false)} disabled={deleting()}>Cancel</Button>
-            <Button variant="danger" onClick={deleteRepo} disabled={deleting() || delConfirm() !== fullName()}>
+            <Button
+              type="submit"
+              form={deleteFormId}
+              variant="danger"
+              disabled={deleting() || delConfirm() !== fullName()}
+            >
               <Show when={deleting()}><Icons.Loader class="h-4 w-4 animate-spin" /></Show>
               <Icons.Trash class="h-4 w-4" /> Delete this repository
             </Button>
           </>
         }
       >
-        <Banner tone="danger" class="mb-3" title="This action cannot be undone.">
-          This deletes the repository, its git objects, issues, pull requests, releases, and webhooks.
-        </Banner>
-        <label for="delete-confirm" class="mb-1.5 block text-sm font-semibold text-fg">
-          Type <b class="font-mono">{fullName()}</b> to confirm.
-        </label>
-        <TextInput
-          id="delete-confirm"
-          autocomplete="off"
-          value={delConfirm()}
-          onInput={(e) => setDelConfirm(e.currentTarget.value)}
-          placeholder={fullName()}
-        />
+        <form
+          id={deleteFormId}
+          onSubmit={(e) => {
+            e.preventDefault();
+            void deleteRepo();
+          }}
+        >
+          <Banner tone="danger" class="mb-3" title="This action cannot be undone.">
+            This deletes the repository, its git objects, issues, pull requests, releases, and webhooks.
+          </Banner>
+          <label for="delete-confirm" class="mb-1.5 block text-sm font-semibold text-fg">
+            Type <b class="font-mono">{fullName()}</b> to confirm.
+          </label>
+          <TextInput
+            id="delete-confirm"
+            autocomplete="off"
+            autofocus
+            value={delConfirm()}
+            onInput={(e) => setDelConfirm(e.currentTarget.value)}
+            placeholder={fullName()}
+          />
+        </form>
       </Dialog>
     </AdminGate>
   );

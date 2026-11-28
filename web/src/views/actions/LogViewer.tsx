@@ -1,6 +1,6 @@
-import { createSignal, onCleanup, onMount, Show, type JSX } from "solid-js";
+import { createEffect, createSignal, onCleanup, Show, type JSX } from "solid-js";
 import { createLifecycleOwner, createPolling } from "../../lib/lifecycle.ts";
-import { Icons, Spinner } from "../../ui/index.ts";
+import { Icons, Spinner, useToast } from "../../ui/index.ts";
 import { actionsApi } from "../../api/actions.ts";
 import { ApiError } from "../../api/client.ts";
 
@@ -16,6 +16,7 @@ export function LogViewer(props: {
   jobId: string;
   live: boolean;
 }): JSX.Element {
+  const toast = useToast();
   const [text, setText] = createSignal<string>("");
   const [loading, setLoading] = createSignal(true);
   const [error, setError] = createSignal<string | null>(null);
@@ -23,26 +24,27 @@ export function LogViewer(props: {
   const [copied, setCopied] = createSignal(false);
   let disposed = false;
   let copyVersion = 0;
+  let loadVersion = 0;
   // Named `timers` because `owner` is already a repo-owner prop in this view.
   const timers = createLifecycleOwner();
 
   const load = async (initial: boolean) => {
+    const version = ++loadVersion;
+    const owner = props.owner;
+    const repo = props.repo;
+    const jobId = props.jobId;
     if (initial) {
       setLoading(true);
       setError(null);
     }
     try {
-      const res = await actionsApi.jobLogs(
-        props.owner,
-        props.repo,
-        props.jobId,
-      );
-      if (disposed) return;
+      const res = await actionsApi.jobLogs(owner, repo, jobId);
+      if (disposed || version !== loadVersion) return;
       setText(res.logs ?? "");
       setNotReady(false);
       setError(null);
     } catch (err) {
-      if (disposed) return;
+      if (disposed || version !== loadVersion) return;
       if (err instanceof ApiError && err.isNotFound) {
         setNotReady(true);
         setError(null);
@@ -50,11 +52,14 @@ export function LogViewer(props: {
         setError(err instanceof ApiError ? err.message : "Failed to load logs");
       }
     } finally {
-      if (!disposed && initial) setLoading(false);
+      if (!disposed && version === loadVersion && initial) setLoading(false);
     }
   };
 
-  onMount(() => {
+  createEffect(() => {
+    props.owner;
+    props.repo;
+    props.jobId;
     void load(true);
   });
 
@@ -80,7 +85,7 @@ export function LogViewer(props: {
         if (version === copyVersion) setCopied(false);
       });
     } catch {
-      /* clipboard may be unavailable — non-fatal */
+      toast.error("Copy failed — your browser blocked clipboard access");
     }
   };
 

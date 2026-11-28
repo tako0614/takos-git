@@ -12,6 +12,7 @@ import {
   EmptyState,
   Icons,
   Label,
+  Link,
   LoadingBlock,
   Markdown,
   RelativeTime,
@@ -127,7 +128,13 @@ export function ReleaseDetail(props: ReleaseDetailProps): JSX.Element {
                         {(sha) => (
                           <span class="inline-flex items-center gap-1">
                             <Icons.GitCommit class="h-4 w-4" />
-                            <Sha value={sha()} />
+                            <Link
+                              href={`/${props.owner}/${props.repo}/commit/${sha()}`}
+                              class="tg-focus rounded hover:opacity-80"
+                              title={`View commit ${sha().slice(0, 7)}`}
+                            >
+                              <Sha value={sha()} />
+                            </Link>
                           </span>
                         )}
                       </Show>

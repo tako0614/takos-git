@@ -23,34 +23,43 @@ import {
   Icons,
   LoadingBlock,
   RelativeTime,
-  Sha,
 } from "../../ui/index.ts";
+import { CopyButton } from "../code/CopyButton.tsx";
 
 function CommitRow(props: { owner: string; repo: string; commit: CommitSummary }): JSX.Element {
   const title = () => props.commit.message.split("\n")[0];
+  const authorLabel = () => props.commit.author.name || props.commit.author.email || "?";
   return (
     <div class="flex items-center gap-3 border-b border-border px-4 py-3 last:border-b-0">
       <Icons.GitCommit class="h-4 w-4 shrink-0 text-muted" />
-      <Avatar name={props.commit.author.name} size={20} />
+      <Avatar name={authorLabel()} size={20} />
       <div class="min-w-0 flex-1">
         <A
           href={`/${props.owner}/${props.repo}/commit/${props.commit.sha}`}
-          class="block truncate text-sm font-medium text-fg hover:text-accent hover:underline"
+          class="tg-focus block truncate rounded text-sm font-medium text-fg hover:text-accent hover:underline"
         >
           {title()}
         </A>
         <div class="text-xs text-muted">
-          <span class="font-medium text-fg">{props.commit.author.name}</span>{" "}
+          <span class="font-medium text-fg">{authorLabel()}</span>{" "}
           committed <RelativeTime epochMs={props.commit.committer.date} />
         </div>
       </div>
-      <A
-        href={`/${props.owner}/${props.repo}/commit/${props.commit.sha}`}
-        class="shrink-0 hover:opacity-80"
-        title="Browse the repository at this point"
-      >
-        <Sha value={props.commit.sha} />
-      </A>
+      <div class="flex shrink-0 items-center gap-1">
+        <A
+          href={`/${props.owner}/${props.repo}/commit/${props.commit.sha}`}
+          class="tg-focus inline-flex min-h-11 items-center rounded-md border border-border bg-canvas-subtle px-2.5 py-1 font-mono text-xs text-fg hover:bg-canvas-inset sm:min-h-0 sm:px-2"
+          title={`View commit ${props.commit.sha.slice(0, 7)}`}
+        >
+          {props.commit.sha.slice(0, 7)}
+        </A>
+        <CopyButton
+          value={props.commit.sha}
+          label="Commit SHA"
+          title="Copy full SHA"
+          class="h-11 w-11 hover:bg-canvas-subtle sm:h-7 sm:w-7"
+        />
+      </div>
     </div>
   );
 }

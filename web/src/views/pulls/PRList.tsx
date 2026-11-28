@@ -104,8 +104,9 @@ function PrRow(props: { pr: PullRequestDto; owner: string; repo: string }): JSX.
         <Show when={props.pr.commentsCount > 0}>
           <A
             href={`/${props.owner}/${props.repo}/pulls/${props.pr.number}`}
-            class="flex items-center gap-1 hover:text-accent"
+            class="tg-focus inline-flex min-h-11 min-w-11 items-center justify-center gap-1 rounded hover:text-accent sm:min-h-0 sm:min-w-0"
             title="Comments"
+            aria-label={`${props.pr.commentsCount} ${props.pr.commentsCount === 1 ? "comment" : "comments"}`}
           >
             <Icons.MessageSquare class="h-4 w-4" />
             {props.pr.commentsCount}
@@ -188,6 +189,7 @@ function NewPullDialog(props: {
     if (ok && !retired && props.open && epoch === viewEpoch && !busy() && submission.retry(attempt)) await send(attempt);
   }
 
+  const formId = createUniqueId();
   return (
     <Dialog
       open={props.open}
@@ -197,13 +199,20 @@ function NewPullDialog(props: {
       footer={
         <>
           <Button onClick={close}>Cancel</Button>
-          <Button variant="primary" onClick={submit} disabled={!canSubmit()}>
+          <Button type="submit" form={formId} variant="primary" disabled={!canSubmit()}>
             {busy() ? "Creating…" : "Create pull request"}
           </Button>
         </>
       }
     >
-      <div class="space-y-3">
+      <form
+        id={formId}
+        class="space-y-3"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void submit();
+        }}
+      >
         <Show when={submission.unknown()}>
           {(attempt) => <Banner tone="warning" title="Creation result unknown">
             <p>{submission.storageError() ?? error()} Retry the original submission for “{attempt().input.title}” to recover its result. Your newer edits remain here.</p>
@@ -251,7 +260,7 @@ function NewPullDialog(props: {
           />
           Create as draft
         </label>
-      </div>
+      </form>
     </Dialog>
   );
 }
@@ -269,7 +278,10 @@ export function PRList(): JSX.Element {
   const identity = useSubmissionScope();
   const [filter, setFilter] = createSignal<StateFilter>("open");
   const [search, setSearch] = createSignal("");
-  const [cursor, setCursor] = createSignal<string | null>(null);
+  // Cursor history stack ([null] = first page) so Prev walks back real cursors.
+  const [history, setHistory] = createSignal<(string | null)[]>([null]);
+  const cursor = () => history()[history().length - 1];
+  const resetPaging = () => setHistory([null]);
   const [showNew, setShowNew] = createSignal(false);
   const searchId = createUniqueId();
   let searchInputEl: HTMLInputElement | undefined;
@@ -277,7 +289,7 @@ export function PRList(): JSX.Element {
   // Reset paging whenever the filter changes.
   const setFilterReset = (f: StateFilter) => {
     setFilter(f);
-    setCursor(null);
+    resetPaging();
   };
 
   const [data, { refetch }] = createResource(
@@ -285,9 +297,10 @@ export function PRList(): JSX.Element {
     ([owner, name, state, cur]) =>
       pullsApi.list(owner, name, { state, cursor: cur ?? undefined }),
   );
+  const pageData = () => (data.error ? undefined : data.latest);
 
   const visible = createMemo(() => {
-    const items = data()?.items ?? [];
+    const items = pageData()?.items ?? [];
     const q = search().trim().toLowerCase();
     if (!q) return items;
     return items.filter(
@@ -412,50 +425,84 @@ export function PRList(): JSX.Element {
             </div>
           )}
         >
-          <Suspense fallback={<div class="p-6"><LoadingBlock label="Loading pull requests…" /></div>}>
+          <Show
+            when={!data.error}
+            fallback={
+              <div class="p-4">
+                <Banner
+                  tone="danger"
+                  title="Could not load pull requests"
+                  action={
+                    <Button size="sm" disabled={data.loading} onClick={() => void refetch()}>
+                      Retry
+                    </Button>
+                  }
+                >
+                  {data.error instanceof ApiError ? data.error.message : "Unexpected error."}
+                </Banner>
+              </div>
+            }
+          >
             <Show
-              when={visible().length > 0}
-              fallback={
-                <div class="p-6">
-                  <EmptyState
-                    icon={<Icons.GitPullRequest class="h-8 w-8" />}
-                    title={
-                      search().trim()
-                        ? "No matching pull requests"
-                        : filter() === "open"
-                          ? "No open pull requests"
-                          : filter() === "closed"
-                            ? "No closed pull requests"
-                            : "No pull requests yet"
-                    }
-                    description={
-                      search().trim()
-                        ? "No pull request on this page matches your search."
-                        : "Pull requests propose changes from one branch into another. Open one to start a review."
-                    }
-                    action={
-                      <Show when={search().trim() || filter() !== "all"}>
-                        <Button onClick={clearFilters}>Clear filters</Button>
-                      </Show>
-                    }
-                  />
-                </div>
-              }
+              when={!data.loading || pageData()}
+              fallback={<div class="p-6"><LoadingBlock label="Loading pull requests…" /></div>}
             >
-              <For each={visible()}>
-                {(pr) => <PrRow pr={pr} owner={repo.owner()} repo={repo.repo()} />}
-              </For>
+              <Suspense fallback={<div class="p-6"><LoadingBlock label="Loading pull requests…" /></div>}>
+                <Show
+                  when={visible().length > 0}
+                  fallback={
+                    <div class="p-6">
+                      <EmptyState
+                        icon={<Icons.GitPullRequest class="h-8 w-8" />}
+                        title={
+                          search().trim()
+                            ? "No matching pull requests"
+                            : filter() === "open"
+                              ? "No open pull requests"
+                              : filter() === "closed"
+                                ? "No closed pull requests"
+                                : "No pull requests yet"
+                        }
+                        description={
+                          search().trim()
+                            ? "No pull request on this page matches your search."
+                            : "Pull requests propose changes from one branch into another. Open one to start a review."
+                        }
+                        action={
+                          <div class="flex flex-wrap items-center justify-center gap-2">
+                            <Show when={search().trim() || filter() !== "all"}>
+                              <Button onClick={clearFilters}>Clear filters</Button>
+                            </Show>
+                            <Show when={!search().trim() && session.authenticated() && identity()}>
+                              <Button variant="primary" onClick={() => setShowNew(true)}>
+                                <Icons.Plus class="h-4 w-4" /> New pull request
+                              </Button>
+                            </Show>
+                          </div>
+                        }
+                      />
+                    </div>
+                  }
+                >
+                  <For each={visible()}>
+                    {(pr) => <PrRow pr={pr} owner={repo.owner()} repo={repo.repo()} />}
+                  </For>
+                </Show>
+              </Suspense>
             </Show>
-          </Suspense>
+          </Show>
         </ErrorBoundary>
       </Box>
 
       <Pagination
-        hasNext={!!data()?.nextCursor}
-        hasPrev={!!cursor()}
+        hasNext={!!pageData()?.nextCursor}
+        hasPrev={history().length > 1}
         loading={data.loading}
-        onNext={() => setCursor(data()?.nextCursor ?? null)}
-        onPrev={() => setCursor(null)}
+        onNext={() => {
+          const next = pageData()?.nextCursor;
+          if (next) setHistory((h) => [...h, next]);
+        }}
+        onPrev={() => setHistory((h) => (h.length > 1 ? h.slice(0, -1) : h))}
       />
     </div>
   );
