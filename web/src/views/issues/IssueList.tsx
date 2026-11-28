@@ -252,7 +252,7 @@ export function IssueList(props: { owner: string; repo: string }): JSX.Element {
             ref={searchInputEl}
             id={searchId}
             name="issueSearch"
-            class="min-h-11 pl-8 pr-9 sm:min-h-0"
+            class="min-h-11 pl-8 pr-11 sm:min-h-0 sm:pr-8"
             placeholder="Search issues by title"
             value={search()}
             onInput={(e) => setSearch(e.currentTarget.value)}
@@ -269,7 +269,7 @@ export function IssueList(props: { owner: string; repo: string }): JSX.Element {
             <button
               type="button"
               aria-label="Clear search"
-              class="tg-focus absolute right-1 top-1/2 inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded text-muted hover:bg-canvas-subtle hover:text-fg sm:h-6 sm:w-6"
+              class="tg-focus absolute right-0 top-1/2 inline-flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded text-muted hover:bg-canvas-subtle hover:text-fg sm:right-1 sm:h-6 sm:w-6"
               onClick={() => {
                 setSearch("");
                 searchInputEl?.focus();

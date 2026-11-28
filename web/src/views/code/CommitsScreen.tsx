@@ -10,7 +10,8 @@ import {
 } from "../../ui/index.ts";
 import { RefSelector } from "./RefSelector.tsx";
 import { CommitRows } from "./CommitRows.tsx";
-import { blobHref, commitsHref, treeHref } from "./helpers.ts";
+import { blobHref, commitsHref, compareHref, treeHref } from "./helpers.ts";
+import { formatCompareSpec } from "./compare-spec.ts";
 
 const PAGE = 30;
 
@@ -82,6 +83,18 @@ export function CommitsScreen(props: {
             </A>
           </span>
         </Show>
+        <A
+          href={compareHref(
+            props.owner,
+            props.repo,
+            formatCompareSpec(props.defaultBranch, props.refName),
+          )}
+          aria-label="Compare refs"
+          class="tg-focus ml-auto inline-flex min-h-11 items-center gap-1.5 rounded-md border border-border bg-canvas-subtle px-3 text-sm text-fg hover:bg-canvas-inset sm:min-h-0 sm:h-8"
+        >
+          <Icons.GitMerge class="h-4 w-4 text-muted" />
+          <span>Compare</span>
+        </A>
       </div>
 
       <Suspense fallback={<LoadingBlock label="Loading commits…" />}>

@@ -1,9 +1,12 @@
 /**
  * Commits tab: the commits contained in the PR (head ahead of base), newest at
- * the bottom as GitHub lists them. Each row links its sha to the commit view.
+ * the bottom as GitHub lists them. Each row links its sha to the commit view
+ * and lets the user expand multi-line commit descriptions inline.
  */
 import {
   createResource,
+  createSignal,
+  createUniqueId,
   ErrorBoundary,
   For,
   Show,
@@ -25,25 +28,54 @@ import {
   RelativeTime,
 } from "../../ui/index.ts";
 import { CopyButton } from "../code/CopyButton.tsx";
+import { commitBody, commitTitle } from "../code/helpers.ts";
 
 function CommitRow(props: { owner: string; repo: string; commit: CommitSummary }): JSX.Element {
-  const title = () => props.commit.message.split("\n")[0];
+  const title = () => commitTitle(props.commit.message);
+  const body = () => commitBody(props.commit.message);
+  const hasBody = () => body().length > 0;
+  const [expanded, setExpanded] = createSignal(false);
+  const bodyId = createUniqueId();
   const authorLabel = () => props.commit.author.name || props.commit.author.email || "?";
   return (
-    <div class="flex items-center gap-3 border-b border-border px-4 py-3 last:border-b-0">
-      <Icons.GitCommit class="h-4 w-4 shrink-0 text-muted" />
-      <Avatar name={authorLabel()} size={20} />
+    <div class="flex items-start gap-3 border-b border-border px-4 py-3 last:border-b-0">
+      <Icons.GitCommit class="mt-1 h-4 w-4 shrink-0 text-muted" />
+      <Avatar name={authorLabel()} size={20} class="mt-0.5" />
       <div class="min-w-0 flex-1">
-        <A
-          href={`/${props.owner}/${props.repo}/commit/${props.commit.sha}`}
-          class="tg-focus block truncate rounded text-sm font-medium text-fg hover:text-accent hover:underline"
-        >
-          {title()}
-        </A>
+        <div class="flex items-center gap-1.5">
+          <A
+            href={`/${props.owner}/${props.repo}/commit/${props.commit.sha}`}
+            class="tg-focus truncate rounded text-sm font-medium text-fg hover:text-accent hover:underline"
+            title={title()}
+          >
+            {title()}
+          </A>
+          <Show when={hasBody()}>
+            <button
+              type="button"
+              aria-expanded={expanded()}
+              aria-controls={expanded() ? bodyId : undefined}
+              aria-label={expanded() ? "Hide commit description" : "Show commit description"}
+              title={expanded() ? "Hide commit description" : "Show commit description"}
+              onClick={() => setExpanded((v) => !v)}
+              class="tg-focus inline-flex h-11 min-w-11 shrink-0 items-center justify-center rounded border border-border bg-canvas-subtle px-1.5 text-xs font-semibold leading-4 text-muted hover:bg-canvas-inset hover:text-fg sm:h-5 sm:min-w-0"
+            >
+              …
+            </button>
+          </Show>
+        </div>
         <div class="text-xs text-muted">
           <span class="font-medium text-fg">{authorLabel()}</span>{" "}
           committed <RelativeTime epochMs={props.commit.committer.date} />
         </div>
+        <Show when={hasBody() && expanded()}>
+          <pre
+            id={bodyId}
+            class="mt-2 whitespace-pre-wrap break-words rounded-md border border-border bg-canvas-subtle px-3 py-2 font-mono text-xs text-muted"
+          >
+            {body()}
+          </pre>
+        </Show>
       </div>
       <div class="flex shrink-0 items-center gap-1">
         <A

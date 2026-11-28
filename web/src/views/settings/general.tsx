@@ -9,6 +9,7 @@ import {
   createSignal,
   createUniqueId,
   For,
+  on,
   Show,
   type JSX,
 } from "solid-js";
@@ -24,6 +25,7 @@ import {
   Select,
   TextInput,
   Textarea,
+  useConfirmDialog,
   useToast,
 } from "../../ui/index.ts";
 import {
@@ -43,9 +45,11 @@ const VISIBILITIES: readonly { value: Visibility; label: string; hint: string }[
 export function GeneralSettingsView(): JSX.Element {
   const repo = useRepo();
   const toast = useToast();
+  const confirmDialog = useConfirmDialog();
 
   const detail = () => repo.detail();
   const archived = () => detail()?.isArchived ?? false;
+  const repoScope = () => `${repo.owner()}/${repo.repo()}`;
 
   // --- description ----------------------------------------------------------
   const [description, setDescription] = createSignal(detail()?.description ?? "");
@@ -124,9 +128,21 @@ export function GeneralSettingsView(): JSX.Element {
   const [togglingArchive, setTogglingArchive] = createSignal(false);
   async function toggleArchive(): Promise<void> {
     const next = !archived();
+    const targetOwner = repo.owner();
+    const targetRepo = repo.repo();
+    const name = fullName();
+    const ok = await confirmDialog.confirm({
+      title: next ? "Archive repository" : "Unarchive repository",
+      message: next
+        ? `Mark ${name} as archived and read-only? Existing code, issues, and pull requests stay visible, and you can unarchive it later.`
+        : `Restore write access to ${name}? Collaborators will be able to push commits and modify issues and pull requests again.`,
+      confirmText: next ? "Archive repository" : "Unarchive repository",
+      danger: next,
+    });
+    if (!ok || repo.owner() !== targetOwner || repo.repo() !== targetRepo) return;
     setTogglingArchive(true);
     try {
-      await reposApi.update(repo.owner(), repo.repo(), { isArchived: next });
+      await reposApi.update(targetOwner, targetRepo, { isArchived: next });
       repo.refetch();
       toast.success(next ? "Repository archived." : "Repository unarchived.");
     } catch (err) {
@@ -142,6 +158,22 @@ export function GeneralSettingsView(): JSX.Element {
   const [deleting, setDeleting] = createSignal(false);
   const deleteFormId = createUniqueId();
   const fullName = (): string => detail()?.fullName ?? `${repo.owner()}/${repo.repo()}`;
+
+  // Reset form/dialog state on client-side repository switch so unsaved edits never leak.
+  createEffect(
+    on(
+      repoScope,
+      () => {
+        setDescDirty(false);
+        setDescription(detail()?.description ?? "");
+        setBranchChoice("");
+        setVisOpen(false);
+        setDelOpen(false);
+        setDelConfirm("");
+      },
+      { defer: true },
+    ),
+  );
 
   async function deleteRepo(): Promise<void> {
     if (delConfirm() !== fullName()) return;
@@ -277,8 +309,10 @@ export function GeneralSettingsView(): JSX.Element {
                 : "Mark this repository read-only. It can be unarchived later."
             }
             action={
-              <Button variant="danger" disabled={togglingArchive()} onClick={toggleArchive}>
-                <Icons.Archive class="h-4 w-4" />
+              <Button variant="danger" disabled={togglingArchive()} onClick={() => void toggleArchive()}>
+                <Show when={togglingArchive()} fallback={<Icons.Archive class="h-4 w-4" />}>
+                  <Icons.Loader class="h-4 w-4 animate-spin" />
+                </Show>
                 {archived() ? "Unarchive" : "Archive"}
               </Button>
             }

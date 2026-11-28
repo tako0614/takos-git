@@ -17,9 +17,10 @@ import {
   Suspense,
   type JSX,
 } from "solid-js";
-import { A, useNavigate } from "@solidjs/router";
+import { A, useNavigate, useSearchParams } from "@solidjs/router";
 import { useRepo } from "../../app/RepoLayout.tsx";
 import { pullsApi } from "../../api/pulls.ts";
+import { reposApi } from "../../api/repos.ts";
 import { ApiError } from "../../api/client.ts";
 import type { PullRequestDto } from "../../api/types.ts";
 import { useSession } from "../../store/session.tsx";
@@ -42,6 +43,7 @@ import {
   useConfirmDialog,
   useToast,
 } from "../../ui/index.ts";
+import { BranchCombobox } from "../code/BranchCombobox.tsx";
 import { PrStateIcon, prDisplayState, principalName } from "./shared.tsx";
 import { createPullSubmission, type PullSubmission } from "./pull-submission.ts";
 
@@ -126,6 +128,7 @@ function NewPullDialog(props: {
   repositoryId: string;
   recoveryScope: string;
   defaultBase: string;
+  prefill?: { readonly base?: string; readonly head?: string } | null;
   onClose: () => void;
   onCreated: () => void;
 }): JSX.Element {
@@ -152,7 +155,35 @@ function NewPullDialog(props: {
     submission.saveDraft({ title: title(), body: body(), base: base(), head: head(), draft: draft() }, revision);
   }
 
-  const canSubmit = () => !retired && title().trim() && base().trim() && head().trim() && !submission.state();
+  // Apply Compare -> New PR branch prefill only when the form is clean and has no restored draft.
+  createEffect(
+    on(
+      () => [props.open, props.prefill] as const,
+      ([open, prefill]) => {
+        if (!open || !prefill || restored || revision !== 0 || submission.state()) return;
+        if (prefill.base) setBase(prefill.base);
+        if (prefill.head) setHead(prefill.head);
+      },
+    ),
+  );
+
+  const [branchRes, { refetch: refetchBranches }] = createResource(
+    () => (props.open ? ([scope.owner, scope.repo] as const) : false),
+    ([o, r]) => reposApi.branches(o, r),
+  );
+  const branches = () => (branchRes.error ? [] : (branchRes.latest?.branches ?? []));
+  const branchesError = () =>
+    branchRes.error
+      ? (branchRes.error instanceof ApiError
+          ? branchRes.error.message
+          : branchRes.error instanceof Error
+            ? branchRes.error.message
+            : "Could not load branches.")
+      : null;
+
+  const sameBranch = () => Boolean(base().trim() && head().trim() && base().trim() === head().trim());
+  const canSubmit = () =>
+    !retired && Boolean(title().trim() && base().trim() && head().trim()) && !sameBranch() && !submission.state();
 
   const submit = async () => {
     if (!canSubmit()) return;
@@ -230,19 +261,38 @@ function NewPullDialog(props: {
         </Show>
         <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Field label="Base branch" required for="pull-base">
-            <TextInput
+            <BranchCombobox
               id="pull-base"
+              name="pull-base"
               value={base()}
-              onInput={(e) => change(setBase, e.currentTarget.value)}
+              onInput={(v) => change(setBase, v)}
+              branches={branches()}
+              defaultBranch={props.defaultBase}
+              loading={branchRes.loading}
+              error={branchesError()}
+              onRetry={() => void refetchBranches()}
               placeholder="main"
+              listboxLabel="Base branches"
             />
           </Field>
-          <Field label="Compare (head) branch" required for="pull-head">
-            <TextInput
+          <Field
+            label="Compare (head) branch"
+            required
+            for="pull-head"
+            error={sameBranch() ? "Compare branch must differ from base branch." : undefined}
+          >
+            <BranchCombobox
               id="pull-head"
+              name="pull-head"
               value={head()}
-              onInput={(e) => change(setHead, e.currentTarget.value)}
+              onInput={(v) => change(setHead, v)}
+              branches={branches()}
+              defaultBranch={props.defaultBase}
+              loading={branchRes.loading}
+              error={branchesError()}
+              onRetry={() => void refetchBranches()}
               placeholder="feature-branch"
+              listboxLabel="Compare branches"
             />
           </Field>
         </div>
@@ -252,7 +302,7 @@ function NewPullDialog(props: {
         <Field label="Description" for="pull-body">
           <Textarea id="pull-body" rows={5} value={body()} onInput={(e) => change(setBody, e.currentTarget.value)} />
         </Field>
-        <label class="flex items-center gap-2 text-sm text-fg">
+        <label class="flex min-h-11 items-center gap-2 text-sm text-fg sm:min-h-0">
           <input
             type="checkbox"
             name="draft"
@@ -299,9 +349,21 @@ export function PRList(): JSX.Element {
       stack: history().length > 1 ? history().slice(0, -1) : [null],
     });
   createEffect(on(repoScope, () => resetPaging(), { defer: true }));
+  const [searchParams, setSearchParams] = useSearchParams();
   const [showNew, setShowNew] = createSignal(false);
+  const [prefill, setPrefill] = createSignal<{ base?: string; head?: string } | null>(null);
   const searchId = createUniqueId();
   let searchInputEl: HTMLInputElement | undefined;
+
+  // Support Compare -> "Open pull request" handoff (`?new=1&base=...&head=...`).
+  createEffect(() => {
+    if (searchParams.new !== "1" || !session.authenticated() || !identity()) return;
+    const baseParam = typeof searchParams.base === "string" ? searchParams.base : undefined;
+    const headParam = typeof searchParams.head === "string" ? searchParams.head : undefined;
+    setPrefill(baseParam || headParam ? { base: baseParam, head: headParam } : null);
+    setShowNew(true);
+    setSearchParams({ new: undefined, base: undefined, head: undefined }, { replace: true });
+  });
 
   // Reset paging whenever the filter changes.
   const setFilterReset = (f: StateFilter) => {
@@ -361,7 +423,11 @@ export function PRList(): JSX.Element {
           repositoryId={scope.repositoryId}
           recoveryScope={scope.recoveryScope}
           defaultBase={currentDetail()?.defaultBranch ?? "main"}
-          onClose={() => setShowNew(false)}
+          prefill={prefill()}
+          onClose={() => {
+            setShowNew(false);
+            setPrefill(null);
+          }}
           onCreated={() => void refetch()}
         />}
       </Show>
@@ -383,7 +449,7 @@ export function PRList(): JSX.Element {
             ref={searchInputEl}
             id={searchId}
             name="prSearch"
-            class="min-h-11 pl-8 pr-9 sm:min-h-0"
+            class="min-h-11 pl-8 pr-11 sm:min-h-0 sm:pr-8"
             placeholder="Search pull requests by title or branch"
             value={search()}
             onInput={(e) => setSearch(e.currentTarget.value)}
@@ -400,7 +466,7 @@ export function PRList(): JSX.Element {
             <button
               type="button"
               aria-label="Clear search"
-              class="tg-focus absolute right-1 top-1/2 inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded text-muted hover:bg-canvas-subtle hover:text-fg sm:h-6 sm:w-6"
+              class="tg-focus absolute right-0 top-1/2 inline-flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded text-muted hover:bg-canvas-subtle hover:text-fg sm:right-1 sm:h-6 sm:w-6"
               onClick={() => {
                 setSearch("");
                 searchInputEl?.focus();

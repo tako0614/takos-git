@@ -8,10 +8,12 @@
  * kept fresh by polling while runs/jobs are non-terminal (CSP-safe; no WS needed).
  */
 import {
+  createEffect,
   createMemo,
   createResource,
   createSignal,
   For,
+  on,
   Show,
   type JSX,
 } from "solid-js";
@@ -58,9 +60,29 @@ export function ActionsView(): JSX.Element {
   const [event, setEvent] = createSignal("");
   const [dispatchOpen, setDispatchOpen] = createSignal(false);
 
-  // Cursor stack for forward/back pagination (opaque server cursors).
-  const [cursors, setCursors] = createSignal<(string | null)[]>([null]);
+  // Repo-scoped cursor stack and filters so client-side repo switches never leak
+  // stale cursors or workflow selections from a previous repository.
+  const repoScope = () => `${repo.owner()}/${repo.repo()}`;
+  const [cursorState, setCursorState] = createSignal<{
+    scope: string;
+    stack: (string | null)[];
+  }>({ scope: repoScope(), stack: [null] });
+  const cursors = () =>
+    cursorState().scope === repoScope() ? cursorState().stack : [null];
   const currentCursor = () => cursors()[cursors().length - 1] ?? null;
+  const resetPaging = () => setCursorState({ scope: repoScope(), stack: [null] });
+  createEffect(
+    on(
+      repoScope,
+      () => {
+        setWorkflow("");
+        setStatus("");
+        setEvent("");
+        resetPaging();
+      },
+      { defer: true },
+    ),
+  );
 
   const filter = createMemo<RunListFilter>(() => ({
     workflow: workflow() || undefined,
@@ -99,9 +121,6 @@ export function ActionsView(): JSX.Element {
     return e instanceof ApiError ? e.message : "Something went wrong.";
   };
 
-  // Reset pagination whenever a filter changes.
-  const resetPaging = () => setCursors([null]);
-
   // Poll while any visible run is still live.
   createPolling({
     active: () => items().some((r) => runIsLive(r)),
@@ -111,9 +130,13 @@ export function ActionsView(): JSX.Element {
 
   const goNext = () => {
     const next = runsPage()?.nextCursor;
-    if (next) setCursors((c) => [...c, next]);
+    if (next) setCursorState({ scope: repoScope(), stack: [...cursors(), next] });
   };
-  const goPrev = () => setCursors((c) => (c.length > 1 ? c.slice(0, -1) : c));
+  const goPrev = () =>
+    setCursorState({
+      scope: repoScope(),
+      stack: cursors().length > 1 ? cursors().slice(0, -1) : [null],
+    });
 
   return (
     <div class="flex flex-col gap-4">

@@ -39,7 +39,7 @@ export function CodeView(): JSX.Element {
   const mode = createMemo<"blob" | "compare" | "commits" | "dir">(() => {
     const p = loc.pathname;
     if (p.includes("/blob/")) return "blob";
-    if (p.includes("/compare/")) return "compare";
+    if (/\/compare(?:\/|$)/u.test(p)) return "compare";
     if (p.includes("/commits")) return "commits";
     return "dir"; // overview (path === "") + tree browsing
   });
@@ -65,7 +65,12 @@ export function CodeView(): JSX.Element {
         />
       </Match>
       <Match when={mode() === "compare"}>
-        <CompareScreen owner={owner()} repo={name()} spec={spec()} />
+        <CompareScreen
+          owner={owner()}
+          repo={name()}
+          spec={spec()}
+          defaultBranch={defaultBranch()}
+        />
       </Match>
       <Match when={mode() === "commits"}>
         <CommitsScreen

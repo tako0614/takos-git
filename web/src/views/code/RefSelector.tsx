@@ -4,6 +4,7 @@ import {
   createSignal,
   createUniqueId,
   For,
+  onCleanup,
   Show,
   Suspense,
   type JSX,
@@ -12,6 +13,7 @@ import { reposApi } from "../../api/repos.ts";
 import { Icons, Spinner } from "../../ui/index.ts";
 import { moveTabFocus } from "../../lib/a11y.ts";
 import { cn } from "../../lib/cn.ts";
+import { computeHorizontalShift } from "../../lib/floating-clamp.ts";
 import { createReactiveListener } from "../../lib/lifecycle.ts";
 import { resolveRefSelectorKey } from "./ref-selector-a11y.ts";
 
@@ -30,17 +32,50 @@ export function RefSelector(props: {
   defaultBranch?: string;
   onPick: (ref: string, kind: RefKind) => void;
   size?: "sm" | "md";
+  triggerPrefix?: string;
+  triggerLabel?: string;
+  dialogLabel?: string;
+  heading?: string;
+  placeholder?: string;
+  align?: "left" | "right";
 }): JSX.Element {
   const [open, setOpen] = createSignal(false);
   const [tab, setTab] = createSignal<RefKind>("branch");
   const [filter, setFilter] = createSignal("");
   const [activeIndex, setActiveIndex] = createSignal(-1);
+  const [shiftX, setShiftX] = createSignal(0);
   const menuId = createUniqueId();
   const listId = createUniqueId();
   let root: HTMLDivElement | undefined;
   let triggerBtn: HTMLButtonElement | undefined;
+  let dialogEl: HTMLDivElement | undefined;
   let inputEl: HTMLInputElement | undefined;
   let listEl: HTMLDivElement | undefined;
+
+  const updateShift = () => {
+    if (!dialogEl || typeof window === "undefined") return;
+    const prev = shiftX();
+    const rect = dialogEl.getBoundingClientRect();
+    const unshifted = { left: rect.left - prev, right: rect.right - prev };
+    setShiftX(computeHorizontalShift(unshifted, window.innerWidth));
+  };
+
+  createEffect(() => {
+    if (!open()) {
+      setShiftX(0);
+      return;
+    }
+    const frame = requestAnimationFrame(updateShift);
+    onCleanup(() => cancelAnimationFrame(frame));
+  });
+  if (typeof window !== "undefined") {
+    createReactiveListener({
+      active: open,
+      target: window,
+      type: "resize",
+      handler: updateShift as EventListener,
+    });
+  }
 
   const optionId = (index: number) => `${listId}-opt-${index}`;
 
@@ -228,6 +263,7 @@ export function RefSelector(props: {
         aria-haspopup="dialog"
         aria-expanded={open()}
         aria-controls={open() ? menuId : undefined}
+        aria-label={props.triggerLabel}
         class={cn(
           "tg-focus inline-flex max-w-[15rem] items-center gap-1.5 rounded-md border border-border bg-canvas-subtle font-medium text-fg hover:bg-canvas-inset",
           btnSize(),
@@ -235,19 +271,29 @@ export function RefSelector(props: {
         onClick={toggle}
       >
         <Icons.GitBranch class="h-4 w-4 shrink-0 text-muted" />
-        <span class="truncate font-mono">{props.currentRef}</span>
+        <Show when={props.triggerPrefix}>
+          <span class="shrink-0 font-normal text-muted">{props.triggerPrefix}</span>
+        </Show>
+        <span class={cn("truncate font-mono", !props.currentRef && "font-sans text-muted")}>
+          {props.currentRef || props.placeholder || "Select ref"}
+        </span>
         <Icons.ChevronDown class="h-4 w-4 shrink-0 text-muted" />
       </button>
 
       <Show when={open()}>
         <div
+          ref={dialogEl}
           id={menuId}
           role="dialog"
-          aria-label="Switch branches or tags"
-          class="absolute left-0 z-40 mt-1 w-72 max-w-[calc(100vw-2rem)] overflow-hidden rounded-md border border-border bg-canvas shadow-lg"
+          aria-label={props.dialogLabel ?? "Switch branches or tags"}
+          style={shiftX() ? { transform: `translateX(${shiftX()}px)` } : undefined}
+          class={cn(
+            "absolute z-40 mt-1 w-72 max-w-[calc(100vw-1rem)] overflow-hidden rounded-md border border-border bg-canvas shadow-lg",
+            props.align === "right" ? "right-0" : "left-0",
+          )}
         >
           <div class="border-b border-border p-2">
-            <div class="text-xs font-semibold text-muted">Switch branches/tags</div>
+            <div class="text-xs font-semibold text-muted">{props.heading ?? "Switch branches/tags"}</div>
             <div class="relative mt-2">
               <Icons.Search class="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-subtle" />
               <input
