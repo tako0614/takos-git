@@ -38,7 +38,7 @@ export function StepStatusBadge(props: {
 
 function glyph(v: StatusVisual, cls?: string): JSX.Element {
   return (
-    <span class={`${toneText(v.tone)} ${cls ?? ""}`} title={v.label} aria-label={v.label}>
+    <span role="img" class={`${toneText(v.tone)} ${cls ?? ""}`} title={v.label} aria-label={v.label}>
       {v.icon(`h-4 w-4 ${v.spin ? "animate-spin" : ""}`)}
     </span>
   );

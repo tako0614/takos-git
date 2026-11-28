@@ -32,17 +32,32 @@ import {
 
 type Rollup = "success" | "failure" | "pending" | "neutral";
 
+const ROLLUP_LABEL: Record<Rollup, string> = {
+  success: "Passed",
+  failure: "Failed",
+  pending: "Pending",
+  neutral: "Neutral",
+};
+
 function StateIcon(props: { rollup: Rollup }): JSX.Element {
-  switch (props.rollup) {
-    case "success":
-      return <Icons.Check class="h-4 w-4 text-success" />;
-    case "failure":
-      return <Icons.X class="h-4 w-4 text-danger" />;
-    case "pending":
-      return <Icons.Clock class="h-4 w-4 text-attention" />;
-    default:
-      return <Icons.Info class="h-4 w-4 text-muted" />;
-  }
+  const label = () => ROLLUP_LABEL[props.rollup];
+  const glyph = () => {
+    switch (props.rollup) {
+      case "success":
+        return <Icons.Check class="h-4 w-4 text-success" />;
+      case "failure":
+        return <Icons.X class="h-4 w-4 text-danger" />;
+      case "pending":
+        return <Icons.Clock class="h-4 w-4 text-attention" />;
+      default:
+        return <Icons.Info class="h-4 w-4 text-muted" />;
+    }
+  };
+  return (
+    <span role="img" aria-label={label()} title={label()} class="inline-flex shrink-0">
+      {glyph()}
+    </span>
+  );
 }
 
 function statusRollup(s: CommitStatusDto["state"]): Rollup {

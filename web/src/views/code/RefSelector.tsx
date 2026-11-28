@@ -66,19 +66,46 @@ export function RefSelector(props: {
   };
 
   // Fetch only once the popover has been opened at least once.
-  const [refs] = createResource(
+  const [refs, { refetch }] = createResource(
     () => (open() ? ([props.owner, props.repo] as const) : false),
     async ([owner, repo]) => {
-      const [branchList, tagPage] = await Promise.all([
-        reposApi.branches(owner, repo).catch(() => ({ branches: [] as const })),
-        reposApi.tags(owner, repo, { limit: 100 }).catch(() => ({ items: [] as const, nextCursor: null })),
+      const [branchesRes, tagsRes] = await Promise.allSettled([
+        reposApi.branches(owner, repo),
+        reposApi.tags(owner, repo, { limit: 100 }),
       ]);
       return {
-        branches: branchList.branches.map((b) => b.name),
-        tags: tagPage.items.map((t) => t.name),
+        branches:
+          branchesRes.status === "fulfilled"
+            ? branchesRes.value.branches.map((b) => b.name)
+            : [],
+        branchesError:
+          branchesRes.status === "rejected"
+            ? (branchesRes.reason instanceof Error
+                ? branchesRes.reason.message
+                : "Could not load branches.")
+            : null,
+        tags:
+          tagsRes.status === "fulfilled"
+            ? tagsRes.value.items.map((t) => t.name)
+            : [],
+        tagsError:
+          tagsRes.status === "rejected"
+            ? (tagsRes.reason instanceof Error
+                ? tagsRes.reason.message
+                : "Could not load tags.")
+            : null,
       };
     },
   );
+
+  const tabError = () => {
+    if (refs.error) {
+      return refs.error instanceof Error ? refs.error.message : "Could not load refs.";
+    }
+    const data = refs();
+    if (!data) return null;
+    return tab() === "branch" ? data.branchesError : data.tagsError;
+  };
 
   const items = () => {
     if (refs.error) return [];
@@ -182,7 +209,7 @@ export function RefSelector(props: {
 
   const btnSize = () =>
     props.size === "sm"
-      ? "min-h-10 sm:min-h-0 sm:h-7 px-2.5 text-xs"
+      ? "min-h-11 sm:min-h-0 sm:h-7 px-2.5 text-xs"
       : "min-h-11 sm:min-h-0 sm:h-8 px-3 text-sm";
 
   return (
@@ -236,13 +263,13 @@ export function RefSelector(props: {
                 placeholder={tab() === "branch" ? "Find a branch…" : "Find a tag…"}
                 aria-label="Filter refs"
                 aria-activedescendant={activeDescendant()}
-                class="tg-focus w-full rounded-md border border-border bg-canvas py-1.5 pl-7 pr-8 text-sm text-fg placeholder:text-subtle"
+                class="tg-focus min-h-11 w-full rounded-md border border-border bg-canvas py-1.5 pl-7 pr-11 text-sm text-fg placeholder:text-subtle sm:min-h-0 sm:pr-8"
               />
               <Show when={filter()}>
                 <button
                   type="button"
                   aria-label="Clear ref filter"
-                  class="tg-focus absolute right-1 top-1/2 inline-flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded text-muted hover:bg-canvas-subtle hover:text-fg"
+                  class="tg-focus absolute right-0 top-1/2 inline-flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded text-muted hover:bg-canvas-subtle hover:text-fg sm:right-1 sm:h-6 sm:w-6"
                   onClick={(e) => {
                     e.stopPropagation();
                     setFilter("");
@@ -264,7 +291,7 @@ export function RefSelector(props: {
               tabIndex={tab() === "branch" ? 0 : -1}
               aria-selected={tab() === "branch"}
               class={cn(
-                "tg-focus min-h-10 flex-1 px-3 py-2 font-medium sm:min-h-0",
+                "tg-focus min-h-11 flex-1 px-3 py-2 font-medium sm:min-h-0",
                 tab() === "branch" ? "border-b-2 border-attention-emphasis text-fg" : "text-muted hover:text-fg",
               )}
               onClick={() => {
@@ -282,7 +309,7 @@ export function RefSelector(props: {
               tabIndex={tab() === "tag" ? 0 : -1}
               aria-selected={tab() === "tag"}
               class={cn(
-                "tg-focus min-h-10 flex-1 px-3 py-2 font-medium sm:min-h-0",
+                "tg-focus min-h-11 flex-1 px-3 py-2 font-medium sm:min-h-0",
                 tab() === "tag" ? "border-b-2 border-attention-emphasis text-fg" : "text-muted hover:text-fg",
               )}
               onClick={() => {
@@ -304,43 +331,63 @@ export function RefSelector(props: {
           >
             <Suspense fallback={<div class="flex justify-center py-6"><Spinner /></div>}>
               <Show
-                when={items().length > 0}
+                when={!tabError()}
                 fallback={
-                  <div class="px-3 py-6 text-center text-sm text-muted">
-                    {tab() === "branch" ? "No branches found." : "No tags found."}
+                  <div class="space-y-2 px-3 py-4 text-center text-sm text-danger">
+                    <p>{tabError()}</p>
+                    <button
+                      type="button"
+                      disabled={refs.loading}
+                      class="tg-focus inline-flex min-h-11 items-center rounded-md border border-border bg-canvas-subtle px-3 py-1 text-xs font-medium text-fg hover:bg-canvas-inset disabled:opacity-60 sm:min-h-0"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void refetch();
+                      }}
+                    >
+                      Retry
+                    </button>
                   </div>
                 }
               >
-                <For each={items()}>
-                  {(name, index) => {
-                    const current = name === props.currentRef;
-                    const highlighted = () => activeIndex() === index();
-                    return (
-                      <button
-                        type="button"
-                        id={optionId(index())}
-                        data-ref-index={index()}
-                        role="option"
-                        aria-selected={current}
-                        class={cn(
-                          "tg-focus flex min-h-10 w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-canvas-subtle sm:min-h-0",
-                          current ? "font-semibold text-fg" : "text-fg",
-                          highlighted() && "bg-canvas-subtle ring-1 ring-inset ring-accent-emphasis/60",
-                        )}
-                        onMouseEnter={() => setActiveIndex(index())}
-                        onClick={() => pick(name)}
-                      >
-                        <Icons.Check class={cn("h-4 w-4 shrink-0", current ? "text-success" : "text-transparent")} />
-                        <span class="truncate font-mono">{name}</span>
-                        <Show when={name === props.defaultBranch}>
-                          <span class="ml-auto rounded-full border border-border px-1.5 text-[10px] uppercase tracking-wide text-muted">
-                            default
-                          </span>
-                        </Show>
-                      </button>
-                    );
-                  }}
-                </For>
+                <Show
+                  when={items().length > 0}
+                  fallback={
+                    <div class="px-3 py-6 text-center text-sm text-muted">
+                      {tab() === "branch" ? "No branches found." : "No tags found."}
+                    </div>
+                  }
+                >
+                  <For each={items()}>
+                    {(name, index) => {
+                      const current = () => name === props.currentRef;
+                      const highlighted = () => activeIndex() === index();
+                      return (
+                        <button
+                          type="button"
+                          id={optionId(index())}
+                          data-ref-index={index()}
+                          role="option"
+                          aria-selected={current()}
+                          class={cn(
+                            "tg-focus flex min-h-11 w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-canvas-subtle sm:min-h-0",
+                            current() ? "font-semibold text-fg" : "text-fg",
+                            highlighted() && "bg-canvas-subtle ring-1 ring-inset ring-accent-emphasis/60",
+                          )}
+                          onMouseEnter={() => setActiveIndex(index())}
+                          onClick={() => pick(name)}
+                        >
+                          <Icons.Check class={cn("h-4 w-4 shrink-0", current() ? "text-success" : "text-transparent")} />
+                          <span class="truncate font-mono">{name}</span>
+                          <Show when={name === props.defaultBranch}>
+                            <span class="ml-auto rounded-full border border-border px-1.5 text-[10px] uppercase tracking-wide text-muted">
+                              default
+                            </span>
+                          </Show>
+                        </button>
+                      );
+                    }}
+                  </For>
+                </Show>
               </Show>
             </Suspense>
           </div>

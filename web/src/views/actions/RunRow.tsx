@@ -42,7 +42,14 @@ export function RunRow(props: {
           <Show when={run().sha}>
             {(sha) => (
               <span class="inline-flex items-center gap-1">
-                <Icons.GitCommit class="h-3 w-3" /> <Sha value={sha()} />
+                <Icons.GitCommit class="h-3 w-3" />
+                <Link
+                  href={`/${props.owner}/${props.repo}/commit/${sha()}`}
+                  class="tg-focus inline-flex min-h-11 items-center rounded hover:opacity-80 sm:min-h-0"
+                  title={`View commit ${sha().slice(0, 7)}`}
+                >
+                  <Sha value={sha()} />
+                </Link>
               </span>
             )}
           </Show>
@@ -58,6 +65,14 @@ export function RunRow(props: {
               </span>
             )}
           </Show>
+          <span class="inline-flex items-center gap-2 sm:hidden">
+            <RelativeTime epochMs={run().createdAt} />
+            <Show when={duration()}>
+              <span class="inline-flex items-center gap-1">
+                <Icons.Clock class="h-3 w-3" /> {duration()}
+              </span>
+            </Show>
+          </span>
         </div>
       </div>
       <div class="hidden shrink-0 flex-col items-end gap-1 text-xs text-muted sm:flex">

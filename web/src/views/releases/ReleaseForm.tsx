@@ -149,11 +149,12 @@ export function ReleaseForm(props: ReleaseFormProps): JSX.Element {
           </Field>
 
           <fieldset class="flex flex-col gap-2">
-            <label class="flex items-start gap-2 text-sm text-fg">
+            <legend class="sr-only">Release options</legend>
+            <label class="flex min-h-11 items-start gap-2 py-1 text-sm text-fg sm:min-h-0 sm:py-0">
               <input
                 type="checkbox"
                 name="prerelease"
-                class="mt-0.5 h-4 w-4 accent-accent"
+                class="tg-focus mt-0.5 h-4 w-4 accent-accent"
                 checked={prerelease()}
                 onChange={(e) => setPrerelease(e.currentTarget.checked)}
               />
@@ -164,11 +165,11 @@ export function ReleaseForm(props: ReleaseFormProps): JSX.Element {
                 </span>
               </span>
             </label>
-            <label class="flex items-start gap-2 text-sm text-fg">
+            <label class="flex min-h-11 items-start gap-2 py-1 text-sm text-fg sm:min-h-0 sm:py-0">
               <input
                 type="checkbox"
                 name="draft"
-                class="mt-0.5 h-4 w-4 accent-accent"
+                class="tg-focus mt-0.5 h-4 w-4 accent-accent"
                 checked={draft()}
                 onChange={(e) => setDraft(e.currentTarget.checked)}
               />

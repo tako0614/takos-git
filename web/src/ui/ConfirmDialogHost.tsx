@@ -1,4 +1,4 @@
-import { type JSX } from "solid-js";
+import { createUniqueId, type JSX } from "solid-js";
 import {
   useConfirmDialogActions,
   useConfirmDialogState,
@@ -13,15 +13,22 @@ import { Button } from "./Button.tsx";
 export function ConfirmDialogHost(): JSX.Element {
   const state = useConfirmDialogState();
   const { handleConfirm, handleCancel } = useConfirmDialogActions();
+  const descId = createUniqueId();
   return (
     <Dialog
       open={state().isOpen}
       onClose={handleCancel}
+      role="alertdialog"
+      aria-describedby={descId}
       size="sm"
       title={state().title}
       footer={
         <>
-          <Button variant="default" onClick={handleCancel}>
+          <Button
+            variant="default"
+            autofocus={state().danger ? true : undefined}
+            onClick={handleCancel}
+          >
             {state().cancelText ?? "Cancel"}
           </Button>
           <Button
@@ -33,7 +40,7 @@ export function ConfirmDialogHost(): JSX.Element {
         </>
       }
     >
-      <p class="text-sm text-muted">{state().message}</p>
+      <p id={descId} class="text-sm text-muted">{state().message}</p>
     </Dialog>
   );
 }

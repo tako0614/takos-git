@@ -22,13 +22,15 @@ import {
   Avatar,
   Banner,
   Button,
+  ButtonLink,
   Field,
   Icons,
+  LoadingBlock,
   TextInput,
   useConfirmDialog,
   useToast,
 } from "../../ui/index.ts";
-import { LabelChip, MarkdownEditor } from "./parts.tsx";
+import { LabelChip, MarkdownEditor, principalName } from "./parts.tsx";
 import { AssigneeEditor, LabelEditor, MilestoneEditor } from "./pickers.tsx";
 import { createIssueSubmission, type IssueSubmission } from "./issue-submission.ts";
 
@@ -150,14 +152,40 @@ export function NewIssueForm(props: { owner: string; repo: string; repositoryId:
       </div>
 
       <Show
+        when={!session.loading()}
+        fallback={<LoadingBlock label="Checking session…" />}
+      >
+      <Show
+        when={!session.error()}
+        fallback={
+          <Banner
+            tone="danger"
+            title="Could not verify your session"
+            action={
+              <Button size="sm" onClick={() => session.refetch()}>
+                Retry
+              </Button>
+            }
+          >
+            {session.error() instanceof ApiError
+              ? (session.error() as ApiError).message
+              : session.error() instanceof Error
+                ? (session.error() as Error).message
+                : "Could not verify your session."}
+          </Banner>
+        }
+      >
+      <Show
         when={session.authenticated()}
         fallback={
           <Banner
             tone="info"
             action={
-              <Button size="sm" variant="primary" onClick={() => session.signIn()}>
-                Sign in
-              </Button>
+              <Show when={session.configured()}>
+                <Button size="sm" variant="primary" onClick={() => session.signIn()}>
+                  Sign in
+                </Button>
+              </Show>
             }
           >
             You need to sign in to open an issue.
@@ -201,18 +229,15 @@ export function NewIssueForm(props: { owner: string; repo: string; repositoryId:
             </Show>
 
             <div class="flex items-center justify-end gap-2 border-t border-border pt-4">
-              <A
-                href={`${base()}/issues`}
-                class="tg-focus rounded-md border border-border px-3 py-1.5 text-sm hover:bg-canvas-subtle"
-              >
+              <ButtonLink as={A} href={`${base()}/issues`}>
                 Cancel
-              </A>
+              </ButtonLink>
               <Button
                 type="submit"
                 variant="primary"
                 disabled={submitting() || !!submission.state() || !title().trim()}
               >
-                <Icons.Check class="h-4 w-4" /> Submit new issue
+                <Icons.Check class="h-4 w-4" /> {submitting() ? "Submitting…" : "Submit new issue"}
               </Button>
             </div>
           </div>
@@ -261,12 +286,18 @@ export function NewIssueForm(props: { owner: string; repo: string; repositoryId:
               >
                 <ul class="space-y-1.5">
                   <Index each={assigneeSubjects()}>
-                    {(s) => (
-                      <li class="flex items-center gap-2 text-sm">
-                        <Avatar name={s()} size={20} />
-                        <span class="text-fg">{s()}</span>
-                      </li>
-                    )}
+                    {(s) => {
+                      const label = () => {
+                        const match = loadedChoices(collaborators).find((c) => c.principal.subject === s());
+                        return match ? principalName(match.principal) : s();
+                      };
+                      return (
+                        <li class="flex items-center gap-2 text-sm">
+                          <Avatar name={label()} size={20} />
+                          <span class="text-fg">{label()}</span>
+                        </li>
+                      );
+                    }}
                   </Index>
                 </ul>
               </Show>
@@ -299,6 +330,8 @@ export function NewIssueForm(props: { owner: string; repo: string; repositoryId:
             </section>
           </aside>
         </form>
+      </Show>
+      </Show>
       </Show>
     </div>
   );

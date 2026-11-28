@@ -1,4 +1,4 @@
-import { type JSX } from "solid-js";
+import { Show, type JSX } from "solid-js";
 import { absoluteTime, relativeTime } from "../lib/time.ts";
 
 /**
@@ -9,11 +9,22 @@ export function RelativeTime(props: {
   epochMs: number | null | undefined;
   class?: string;
 }): JSX.Element {
-  if (props.epochMs == null) return <span class={props.class}>—</span>;
-  const ms = props.epochMs;
+  const validMs = (): number | null => {
+    const ms = props.epochMs;
+    return typeof ms === "number" && Number.isFinite(ms) ? ms : null;
+  };
   return (
-    <time class={props.class} datetime={new Date(ms).toISOString()} title={absoluteTime(ms)}>
-      {relativeTime(ms)}
-    </time>
+    <Show
+      when={validMs() !== null}
+      fallback={<span class={props.class}>—</span>}
+    >
+      <time
+        class={props.class}
+        datetime={new Date(validMs() as number).toISOString()}
+        title={absoluteTime(validMs() as number)}
+      >
+        {relativeTime(validMs() as number)}
+      </time>
+    </Show>
   );
 }

@@ -21,6 +21,9 @@ export function Dialog(props: {
   open: boolean;
   onClose: () => void;
   title?: JSX.Element;
+  role?: "dialog" | "alertdialog";
+  "aria-label"?: string;
+  "aria-describedby"?: string;
   children: JSX.Element;
   footer?: JSX.Element;
   size?: "sm" | "md" | "lg";
@@ -32,9 +35,11 @@ export function Dialog(props: {
     props.size === "lg" ? "max-w-2xl" : props.size === "sm" ? "max-w-sm" : "max-w-lg";
 
   let panel: HTMLDivElement | undefined;
+  let pointerDownOnBackdrop = false;
 
   createEffect(() => {
     if (!props.open) return;
+    pointerDownOnBackdrop = false;
     const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     pushDialog(dialogToken);
 
@@ -66,15 +71,22 @@ export function Dialog(props: {
         <div
           class="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4 sm:p-8"
           style={{ background: "var(--overlay-backdrop)" }}
+          onPointerDown={(e) => {
+            pointerDownOnBackdrop = e.target === e.currentTarget;
+          }}
           onClick={(e) => {
-            if (e.target === e.currentTarget) props.onClose();
+            const shouldClose = pointerDownOnBackdrop && e.target === e.currentTarget;
+            pointerDownOnBackdrop = false;
+            if (shouldClose) props.onClose();
           }}
         >
           <div
             ref={panel}
-            role="dialog"
+            role={props.role ?? "dialog"}
             aria-modal="true"
             aria-labelledby={props.title ? titleId : undefined}
+            aria-label={!props.title ? props["aria-label"] : undefined}
+            aria-describedby={props["aria-describedby"]}
             tabIndex={-1}
             class={cn(
               "mt-8 w-full rounded-lg border border-border bg-canvas shadow-2xl outline-none",

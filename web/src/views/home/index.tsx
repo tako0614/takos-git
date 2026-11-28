@@ -52,7 +52,8 @@ function RepoRow(props: { repo: RepositoryDto }): JSX.Element {
       </div>
       <A
         href={`/${props.repo.owner}/${props.repo.name}`}
-        class="tg-focus shrink-0 rounded-md border border-border px-3 py-1.5 text-sm hover:bg-canvas-subtle"
+        aria-label={`Open ${props.repo.owner}/${props.repo.name}`}
+        class="tg-focus inline-flex min-h-11 shrink-0 items-center rounded-md border border-border px-3 py-1.5 text-sm hover:bg-canvas-subtle sm:min-h-0"
       >
         Open
       </A>
@@ -64,7 +65,10 @@ function RepoRow(props: { repo: RepositoryDto }): JSX.Element {
 export function HomeView(): JSX.Element {
   const session = useSession();
   const [creating, setCreating] = createSignal(false);
-  const [cursor, setCursor] = createSignal<string | null>(null);
+  // Cursor history stack ([null] = first page) so Prev walks back real cursors.
+  const [history, setHistory] = createSignal<(string | null)[]>([null]);
+  const cursor = () => history()[history().length - 1];
+  const resetPaging = () => setHistory([null]);
   // Source must be an object (always truthy): a bare null cursor would make
   // createResource treat the source as "no fetch" and never load the list.
   const [data, { refetch }] = createResource(
@@ -93,7 +97,7 @@ export function HomeView(): JSX.Element {
       </div>
 
       <Show when={session.authenticated()}>
-        <NewRepository open={creating()} onClose={() => setCreating(false)} onCreated={() => { setCursor(null); void refetch(); }} />
+        <NewRepository open={creating()} onClose={() => setCreating(false)} onCreated={() => { resetPaging(); void refetch(); }} />
       </Show>
 
       <Show when={session.state() && !session.authenticated() && session.configured()}>
@@ -128,7 +132,18 @@ export function HomeView(): JSX.Element {
               <EmptyState
                 icon={<Icons.Database class="h-8 w-8" />}
                 title="No repositories yet"
-                description="Repositories you can access will appear here. Use New to create one after signing in."
+                description={
+                  session.authenticated()
+                    ? "Repositories you can access will appear here. Create one to get started."
+                    : "Repositories you can access will appear here. Sign in and use New to create one."
+                }
+                action={
+                  <Show when={session.authenticated()}>
+                    <Button variant="primary" onClick={() => setCreating(true)}>
+                      <Icons.Plus class="h-4 w-4" /> New repository
+                    </Button>
+                  </Show>
+                }
               />
             }
           >
@@ -137,9 +152,13 @@ export function HomeView(): JSX.Element {
             </Box>
             <Pagination
               hasNext={!!data()?.nextCursor}
-              hasPrev={!!cursor()}
-              onNext={() => setCursor(data()?.nextCursor ?? null)}
-              onPrev={() => setCursor(null)}
+              hasPrev={history().length > 1}
+              loading={data.loading}
+              onNext={() => {
+                const next = data()?.nextCursor;
+                if (next) setHistory((h) => [...h, next]);
+              }}
+              onPrev={() => setHistory((h) => (h.length > 1 ? h.slice(0, -1) : h))}
             />
           </Show>
         </Suspense>

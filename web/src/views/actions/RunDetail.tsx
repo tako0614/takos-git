@@ -122,7 +122,10 @@ export function RunDetail(props: {
   return (
     <div class="flex flex-col gap-4">
       <div>
-        <Link href={`/${props.owner}/${props.repo}/actions`} class="inline-flex items-center gap-1 text-sm">
+        <Link
+          href={`/${props.owner}/${props.repo}/actions`}
+          class="tg-focus inline-flex min-h-11 items-center gap-1 rounded text-sm sm:min-h-0"
+        >
           <Icons.ArrowLeft class="h-4 w-4" /> All workflows
         </Link>
       </div>
@@ -187,7 +190,14 @@ export function RunDetail(props: {
                       <Show when={r().sha}>
                         {(sha) => (
                           <span class="inline-flex items-center gap-1">
-                            <Icons.GitCommit class="h-3.5 w-3.5" /> <Sha value={sha()} />
+                            <Icons.GitCommit class="h-3.5 w-3.5" />
+                            <Link
+                              href={`/${props.owner}/${props.repo}/commit/${sha()}`}
+                              class="tg-focus inline-flex min-h-11 items-center rounded hover:opacity-80 sm:min-h-0"
+                              title={`View commit ${sha().slice(0, 7)}`}
+                            >
+                              <Sha value={sha()} />
+                            </Link>
                           </span>
                         )}
                       </Show>

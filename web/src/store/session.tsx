@@ -13,9 +13,10 @@ import { fetchSession, signInHref, signOut } from "../api/auth.ts";
 import type { SessionState, SessionUser } from "../api/types.ts";
 
 interface SessionContextValue {
-  /** Latest session state (undefined while the first fetch is in flight). */
+  /** Latest session state (undefined while the first fetch is in flight or failed). */
   readonly state: () => SessionState | undefined;
   readonly loading: () => boolean;
+  readonly error: () => unknown;
   readonly authenticated: () => boolean;
   readonly canManageApp: () => boolean;
   /** false only when OIDC is unconfigured on the worker. */
@@ -31,21 +32,23 @@ const SessionContext = createContext<SessionContextValue>();
 
 export const SessionProvider: ParentComponent = (props) => {
   const [state, { refetch }] = createResource<SessionState>(() => fetchSession());
+  const latest = (): SessionState | undefined => (state.error ? undefined : state.latest);
 
   const value: SessionContextValue = {
-    state: () => state.latest,
+    state: latest,
     loading: () => state.loading,
-    authenticated: () => state.latest?.authenticated === true,
+    error: () => state.error,
+    authenticated: () => latest()?.authenticated === true,
     canManageApp: () => {
-      const s = state.latest;
+      const s = latest();
       return s?.authenticated === true && s.canManageApp;
     },
     configured: () => {
-      const s = state.latest;
+      const s = latest();
       return !s || s.authenticated || s.configured;
     },
     user: () => {
-      const s = state.latest;
+      const s = latest();
       return s && s.authenticated ? s.user : null;
     },
     refetch: () => void refetch(),

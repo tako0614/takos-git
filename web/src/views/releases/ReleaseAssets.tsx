@@ -94,7 +94,7 @@ export function ReleaseAssets(props: ReleaseAssetsProps): JSX.Element {
               <Icons.Package class="h-4 w-4 shrink-0 text-muted" />
               <a
                 href={assetHref(asset())}
-                class="min-w-0 flex-1 truncate text-sm font-medium text-accent hover:underline"
+                class="tg-focus min-w-0 flex-1 truncate rounded text-sm font-medium text-accent hover:underline"
                 download={asset().name}
               >
                 {asset().name}
@@ -113,7 +113,7 @@ export function ReleaseAssets(props: ReleaseAssetsProps): JSX.Element {
               </Show>
               <a
                 href={assetHref(asset())}
-                class="shrink-0 text-muted hover:text-accent"
+                class="tg-focus inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-muted hover:bg-canvas-subtle hover:text-accent sm:h-7 sm:w-7"
                 download={asset().name}
                 aria-label={`Download ${asset().name}`}
                 title="Download"

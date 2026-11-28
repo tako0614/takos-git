@@ -14,6 +14,7 @@
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
 :root {
+  color-scheme: light;
   /* GitHub Primer-ish light scale */
   --canvas-default: #ffffff;
   --canvas-subtle: #f6f8fa;
@@ -47,6 +48,7 @@
 }
 
 [data-theme="dark"] {
+  color-scheme: dark;
   /* GitHub Primer-ish dark scale */
   --canvas-default: #0d1117;
   --canvas-subtle: #151b23;
@@ -82,6 +84,7 @@
 /* Pre-JS: honor OS preference so the first paint isn't wrong. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
+    color-scheme: dark;
     --canvas-default: #0d1117;
     --canvas-subtle: #151b23;
     --canvas-inset: #010409;

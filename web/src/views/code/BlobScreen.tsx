@@ -25,6 +25,7 @@ import { PathBreadcrumb } from "./PathBreadcrumb.tsx";
 import { CopyButton } from "./CopyButton.tsx";
 import { fetchBlame, type BlameLine } from "./blame.ts";
 import {
+  commitHref,
   commitsHref,
   decodeBase64Utf8,
   formatBytes,
@@ -36,7 +37,7 @@ import {
 } from "./helpers.ts";
 
 /** Blame gutter: one row per line, commit chip shown when the commit changes. */
-function BlameView(props: { lines: readonly BlameLine[] }): JSX.Element {
+function BlameView(props: { owner: string; repo: string; lines: readonly BlameLine[] }): JSX.Element {
   return (
     <div class="overflow-x-auto rounded-md border border-border bg-canvas font-mono text-xs leading-5">
       <table class="w-full border-collapse">
@@ -60,9 +61,12 @@ function BlameView(props: { lines: readonly BlameLine[] }): JSX.Element {
                   >
                     <Show when={showCommit()}>
                       <span class="inline-flex items-center gap-1.5">
-                        <span class="rounded bg-neutral-muted px-1 text-[10px] text-fg">
+                        <A
+                          href={commitHref(props.owner, props.repo, line().commitSha)}
+                          class="tg-focus rounded bg-neutral-muted px-1 text-[10px] text-fg hover:text-accent hover:underline"
+                        >
                           {line().commitSha.slice(0, 7)}
-                        </span>
+                        </A>
                         <span class="truncate text-muted">{line().authorName}</span>
                         <span class="shrink-0 text-subtle">{dateLabel()}</span>
                       </span>
@@ -128,10 +132,11 @@ export function BlobScreen(props: {
   });
   const isText = () => !!blob()?.data && !isImage() && !isBinary();
 
-  const [blame] = createResource(
+  const [blame, { refetch: refetchBlame }] = createResource(
     () => (blameOn() && isText() ? ([props.owner, props.repo, props.refName, props.path] as const) : false),
     ([o, r, ref, path]) => fetchBlame(o, r, path, ref),
   );
+  const blameData = () => (blame.error ? undefined : blame.latest);
 
   const tooLarge = () => blob()?.error?.code === "blob_too_large";
 
@@ -304,20 +309,37 @@ export function BlobScreen(props: {
                             when={blameOn()}
                             fallback={<CodeBlock class="rounded-none border-0" content={decoded()} />}
                           >
-                            <Suspense fallback={<div class="flex justify-center py-8"><Spinner label="Loading blame" /></div>}>
+                            <Show
+                              when={!blame.error}
+                              fallback={
+                                <div class="p-4">
+                                  <Banner
+                                    tone="danger"
+                                    title="Blame is unavailable for this file"
+                                    action={
+                                      <Button size="sm" disabled={blame.loading} onClick={() => void refetchBlame()}>
+                                        Retry
+                                      </Button>
+                                    }
+                                  >
+                                    {blame.error instanceof ApiError
+                                      ? blame.error.message
+                                      : blame.error instanceof Error
+                                        ? blame.error.message
+                                        : "Could not load blame annotations."}
+                                  </Banner>
+                                </div>
+                              }
+                            >
                               <Show
-                                when={blame()}
-                                fallback={
-                                  <Show when={blame.error}>
-                                    <div class="px-4 py-6 text-center text-sm text-muted">
-                                      Blame is unavailable for this file.
-                                    </div>
-                                  </Show>
-                                }
+                                when={blameData() && !blame.loading}
+                                fallback={<div class="flex justify-center py-8"><Spinner label="Loading blame" /></div>}
                               >
-                                {(b) => <div class={cn("p-0")}><BlameView lines={b().lines} /></div>}
+                                <div class={cn("p-0")}>
+                                  <BlameView owner={props.owner} repo={props.repo} lines={blameData()!.lines} />
+                                </div>
                               </Show>
-                            </Suspense>
+                            </Show>
                           </Show>
                         </Show>
                       }

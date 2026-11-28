@@ -1,4 +1,4 @@
-import { createResource, createSignal, Show, Suspense, type JSX } from "solid-js";
+import { createEffect, createResource, createSignal, Show, Suspense, type JSX } from "solid-js";
 import { A, useNavigate, useSearchParams } from "@solidjs/router";
 import { reposApi } from "../../api/repos.ts";
 import {
@@ -29,6 +29,13 @@ export function CommitsScreen(props: {
   const [search] = useSearchParams();
   const path = () => (typeof search.path === "string" ? search.path : "");
   const [limit, setLimit] = createSignal(PAGE);
+  createEffect(() => {
+    props.owner;
+    props.repo;
+    props.refName;
+    path();
+    setLimit(PAGE);
+  });
 
   const pathQuery = () => (path() ? `?path=${encodeURIComponent(path())}` : "");
 
@@ -58,17 +65,20 @@ export function CommitsScreen(props: {
         />
         <h1 class="text-base font-semibold text-fg">Commits</h1>
         <Show when={path()}>
-          <span class="inline-flex items-center gap-1.5 rounded-full border border-border bg-canvas-subtle px-2.5 py-0.5 text-xs text-muted">
-            <Icons.FileText class="h-3.5 w-3.5" />
-            <A href={blobHref(props.owner, props.repo, props.refName, path())} class="font-mono hover:text-accent hover:underline">
+          <span class="inline-flex items-center gap-1.5 rounded-full border border-border bg-canvas-subtle pl-2.5 pr-1 py-0.5 text-xs text-muted sm:pr-2">
+            <Icons.FileText class="h-3.5 w-3.5 shrink-0" />
+            <A
+              href={blobHref(props.owner, props.repo, props.refName, path())}
+              class="tg-focus inline-flex min-h-11 items-center rounded font-mono hover:text-accent hover:underline sm:min-h-0"
+            >
               {path()}
             </A>
             <A
               href={commitsHref(props.owner, props.repo, props.refName)}
               aria-label="Clear file filter"
-              class="text-subtle hover:text-fg"
+              class="tg-focus inline-flex h-11 w-11 items-center justify-center rounded-full text-subtle hover:bg-canvas-inset hover:text-fg sm:h-5 sm:w-5"
             >
-              <Icons.X class="h-3 w-3" />
+              <Icons.X class="h-3.5 w-3.5 sm:h-3 sm:w-3" />
             </A>
           </span>
         </Show>

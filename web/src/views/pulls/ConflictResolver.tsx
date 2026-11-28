@@ -89,11 +89,19 @@ function ResolverBody(props: {
 
   const acceptOurs = () => {
     const c = current();
-    if (c) setResolution({ path: c.path, content: c.ours ?? "", delete: false, source: "ours" });
+    if (c) {
+      const content = c.ours ?? "";
+      setEdit(content);
+      setResolution({ path: c.path, content, delete: false, source: "ours" });
+    }
   };
   const acceptTheirs = () => {
     const c = current();
-    if (c) setResolution({ path: c.path, content: c.theirs ?? "", delete: false, source: "theirs" });
+    if (c) {
+      const content = c.theirs ?? "";
+      setEdit(content);
+      setResolution({ path: c.path, content, delete: false, source: "theirs" });
+    }
   };
   const acceptDelete = () => {
     const c = current();

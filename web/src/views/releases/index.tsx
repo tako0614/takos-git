@@ -14,6 +14,7 @@ import {
   EmptyState,
   Icons,
   Label,
+  Link,
   LoadingBlock,
   Pagination,
   RelativeTime,
@@ -170,6 +171,8 @@ export function ReleasesView(): JSX.Element {
                   }
                 >
                   <ReleaseTable
+                    owner={owner()}
+                    repo={name()}
                     items={pageData()?.items ?? []}
                     canWrite={canWrite()}
                     onOpen={openDetail}
@@ -221,6 +224,8 @@ export function ReleasesView(): JSX.Element {
 // ---------------------------------------------------------------------------
 
 function ReleaseTable(props: {
+  owner: string;
+  repo: string;
   items: readonly ReleaseDto[];
   canWrite: boolean;
   onOpen: (tag: string) => void;
@@ -233,6 +238,8 @@ function ReleaseTable(props: {
       <Index each={props.items}>
         {(release) => (
           <ReleaseRow
+            owner={props.owner}
+            repo={props.repo}
             release={release()}
             isLatest={release().tag === latest()}
             canWrite={props.canWrite}
@@ -247,6 +254,8 @@ function ReleaseTable(props: {
 }
 
 function ReleaseRow(props: {
+  owner: string;
+  repo: string;
   release: ReleaseDto;
   isLatest: boolean;
   canWrite: boolean;
@@ -284,7 +293,15 @@ function ReleaseRow(props: {
         <div class="mt-1 flex flex-wrap items-center gap-3 text-xs text-muted">
           <span class="font-mono">{r().tag}</span>
           <Show when={r().targetSha}>
-            {(sha) => <Sha value={sha()} />}
+            {(sha) => (
+              <Link
+                href={`/${props.owner}/${props.repo}/commit/${sha()}`}
+                class="tg-focus inline-flex min-h-11 items-center rounded hover:opacity-80 sm:min-h-0"
+                title={`View commit ${sha().slice(0, 7)}`}
+              >
+                <Sha value={sha()} />
+              </Link>
+            )}
           </Show>
           <span>
             <RelativeTime epochMs={r().publishedAt ?? r().createdAt} />

@@ -4,10 +4,14 @@
  * `branchProtectionApi` (list / put / remove).
  */
 import {
+  createEffect,
+  createMemo,
   createResource,
   createSignal,
+  createUniqueId,
   For,
   Index,
+  on,
   Show,
   Suspense,
   type JSX,
@@ -220,11 +224,24 @@ function RuleRow(props: {
       <Button size="sm" onClick={() => props.onEdit()}>
         <Icons.Edit class="h-4 w-4" /> Edit
       </Button>
-      <Button size="sm" variant="danger" onClick={() => props.onDelete()} aria-label={`Delete rule ${props.rule.pattern}`}>
+      <Button
+        size="sm"
+        variant="danger"
+        class="min-w-11 sm:min-w-0"
+        onClick={() => props.onDelete()}
+        aria-label={`Delete rule ${props.rule.pattern}`}
+      >
         <Icons.Trash class="h-4 w-4" />
       </Button>
     </div>
   );
+}
+
+function parseStatusChecks(text: string): string[] {
+  return text
+    .split(/[\n,]/u)
+    .map((s) => s.trim())
+    .filter(Boolean);
 }
 
 function RuleEditorDialog(props: {
@@ -238,17 +255,26 @@ function RuleEditorDialog(props: {
   repo: string;
 }): JSX.Element {
   const toast = useToast();
+  const formId = createUniqueId();
   const [saving, setSaving] = createSignal(false);
+  const [checksRaw, setChecksRaw] = createSignal("");
   const patch = (part: Partial<RuleForm>): void => props.onChange({ ...props.value, ...part });
 
-  const checksText = (): string => props.value.requiredStatusChecks.join("\n");
-  const setChecksText = (text: string): void =>
-    patch({
-      requiredStatusChecks: text
-        .split(/[\n,]/u)
-        .map((s) => s.trim())
-        .filter(Boolean),
-    });
+  // Memoize a primitive seed key so replacing `props.value` on every keystroke
+  // while editing an existing rule does not re-trigger and overwrite `checksRaw`.
+  const seedKey = createMemo(() =>
+    props.open ? (props.isNew ? "\0new" : props.value.pattern) : null,
+  );
+  createEffect(
+    on(seedKey, (key) => {
+      if (key !== null) setChecksRaw(props.value.requiredStatusChecks.join("\n"));
+    }),
+  );
+
+  const onChecksInput = (text: string): void => {
+    setChecksRaw(text);
+    patch({ requiredStatusChecks: parseStatusChecks(text) });
+  };
 
   const canSave = (): boolean => props.value.pattern.trim().length > 0 && !saving();
 
@@ -285,16 +311,24 @@ function RuleEditorDialog(props: {
       footer={
         <>
           <Button onClick={() => props.onClose()} disabled={saving()}>Cancel</Button>
-          <Button variant="primary" onClick={save} disabled={!canSave()}>
+          <Button type="submit" form={formId} variant="primary" disabled={!canSave()}>
             <Show when={saving()}><Icons.Loader class="h-4 w-4 animate-spin" /></Show>
             {props.isNew ? "Create rule" : "Save changes"}
           </Button>
         </>
       }
     >
-      <div class="space-y-4">
+      <form
+        id={formId}
+        class="space-y-4"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void save();
+        }}
+      >
         <Field
           label="Branch name pattern"
+          required={props.isNew}
           hint="Exact name or glob, e.g. main, develop, release/*."
           for="rule-pattern"
         >
@@ -303,6 +337,7 @@ function RuleEditorDialog(props: {
             value={props.value.pattern}
             readonly={!props.isNew}
             disabled={!props.isNew}
+            autofocus={props.isNew ? true : undefined}
             placeholder="main"
             onInput={(e) => patch({ pattern: e.currentTarget.value })}
           />
@@ -354,8 +389,8 @@ function RuleEditorDialog(props: {
           <Textarea
             id="rule-checks"
             rows={3}
-            value={checksText()}
-            onInput={(e) => setChecksText(e.currentTarget.value)}
+            value={checksRaw()}
+            onInput={(e) => onChecksInput(e.currentTarget.value)}
             placeholder={"build\ntest"}
           />
         </Field>
@@ -392,7 +427,7 @@ function RuleEditorDialog(props: {
             />
           </div>
         </div>
-      </div>
+      </form>
     </Dialog>
   );
 }

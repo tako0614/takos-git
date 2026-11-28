@@ -102,6 +102,7 @@ export function RepoLayout(props: { children?: JSX.Element }): JSX.Element {
           <div class="flex flex-wrap items-center gap-3">
             <Icons.GitBranch class="h-5 w-5 text-muted" />
             <Breadcrumb
+              aria-label="Repository breadcrumb"
               class="text-base"
               items={[
                 { label: owner(), href: `/` },

@@ -12,6 +12,7 @@ export function RunsList(props: {
   error: string | null;
   filtered: boolean;
   onRetry?: () => void;
+  onClearFilters?: () => void;
 }): JSX.Element {
   return (
     <Show
@@ -46,6 +47,11 @@ export function RunsList(props: {
                 props.filtered
                   ? "Try clearing the filters to see all runs."
                   : "Runs appear here once a workflow is triggered by a push, pull request, or manual dispatch."
+              }
+              action={
+                <Show when={props.filtered && props.onClearFilters}>
+                  <Button onClick={() => props.onClearFilters?.()}>Clear filters</Button>
+                </Show>
               }
             />
           }

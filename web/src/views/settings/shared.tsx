@@ -8,7 +8,7 @@
 import { createUniqueId, Show, type JSX } from "solid-js";
 import { ApiError } from "../../api/client.ts";
 import { useSession } from "../../store/session.tsx";
-import { Banner, Box, BoxHeader, Button, Icons } from "../../ui/index.ts";
+import { Banner, Box, BoxHeader, Button, Icons, LoadingBlock } from "../../ui/index.ts";
 import { cn } from "../../lib/cn.ts";
 
 /** Turn any thrown value into human copy, mapping the common auth statuses. */
@@ -33,24 +33,46 @@ export function AdminGate(props: { children: JSX.Element }): JSX.Element {
   const session = useSession();
   return (
     <Show
-      when={session.authenticated()}
-      fallback={
-        <Banner
-          tone="warning"
-          title="Owner or maintainer access required"
-          action={
-            <Show when={session.configured()}>
-              <Button size="sm" variant="primary" onClick={() => session.signIn()}>
-                Sign in
+      when={!session.loading()}
+      fallback={<LoadingBlock label="Checking session…" />}
+    >
+      <Show
+        when={!session.error()}
+        fallback={
+          <Banner
+            tone="danger"
+            title="Could not verify your session"
+            action={
+              <Button size="sm" onClick={() => session.refetch()}>
+                Retry
               </Button>
-            </Show>
+            }
+          >
+            {describeError(session.error())}
+          </Banner>
+        }
+      >
+        <Show
+          when={session.authenticated()}
+          fallback={
+            <Banner
+              tone="warning"
+              title="Owner or maintainer access required"
+              action={
+                <Show when={session.configured()}>
+                  <Button size="sm" variant="primary" onClick={() => session.signIn()}>
+                    Sign in
+                  </Button>
+                </Show>
+              }
+            >
+              Repository settings can only be managed by its owner or a maintainer. Sign in to continue.
+            </Banner>
           }
         >
-          Repository settings can only be managed by its owner or a maintainer. Sign in to continue.
-        </Banner>
-      }
-    >
-      {props.children}
+          {props.children}
+        </Show>
+      </Show>
     </Show>
   );
 }

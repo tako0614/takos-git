@@ -39,6 +39,7 @@ export function Popover(props: {
   const panelId = createUniqueId();
   let root: HTMLDivElement | undefined;
   let triggerBtn: HTMLButtonElement | undefined;
+  let panelEl: HTMLDivElement | undefined;
 
   const close = (restoreFocus = false) => {
     if (open()) {
@@ -46,6 +47,16 @@ export function Popover(props: {
       if (restoreFocus) triggerBtn?.focus();
       props.onClose?.();
     }
+  };
+  const openPopover = () => {
+    if (props.disabled) return;
+    setOpen(true);
+    queueMicrotask(() => {
+      const target = panelEl?.querySelector<HTMLElement>(
+        'input:not(:disabled), button:not(:disabled)',
+      );
+      target?.focus();
+    });
   };
   const onDocClick = (e: MouseEvent) => {
     if (!root) return;
@@ -98,13 +109,14 @@ export function Popover(props: {
         )}
         onClick={() => {
           if (open()) close();
-          else if (!props.disabled) setOpen(true);
+          else openPopover();
         }}
       >
         <span class="w-full">{props.trigger({ open: open() })}</span>
       </button>
       <Show when={open()}>
         <div
+          ref={panelEl}
           id={panelId}
           role="dialog"
           aria-label={props.triggerLabel}
@@ -241,6 +253,7 @@ export function LabelEditor(props: {
   const toggle = (name: string) =>
     setDraft((prev) => (prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name]));
   const flush = () => {
+    setQuery("");
     const next = draft();
     const changed =
       next.length !== props.selected.length || next.some((n) => !props.selected.includes(n));
@@ -327,6 +340,7 @@ export function AssigneeEditor(props: {
     setManual("");
   };
   const flush = () => {
+    setQuery("");
     const next = draft();
     const changed =
       next.length !== props.selected.length || next.some((s) => !props.selected.includes(s));
@@ -418,6 +432,7 @@ export function MilestoneEditor(props: {
       align="right"
       width="w-72"
       disabled={props.disabled}
+      onClose={() => setQuery("")}
       trigger={() => (
         <span class="flex items-center justify-between text-sm font-semibold text-fg hover:text-accent">
           Milestone <Icons.Settings class="h-4 w-4 text-muted" />

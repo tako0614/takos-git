@@ -104,6 +104,21 @@ export function Menu(props: {
         onClick={() => {
           setOpen((current) => !current);
         }}
+        onKeyDown={(e) => {
+          if (open()) return;
+          if (e.isComposing || e.keyCode === 229) return;
+          if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+            e.preventDefault();
+            const pickLast = e.key === "ArrowUp";
+            setOpen(true);
+            queueMicrotask(() => {
+              const items = menuItems();
+              if (items.length > 0) {
+                (pickLast ? items[items.length - 1] : items[0])?.focus();
+              }
+            });
+          }
+        }}
       >
         {props.trigger}
       </button>

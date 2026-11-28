@@ -15,10 +15,14 @@ export function Breadcrumb(props: {
   items: readonly Crumb[];
   class?: string;
   separator?: string;
+  "aria-label"?: string;
 }): JSX.Element {
   const sep = () => props.separator ?? "/";
   return (
-    <nav aria-label="Breadcrumb" class={cn("flex flex-wrap items-center gap-1 text-sm", props.class)}>
+    <nav
+      aria-label={props["aria-label"] ?? "Breadcrumb"}
+      class={cn("flex flex-wrap items-center gap-1 text-sm", props.class)}
+    >
       <For each={props.items}>
         {(crumb, index) => (
           <>
@@ -26,11 +30,16 @@ export function Breadcrumb(props: {
               <span class="text-subtle" aria-hidden="true">{sep()}</span>
             </Show>
             {crumb.href ? (
-              <A href={crumb.href} class="text-accent hover:underline">
+              <A href={crumb.href} class="tg-focus rounded text-accent hover:underline">
                 {crumb.label}
               </A>
             ) : (
-              <span class="font-semibold text-fg">{crumb.label}</span>
+              <span
+                class="font-semibold text-fg"
+                aria-current={index() === props.items.length - 1 ? "page" : undefined}
+              >
+                {crumb.label}
+              </span>
             )}
           </>
         )}

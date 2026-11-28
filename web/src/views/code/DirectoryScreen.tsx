@@ -29,6 +29,7 @@ import { PathBreadcrumb } from "./PathBreadcrumb.tsx";
 import { CopyButton } from "./CopyButton.tsx";
 import {
   blobHref,
+  commitHref,
   commitsHref,
   commitTitle,
   decodeBase64Utf8,
@@ -72,7 +73,7 @@ function ReadmePanel(props: { owner: string; repo: string; refName: string; entr
         </span>
         <A
           href={blobHref(props.owner, props.repo, props.refName, props.entry.path)}
-          class="text-xs font-normal text-accent hover:underline"
+          class="tg-focus inline-flex min-h-11 items-center rounded px-1 text-xs font-normal text-accent hover:underline sm:min-h-0 sm:px-0"
         >
           View file
         </A>
@@ -107,10 +108,20 @@ function LatestCommitBar(props: { owner: string; repo: string; refName: string; 
         {(commit) => (
           <div class="flex items-center gap-2 border-b border-border bg-canvas-subtle px-4 py-2 text-xs">
             <Icons.GitCommit class="h-3.5 w-3.5 shrink-0 text-muted" />
-            <span class="min-w-0 flex-1 truncate text-fg" title={commit().message}>
+            <A
+              href={commitHref(props.owner, props.repo, commit().sha)}
+              class="tg-focus min-w-0 flex-1 truncate rounded text-fg hover:text-accent hover:underline"
+              title={commit().message}
+            >
               {commitTitle(commit().message)}
-            </span>
-            <Sha value={commit().sha} />
+            </A>
+            <A
+              href={commitHref(props.owner, props.repo, commit().sha)}
+              class="tg-focus inline-flex min-h-11 shrink-0 items-center rounded hover:opacity-80 sm:min-h-0"
+              title={`View commit ${commit().sha.slice(0, 7)}`}
+            >
+              <Sha value={commit().sha} />
+            </A>
             <span class="hidden shrink-0 text-muted sm:inline">
               <RelativeTime epochMs={commit().author.date} />
             </span>
@@ -186,7 +197,8 @@ export function DirectoryScreen(props: {
         <div class="ml-auto flex items-center gap-2">
           <A
             href={commitsHref(props.owner, props.repo, props.refName)}
-            class="tg-focus inline-flex min-h-11 items-center gap-1.5 rounded-md border border-border bg-canvas-subtle px-3 text-sm text-fg hover:bg-canvas-inset sm:min-h-0 sm:h-8"
+            aria-label="Commit history"
+            class="tg-focus inline-flex min-h-11 min-w-11 items-center justify-center gap-1.5 rounded-md border border-border bg-canvas-subtle px-3 text-sm text-fg hover:bg-canvas-inset sm:min-h-0 sm:min-w-0 sm:h-8"
           >
             <Icons.Clock class="h-4 w-4 text-muted" />
             <span class="hidden sm:inline">History</span>
@@ -229,9 +241,11 @@ export function DirectoryScreen(props: {
                         title="This repository is empty"
                         description="Push a first commit over HTTPS to get started."
                         action={
-                          <div class="flex items-center gap-2 rounded-md border border-border bg-canvas-subtle px-2 py-1.5">
-                            <code class="font-mono text-xs text-fg">git clone {props.cloneUrl}</code>
-                            <CopyButton value={`git clone ${props.cloneUrl}`} label="Command" class="h-11 w-11 sm:h-6 sm:w-6" />
+                          <div class="flex max-w-full items-center gap-2 rounded-md border border-border bg-canvas-subtle px-2 py-1.5">
+                            <code class="min-w-0 flex-1 overflow-x-auto break-all font-mono text-xs text-fg">
+                              git clone {props.cloneUrl}
+                            </code>
+                            <CopyButton value={`git clone ${props.cloneUrl}`} label="Command" class="h-11 w-11 shrink-0 sm:h-6 sm:w-6" />
                           </div>
                         }
                       />
@@ -267,7 +281,7 @@ export function DirectoryScreen(props: {
                   <Show when={props.path}>
                     <A
                       href={treeHref(props.owner, props.repo, props.refName, parentPath(props.path))}
-                      class="flex items-center gap-2 border-b border-border px-4 py-2.5 text-sm text-muted hover:bg-canvas-subtle"
+                      class="tg-focus flex min-h-11 items-center gap-2 border-b border-border px-4 py-2.5 text-sm text-muted hover:bg-canvas-subtle sm:min-h-0"
                     >
                       <Icons.ArrowLeft class="h-4 w-4" /> ..
                     </A>
@@ -296,7 +310,7 @@ export function DirectoryScreen(props: {
                                     ? treeHref(props.owner, props.repo, props.refName, entry.path)
                                     : blobHref(props.owner, props.repo, props.refName, entry.path)
                                 }
-                                class="flex items-center gap-2.5 px-4 py-2.5 text-sm hover:bg-canvas-subtle"
+                                class="tg-focus flex min-h-11 items-center gap-2.5 px-4 py-2.5 text-sm hover:bg-canvas-subtle sm:min-h-0"
                               >
                                 <span class="shrink-0">{entryIcon(entry)}</span>
                                 <span class="min-w-0 flex-1 truncate text-fg hover:text-accent hover:underline">

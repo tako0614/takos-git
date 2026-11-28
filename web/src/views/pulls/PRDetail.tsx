@@ -158,7 +158,12 @@ export function PRDetail(): JSX.Element {
         />
         <p class="text-sm text-muted">
           <span class="font-semibold text-fg">{principalName(props.pr.author)}</span>{" "}
-          wants to merge {props.pr.commitsCount} commit{props.pr.commitsCount === 1 ? "" : "s"} into{" "}
+          {props.pr.merged
+            ? "merged"
+            : props.pr.state === "closed"
+              ? "wanted to merge"
+              : "wants to merge"}{" "}
+          {props.pr.commitsCount} commit{props.pr.commitsCount === 1 ? "" : "s"} into{" "}
           <Mono class="rounded bg-neutral-muted px-1.5 py-0.5 text-fg">{props.pr.base.ref}</Mono> from{" "}
           <Mono class="rounded bg-neutral-muted px-1.5 py-0.5 text-fg">{props.pr.head.ref}</Mono>
         </p>

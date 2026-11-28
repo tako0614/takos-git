@@ -6,7 +6,7 @@
  * an inline banner, and expands the ConflictResolver when the PR is not
  * mergeable.
  */
-import { createEffect, createSignal, onCleanup, Show, type JSX } from "solid-js";
+import { createEffect, createSignal, createUniqueId, onCleanup, Show, type JSX } from "solid-js";
 import { pullsApi, type MergeResponse } from "../../api/pulls.ts";
 import { ApiError } from "../../api/client.ts";
 import type { PullRequestDto } from "../../api/types.ts";
@@ -59,6 +59,7 @@ export function MergeBox(props: {
   const [busy, setBusy] = createSignal(false);
   const [protection, setProtection] = createSignal<ApiError | null>(null);
   const [showResolver, setShowResolver] = createSignal(false);
+  const commitMsgId = createUniqueId();
 
   let live = true;
   onCleanup(() => { live = false; });
@@ -115,10 +116,16 @@ export function MergeBox(props: {
     }
   };
 
-  const methodItems: MenuItem[] = (["merge", "squash", "rebase"] as Method[]).map((m) => ({
-    label: METHOD_LABEL[m],
-    onSelect: () => setMethod(m),
-  }));
+  const methodItems = (): MenuItem[] =>
+    (["merge", "squash", "rebase"] as Method[]).map((m) => ({
+      label: (
+        <span class="flex items-center gap-2">
+          <Icons.Check class={`h-3.5 w-3.5 shrink-0 ${method() === m ? "text-success" : "text-transparent"}`} />
+          <span>{METHOD_LABEL[m]}</span>
+        </span>
+      ),
+      onSelect: () => setMethod(m),
+    }));
 
 
   return (
@@ -168,7 +175,14 @@ export function MergeBox(props: {
                 Checking mergeability…
               </Show>
             </div>
-            <div class="text-muted">Merging can be performed automatically.</div>
+            <div class="text-muted">
+              <Show
+                when={props.pr.mergeable === "unknown"}
+                fallback={<>Merging can be performed automatically.</>}
+              >
+                Checking whether this branch can be merged automatically.
+              </Show>
+            </div>
           </div>
         </Show>
       </div>
@@ -224,21 +238,25 @@ export function MergeBox(props: {
                         <Icons.ChevronDown class="h-4 w-4" />
                       </span>
                     }
-                    items={methodItems}
+                    items={methodItems()}
                   />
                 </div>
               }
             >
               <div class="space-y-2">
                 <Show when={method() !== "rebase"}>
+                  <label for={commitMsgId} class="sr-only">
+                    Merge commit message (optional)
+                  </label>
                   <Textarea
+                    id={commitMsgId}
                     rows={3}
                     placeholder="Optional commit message"
                     value={message()}
                     onInput={(e) => setMessage(e.currentTarget.value)}
                   />
                 </Show>
-                <div class="flex items-center gap-2">
+                <div class="flex flex-wrap items-center gap-2">
                   <Button variant="primary" onClick={doMerge} disabled={busy()}>
                     {busy() ? "Merging…" : `Confirm ${method()}`}
                   </Button>

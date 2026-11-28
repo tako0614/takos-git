@@ -71,7 +71,14 @@ export function TextInput(
   const fallbackId = createUniqueId();
   const [local, rest] = splitProps(props, ["class", "type", "id"]);
   const resolvedId = () => local.id ?? fallbackId;
-  return <input type={local.type ?? "text"} id={resolvedId()} class={cn(FIELD_BASE, local.class)} {...rest} />;
+  return (
+    <input
+      type={local.type ?? "text"}
+      id={resolvedId()}
+      class={cn(FIELD_BASE, "min-h-11 sm:min-h-0", local.class)}
+      {...rest}
+    />
+  );
 }
 
 export function Textarea(
@@ -90,7 +97,7 @@ export function Select(
   const [local, rest] = splitProps(props, ["class", "children", "id"]);
   const resolvedId = () => local.id ?? fallbackId;
   return (
-    <select id={resolvedId()} class={cn(FIELD_BASE, "pr-8", local.class)} {...rest}>
+    <select id={resolvedId()} class={cn(FIELD_BASE, "min-h-11 pr-8 sm:min-h-0", local.class)} {...rest}>
       {local.children}
     </select>
   );

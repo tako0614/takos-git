@@ -7,10 +7,10 @@ export function Footer(): JSX.Element {
       <div class="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-2 px-4 py-6 text-xs text-muted">
         <span>Takos Git — collaborative Git hosting Capsule.</span>
         <span class="flex items-center gap-3">
-          <a href="/healthz" class="hover:text-fg">Status</a>
+          <a href="/healthz" class="tg-focus inline-flex min-h-11 min-w-11 items-center justify-center rounded px-1 hover:text-fg sm:min-h-0 sm:min-w-0 sm:px-0">Status</a>
           <a
             href="https://github.com/tako0614/takos-git/blob/main/README.md#http-surface"
-            class="hover:text-fg"
+            class="tg-focus inline-flex min-h-11 min-w-11 items-center justify-center rounded px-1 hover:text-fg sm:min-h-0 sm:min-w-0 sm:px-0"
           >
             MCP docs
           </a>

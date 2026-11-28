@@ -33,6 +33,7 @@ export function IssueStateIcon(props: { state: "open" | "closed"; class?: string
       when={props.state === "open"}
       fallback={
         <span
+          role="img"
           class={cn("inline-flex h-4 w-4 items-center justify-center text-done", props.class)}
           title="Closed"
           aria-label="Closed"
@@ -42,6 +43,7 @@ export function IssueStateIcon(props: { state: "open" | "closed"; class?: string
       }
     >
       <span
+        role="img"
         class={cn("inline-block rounded-full border-2 border-success", props.class)}
         style={{ width: "14px", height: "14px" }}
         title="Open"

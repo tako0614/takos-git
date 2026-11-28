@@ -393,7 +393,7 @@ export function IssueDetail(props: {
                           }}
                         />
                         <Button variant="primary" disabled={busy() || !titleDraft().trim()} onClick={saveTitle}>
-                          Save
+                          {metadataBusy() ? "Saving…" : "Save"}
                         </Button>
                         <Button onClick={() => cancelTitleEdit(true)}>Cancel</Button>
                       </div>
@@ -448,7 +448,7 @@ export function IssueDetail(props: {
                           <div class="flex justify-end gap-2">
                             <Button onClick={cancelBodyEdit}>Cancel</Button>
                             <Button variant="primary" disabled={busy()} onClick={saveBody}>
-                              Save
+                              {metadataBusy() ? "Saving…" : "Save"}
                             </Button>
                           </div>
                         </div>
@@ -472,7 +472,23 @@ export function IssueDetail(props: {
 
                     {/* Comments */}
                     <Show when={commentsError()}>
-                      {(msg) => <Banner tone="danger">{msg()}</Banner>}
+                      {(msg) => (
+                        <Banner
+                          tone="danger"
+                          title="Could not load comments"
+                          action={
+                            <Button
+                              size="sm"
+                              disabled={commentsLoading()}
+                              onClick={() => void loadComments(comments().length === 0)}
+                            >
+                              Retry
+                            </Button>
+                          }
+                        >
+                          {msg()}
+                        </Banner>
+                      )}
                     </Show>
                     <For each={comments().map((comment) => comment.id)}>
                       {(id) => (
@@ -512,14 +528,40 @@ export function IssueDetail(props: {
                     {/* Composer */}
                     <div class="border-t border-border pt-4 sm:ml-[52px]">
                       <Show
+                        when={!session.loading()}
+                        fallback={<LoadingBlock label="Checking session…" class="py-6" />}
+                      >
+                      <Show
+                        when={!session.error()}
+                        fallback={
+                          <Banner
+                            tone="danger"
+                            title="Could not verify your session"
+                            action={
+                              <Button size="sm" onClick={() => session.refetch()}>
+                                Retry
+                              </Button>
+                            }
+                          >
+                            {session.error() instanceof ApiError
+                              ? (session.error() as ApiError).message
+                              : session.error() instanceof Error
+                                ? (session.error() as Error).message
+                                : "Could not verify your session."}
+                          </Banner>
+                        }
+                      >
+                      <Show
                         when={session.authenticated()}
                         fallback={
                           <Banner
                             tone="info"
                             action={
-                              <Button size="sm" variant="primary" onClick={() => session.signIn()}>
-                                Sign in
-                              </Button>
+                              <Show when={session.configured()}>
+                                <Button size="sm" variant="primary" onClick={() => session.signIn()}>
+                                  Sign in
+                                </Button>
+                              </Show>
                             }
                           >
                             Sign in to comment on this issue.
@@ -583,9 +625,11 @@ export function IssueDetail(props: {
                             disabled={busy() || (!submission() || !!submission()?.state()) || !commentDraft().trim()}
                             onClick={() => void submitComment()}
                           >
-                            Comment
+                            {commentBusy() ? "Commenting…" : "Comment"}
                           </Button>
                         </div>
+                      </Show>
+                      </Show>
                       </Show>
                     </div>
                   </div>
