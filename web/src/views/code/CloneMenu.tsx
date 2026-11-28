@@ -108,13 +108,18 @@ export function CloneMenu(props: { cloneUrl: string }): JSX.Element {
               value={props.cloneUrl}
               label="Clone URL"
               title="Copy clone URL"
-              class="h-10 w-10 shrink-0 hover:bg-canvas-inset sm:h-8 sm:w-8"
+              class="h-11 w-11 shrink-0 hover:bg-canvas-inset sm:h-8 sm:w-8"
             />
           </div>
 
           <div class="mt-3 flex items-center justify-between">
             <span class="text-xs font-medium text-muted">Command</span>
-            <CopyButton value={cloneCmd()} label="Command" title="Copy git clone command" class="text-xs text-accent hover:underline">
+            <CopyButton
+              value={cloneCmd()}
+              label="Command"
+              title="Copy git clone command"
+              class="min-h-11 px-2 text-xs text-accent hover:underline sm:min-h-0 sm:px-0"
+            >
               <span>Copy command</span>
             </CopyButton>
           </div>

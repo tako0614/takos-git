@@ -228,7 +228,10 @@ export function RunDetail(props: {
 
               <section class="flex flex-col gap-2">
                 <h2 class="text-sm font-semibold text-fg">
-                  Jobs <span class="font-normal text-muted">{jobs().length}</span>
+                  Jobs{" "}
+                  <Show when={!jobsRes.error}>
+                    <span class="font-normal text-muted">{jobs().length}</span>
+                  </Show>
                 </h2>
                 <Show when={jobsRes.error}>
                   <Banner
@@ -245,7 +248,7 @@ export function RunDetail(props: {
                 <Show
                   when={jobs().length > 0}
                   fallback={
-                    <Show when={!jobsRes.loading}>
+                    <Show when={!jobsRes.loading && !jobsRes.error}>
                       <Box class="px-4 py-6 text-center text-sm text-muted">
                         No jobs have been recorded for this run yet.
                       </Box>

@@ -125,8 +125,10 @@ export function Toggle(props: {
     >
       <span
         class={cn(
-          "relative inline-flex h-5 w-9 items-center rounded-full border border-border transition-colors",
-          props.checked ? "border-success-emphasis bg-success-emphasis" : "bg-border",
+          "relative inline-flex h-5 w-9 items-center rounded-full border transition-colors",
+          props.checked
+            ? "border-success-emphasis bg-success-emphasis"
+            : "border-neutral-emphasis bg-neutral-emphasis",
         )}
       >
         <span

@@ -167,7 +167,7 @@ function ResolverBody(props: {
                   aria-current={active() ? "true" : undefined}
                   onClick={() => select(conflict().path)}
                   class={
-                    "tg-focus flex min-h-10 w-full items-center gap-2 rounded px-2 py-1 text-left text-xs sm:min-h-0 " +
+                    "tg-focus flex min-h-11 w-full items-center gap-2 rounded px-2 py-1 text-left text-xs sm:min-h-0 " +
                     (active() ? "bg-canvas-inset font-semibold text-fg" : "hover:bg-canvas-subtle")
                   }
                 >
@@ -237,7 +237,7 @@ function ResolverBody(props: {
                   <button
                     type="button"
                     onClick={applyEdit}
-                    class="tg-focus min-h-10 shrink-0 rounded border border-border bg-canvas px-2.5 py-0.5 text-xs hover:bg-canvas-inset sm:min-h-0 sm:px-2"
+                    class="tg-focus min-h-11 shrink-0 rounded border border-border bg-canvas px-2.5 py-0.5 text-xs hover:bg-canvas-inset sm:min-h-0 sm:px-2"
                   >
                     Apply edit
                   </button>

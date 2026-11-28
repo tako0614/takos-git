@@ -228,8 +228,8 @@ export function CollaboratorsSettingsView(): JSX.Element {
           <div class="mb-2 flex items-center justify-between">
             <h2 class="text-sm font-semibold text-fg">
               Collaborators
-              <Show when={collabs()}>
-                <span class="ml-1.5 text-muted">({collabs()!.length})</span>
+              <Show when={!collabs.loading && !collabs.error && collabs()}>
+                {(list) => <span class="ml-1.5 text-muted">({list().length})</span>}
               </Show>
             </h2>
           </div>

@@ -116,10 +116,10 @@ export function CommitDetailScreen(props: { owner: string; repo: string; sha: st
                       <div class="ml-auto flex items-center gap-2">
                         <span class="text-xs text-muted">commit</span>
                         <Sha value={commit().sha} />
-                        <CopyButton value={commit().sha} label="Commit SHA" class="h-10 w-10 hover:bg-canvas-subtle sm:h-6 sm:w-6" />
+                        <CopyButton value={commit().sha} label="Commit SHA" class="h-11 w-11 hover:bg-canvas-subtle sm:h-6 sm:w-6" />
                         <A
                           href={treeHref(props.owner, props.repo, commit().sha)}
-                          class="tg-focus inline-flex min-h-10 items-center gap-1.5 rounded-md border border-border bg-canvas-subtle px-2.5 text-xs text-fg hover:bg-canvas-inset sm:min-h-0 sm:h-7"
+                          class="tg-focus inline-flex min-h-11 items-center gap-1.5 rounded-md border border-border bg-canvas-subtle px-2.5 text-xs text-fg hover:bg-canvas-inset sm:min-h-0 sm:h-7"
                         >
                           <Icons.Code class="h-3.5 w-3.5 text-muted" /> Browse files
                         </A>
@@ -132,7 +132,7 @@ export function CommitDetailScreen(props: { owner: string; repo: string; sha: st
                           {(parent) => (
                             <A
                               href={commitHref(props.owner, props.repo, parent)}
-                              class="tg-focus rounded border border-border bg-canvas px-1.5 py-0.5 font-mono text-accent hover:underline"
+                              class="tg-focus inline-flex min-h-11 items-center rounded border border-border bg-canvas px-2.5 py-0.5 font-mono text-accent hover:underline sm:min-h-0 sm:px-1.5"
                             >
                               {parent.slice(0, 7)}
                             </A>

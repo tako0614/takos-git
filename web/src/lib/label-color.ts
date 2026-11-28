@@ -14,7 +14,9 @@ export type LabelChipStyle = {
 
 const FALLBACK_HEX = "8b949e";
 const LIGHT_CANVAS: RgbColor = { r: 255, g: 255, b: 255 };
+const LIGHT_SUBTLE: RgbColor = { r: 246, g: 248, b: 250 };
 const DARK_CANVAS: RgbColor = { r: 13, g: 17, b: 23 };
+const DARK_SUBTLE: RgbColor = { r: 21, g: 27, b: 35 };
 const LIGHT_ANCHOR: RgbColor = { r: 13, g: 17, b: 23 };
 const DARK_ANCHOR: RgbColor = { r: 240, g: 246, b: 252 };
 const TARGET_CONTRAST = 4.6;
@@ -83,17 +85,21 @@ export function computeLabelChipStyle(
 ): LabelChipStyle {
   const base = parseHexColor(rawColor);
   const canvas = theme === "dark" ? DARK_CANVAS : LIGHT_CANVAS;
+  const subtle = theme === "dark" ? DARK_SUBTLE : LIGHT_SUBTLE;
   const anchor = theme === "dark" ? DARK_ANCHOR : LIGHT_ANCHOR;
   const bgAlpha = theme === "dark" ? 0.2 : 0.16;
-  const pillBg = mixRgb(canvas, base, bgAlpha);
+  const pillBgCanvas = mixRgb(canvas, base, bgAlpha);
+  const pillBgSubtle = mixRgb(subtle, base, bgAlpha);
+  const minContrast = (fg: RgbColor): number =>
+    Math.min(contrastRatio(fg, pillBgCanvas), contrastRatio(fg, pillBgSubtle));
 
   let textColor = base;
-  if (contrastRatio(base, pillBg) < TARGET_CONTRAST) {
+  if (minContrast(base) < TARGET_CONTRAST) {
     let lo = 0;
     let hi = 1;
     for (let i = 0; i < 12; i += 1) {
       const mid = (lo + hi) / 2;
-      if (contrastRatio(mixRgb(base, anchor, mid), pillBg) >= TARGET_CONTRAST) {
+      if (minContrast(mixRgb(base, anchor, mid)) >= TARGET_CONTRAST) {
         hi = mid;
       } else {
         lo = mid;

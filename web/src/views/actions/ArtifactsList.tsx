@@ -95,7 +95,7 @@ export function ArtifactsList(props: {
                   </div>
                   <a
                     href={actionsApi.artifactDownloadUrl(props.owner, props.repo, artifact.id)}
-                    class="tg-focus inline-flex min-h-10 shrink-0 items-center gap-1 rounded-md border border-border bg-canvas-subtle px-2.5 py-1 text-xs font-medium text-fg hover:bg-canvas-inset sm:min-h-0"
+                    class="tg-focus inline-flex min-h-11 shrink-0 items-center gap-1 rounded-md border border-border bg-canvas-subtle px-2.5 py-1 text-xs font-medium text-fg hover:bg-canvas-inset sm:min-h-0"
                     rel="noopener"
                     aria-label={`Download ${artifact.name}`}
                   >

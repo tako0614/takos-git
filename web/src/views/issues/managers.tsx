@@ -170,17 +170,21 @@ export function LabelManager(props: {
               </div>
             </label>
           </div>
-          <div class="mt-2 flex flex-wrap gap-1.5">
+          <div class="mt-2 flex flex-wrap gap-1">
             <Index each={SWATCHES}>
               {(hex) => (
                 <button
                   type="button"
                   aria-label={`Use color ${hex()}`}
                   aria-pressed={newColor().replace(/^#/, "").toLowerCase() === hex().toLowerCase()}
-                  class="tg-focus h-7 w-7 rounded-full border border-border sm:h-5 sm:w-5"
-                  style={{ background: `#${hex()}` }}
+                  class="tg-focus inline-flex h-11 w-11 items-center justify-center rounded-full hover:bg-canvas-subtle aria-pressed:ring-2 aria-pressed:ring-accent-emphasis sm:h-6 sm:w-6"
                   onClick={() => setNewColor(hex())}
-                />
+                >
+                  <span
+                    class="h-6 w-6 rounded-full border border-border sm:h-5 sm:w-5"
+                    style={{ background: `#${hex()}` }}
+                  />
+                </button>
               )}
             </Index>
           </div>

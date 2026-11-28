@@ -59,8 +59,7 @@ if (root) {
           <Route path="/issues/:number" component={IssueDetailView} />
 
           <Route path="/pulls" component={PullsView} />
-          <Route path="/pulls/:number" component={PullDetailView} />
-          <Route path="/pulls/:number/files" component={PullDetailView} />
+          <Route path={["/pulls/:number", "/pulls/:number/files"]} component={PullDetailView} />
 
           <Route path="/actions" component={ActionsView} />
           <Route path="/actions/runs/:runId" component={RunDetailView} />

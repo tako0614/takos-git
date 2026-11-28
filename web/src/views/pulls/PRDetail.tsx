@@ -8,6 +8,7 @@ import {
   createEffect,
   createResource,
   createSignal,
+  createUniqueId,
   ErrorBoundary,
   Show,
   Suspense,
@@ -39,6 +40,8 @@ type Tab = "conversation" | "commits" | "files" | "checks";
 
 function TabButton(props: {
   id: Tab;
+  tabId: string;
+  panelId: string;
   active: boolean;
   icon: JSX.Element;
   label: string;
@@ -48,11 +51,13 @@ function TabButton(props: {
 }): JSX.Element {
   return (
     <button
+      id={props.tabId}
       type="button"
       role="tab"
       data-tab-id={props.id}
       tabIndex={props.active ? 0 : -1}
       aria-selected={props.active}
+      aria-controls={props.active ? props.panelId : undefined}
       onClick={props.onClick}
       onKeyDown={props.onKeyDown}
       class={cn(
@@ -76,37 +81,51 @@ export function PRDetail(): JSX.Element {
   const params = useParams();
   const location = useLocation();
   const navigate = useNavigate();
+  const tabsId = createUniqueId();
 
   const number = () => Number(params.number);
   const base = () => `/${repo.owner()}/${repo.repo()}/pulls/${params.number}`;
-  const routeIsFiles = () => location.pathname.endsWith(`/pulls/${params.number}/files`);
+  const routeIsFiles = () => /\/files\/?$/u.test(location.pathname) && location.pathname.includes(`/pulls/${params.number}/`);
 
   const [tab, setTab] = createSignal<Tab>(routeIsFiles() ? "files" : "conversation");
-  // Deep-link `/files` → Files tab; leaving that route drops back to conversation.
+  let lastPrKey = "";
+  createEffect(() => {
+    const nextKey = `${repo.owner()}/${repo.repo()}#${params.number}`;
+    if (lastPrKey && lastPrKey !== nextKey) {
+      setTab(routeIsFiles() ? "files" : "conversation");
+    }
+    lastPrKey = nextKey;
+  });
+  // Deep-link `/files` → Files tab; leaving `/files` via browser Back drops back to conversation.
   createEffect(() => {
     if (routeIsFiles()) setTab("files");
-  });
-  createEffect(() => {
-    if (!routeIsFiles()) setTab((cur) => (cur === "files" ? "conversation" : cur));
+    else setTab((cur) => (cur === "files" ? "conversation" : cur));
   });
 
   const [data, { refetch }] = createResource(
     () => [repo.owner(), repo.repo(), number()] as const,
     ([owner, name, num]) => pullsApi.get(owner, name, num),
   );
+  const prData = () =>
+    data.state === "ready" || data.state === "refreshing" ? data.latest?.pull : undefined;
+  const notFound = () => data.error instanceof ApiError && data.error.isNotFound;
+  const loadError = () => (data.error && !notFound() ? data.error : undefined);
 
   const goConversation = () => {
     setTab("conversation");
-    navigate(base());
+    if (routeIsFiles()) navigate(base(), { scroll: false });
   };
   const goCommits = () => {
     setTab("commits");
-    navigate(base());
+    if (routeIsFiles()) navigate(base(), { scroll: false });
   };
-  const goFiles = () => navigate(`${base()}/files`);
+  const goFiles = () => {
+    setTab("files");
+    if (!routeIsFiles()) navigate(`${base()}/files`, { scroll: false });
+  };
   const goChecks = () => {
     setTab("checks");
-    navigate(base());
+    if (routeIsFiles()) navigate(base(), { scroll: false });
   };
 
   const onTabKeyDown = (e: KeyboardEvent) => {
@@ -180,8 +199,46 @@ export function PRDetail(): JSX.Element {
         )
       }
     >
-      <Suspense fallback={<LoadingBlock label="Loading pull request…" />}>
-        <Show when={data()?.pull}>
+      <Show
+        when={!notFound()}
+        fallback={
+          <EmptyState
+            headingLevel="h1"
+            icon={<Icons.GitPullRequest class="h-8 w-8" />}
+            title="Pull request not found"
+            description={`No pull request #${params.number} exists in this repository.`}
+            action={
+              <Button variant="default" onClick={() => navigate(`/${repo.owner()}/${repo.repo()}/pulls`)}>
+                Back to pull requests
+              </Button>
+            }
+          />
+        }
+      >
+        <Show
+          when={!loadError()}
+          fallback={
+            <div class="space-y-3">
+              <h1 class="sr-only">Pull request error</h1>
+              <Banner
+                tone="danger"
+                title="Could not load the pull request"
+                action={
+                  <Button size="sm" disabled={data.loading} onClick={() => void refetch()}>
+                    Retry
+                  </Button>
+                }
+              >
+                {loadError() instanceof ApiError
+                  ? (loadError() as ApiError).message
+                  : loadError() instanceof Error
+                    ? (loadError() as Error).message
+                    : "Unexpected error."}
+              </Banner>
+            </div>
+          }
+        >
+        <Show when={prData()} fallback={<LoadingBlock label="Loading pull request…" />}>
           {(pr) => (
             <div class="space-y-4">
               <Header pr={pr()} />
@@ -189,6 +246,8 @@ export function PRDetail(): JSX.Element {
               <div role="tablist" aria-label="Pull request sections" class="flex gap-1 overflow-x-auto overflow-y-hidden border-b border-border">
                 <TabButton
                   id="conversation"
+                  tabId={`${tabsId}-tab-conversation`}
+                  panelId={`${tabsId}-panel-conversation`}
                   active={tab() === "conversation"}
                   icon={<Icons.MessageSquare class="h-4 w-4" />}
                   label="Conversation"
@@ -198,6 +257,8 @@ export function PRDetail(): JSX.Element {
                 />
                 <TabButton
                   id="commits"
+                  tabId={`${tabsId}-tab-commits`}
+                  panelId={`${tabsId}-panel-commits`}
                   active={tab() === "commits"}
                   icon={<Icons.GitCommit class="h-4 w-4" />}
                   label="Commits"
@@ -207,6 +268,8 @@ export function PRDetail(): JSX.Element {
                 />
                 <TabButton
                   id="files"
+                  tabId={`${tabsId}-tab-files`}
+                  panelId={`${tabsId}-panel-files`}
                   active={tab() === "files"}
                   icon={<Icons.File class="h-4 w-4" />}
                   label="Files changed"
@@ -215,6 +278,8 @@ export function PRDetail(): JSX.Element {
                 />
                 <TabButton
                   id="checks"
+                  tabId={`${tabsId}-tab-checks`}
+                  panelId={`${tabsId}-panel-checks`}
                   active={tab() === "checks"}
                   icon={<Icons.Play class="h-4 w-4" />}
                   label="Checks"
@@ -223,22 +288,31 @@ export function PRDetail(): JSX.Element {
                 />
               </div>
 
-              <Show when={tab() === "conversation"}>
-                <PRConversation owner={repo.owner()} repo={repo.repo()} pr={pr()} onChanged={() => refetch()} />
-              </Show>
-              <Show when={tab() === "commits"}>
-                <PRCommits owner={repo.owner()} repo={repo.repo()} number={pr().number} />
-              </Show>
-              <Show when={tab() === "files"}>
-                <PRFiles owner={repo.owner()} repo={repo.repo()} pr={pr()} />
-              </Show>
-              <Show when={tab() === "checks"}>
-                <PRChecks owner={repo.owner()} repo={repo.repo()} sha={pr().head.sha} />
-              </Show>
+              <div
+                role="tabpanel"
+                id={`${tabsId}-panel-${tab()}`}
+                aria-labelledby={`${tabsId}-tab-${tab()}`}
+              >
+                <Suspense fallback={<LoadingBlock label="Loading section…" />}>
+                  <Show when={tab() === "conversation"}>
+                    <PRConversation owner={repo.owner()} repo={repo.repo()} pr={pr()} onChanged={() => refetch()} />
+                  </Show>
+                  <Show when={tab() === "commits"}>
+                    <PRCommits owner={repo.owner()} repo={repo.repo()} number={pr().number} />
+                  </Show>
+                  <Show when={tab() === "files"}>
+                    <PRFiles owner={repo.owner()} repo={repo.repo()} pr={pr()} />
+                  </Show>
+                  <Show when={tab() === "checks"}>
+                    <PRChecks owner={repo.owner()} repo={repo.repo()} sha={pr().head.sha} />
+                  </Show>
+                </Suspense>
+              </div>
             </div>
           )}
         </Show>
-      </Suspense>
+        </Show>
+      </Show>
     </ErrorBoundary>
   );
 }

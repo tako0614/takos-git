@@ -231,7 +231,7 @@ export function DirectoryScreen(props: {
                         action={
                           <div class="flex items-center gap-2 rounded-md border border-border bg-canvas-subtle px-2 py-1.5">
                             <code class="font-mono text-xs text-fg">git clone {props.cloneUrl}</code>
-                            <CopyButton value={`git clone ${props.cloneUrl}`} label="Command" class="h-10 w-10 sm:h-6 sm:w-6" />
+                            <CopyButton value={`git clone ${props.cloneUrl}`} label="Command" class="h-11 w-11 sm:h-6 sm:w-6" />
                           </div>
                         }
                       />

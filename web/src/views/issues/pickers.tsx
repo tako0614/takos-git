@@ -43,8 +43,8 @@ export function Popover(props: {
   const close = (restoreFocus = false) => {
     if (open()) {
       setOpen(false);
-      props.onClose?.();
       if (restoreFocus) triggerBtn?.focus();
+      props.onClose?.();
     }
   };
   const onDocClick = (e: MouseEvent) => {
@@ -87,13 +87,19 @@ export function Popover(props: {
       <button
         ref={triggerBtn}
         type="button"
-        disabled={props.disabled}
+        aria-disabled={props.disabled ? "true" : undefined}
         aria-haspopup="dialog"
         aria-expanded={open()}
         aria-controls={open() ? panelId : undefined}
         aria-label={props.triggerLabel}
-        class="tg-focus flex min-h-11 w-full items-center rounded-md py-1 text-left disabled:cursor-not-allowed disabled:opacity-60 sm:min-h-0 sm:py-0"
-        onClick={() => (open() ? close() : setOpen(true))}
+        class={cn(
+          "tg-focus flex min-h-11 w-full items-center rounded-md py-1 text-left sm:min-h-0 sm:py-0",
+          props.disabled && "cursor-not-allowed opacity-60",
+        )}
+        onClick={() => {
+          if (open()) close();
+          else if (!props.disabled) setOpen(true);
+        }}
       >
         <span class="w-full">{props.trigger({ open: open() })}</span>
       </button>
@@ -121,6 +127,7 @@ function OptionList<T>(props: {
   options: readonly T[];
   loading?: boolean;
   error?: string;
+  onRetry?: () => void;
   empty?: string;
   keyOf: (item: T) => string;
   selected: (item: T) => boolean;
@@ -155,7 +162,26 @@ function OptionList<T>(props: {
             </div>
           }
         >
-          <Show when={!props.error} fallback={<p class="px-3 py-3 text-sm text-danger">{props.error}</p>}>
+          <Show
+            when={!props.error}
+            fallback={
+              <div class="space-y-2 px-3 py-3 text-sm text-danger">
+                <p>{props.error}</p>
+                <Show when={props.onRetry}>
+                  <button
+                    type="button"
+                    class="tg-focus inline-flex min-h-11 items-center rounded-md border border-border bg-canvas-subtle px-3 py-1 text-xs font-medium text-fg hover:bg-canvas-inset sm:min-h-0"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      props.onRetry?.();
+                    }}
+                  >
+                    Retry
+                  </button>
+                </Show>
+              </div>
+            }
+          >
             <Show
               when={props.options.length > 0}
               fallback={<p class="px-3 py-3 text-sm text-muted">{props.empty ?? "Nothing to show."}</p>}
@@ -166,7 +192,7 @@ function OptionList<T>(props: {
                     type="button"
                     role="checkbox"
                     aria-checked={props.selected(item())}
-                    class="tg-focus flex min-h-10 w-full items-start gap-2 px-3 py-1.5 text-left text-sm hover:bg-canvas-subtle sm:min-h-0"
+                    class="tg-focus flex min-h-11 w-full items-start gap-2 px-3 py-1.5 text-left text-sm hover:bg-canvas-subtle sm:min-h-0"
                     onClick={() => props.onToggle(item())}
                   >
                     <span class="mt-0.5 w-4 shrink-0 text-accent">
@@ -198,6 +224,7 @@ export function LabelEditor(props: {
   all: readonly LabelDto[];
   loading?: boolean;
   error?: string;
+  onRetry?: () => void;
   selected: readonly string[];
   disabled?: boolean;
   onApply: (names: string[]) => void;
@@ -239,6 +266,7 @@ export function LabelEditor(props: {
           options={filtered()}
           loading={props.loading}
           error={props.error}
+          onRetry={props.onRetry}
           empty="No labels in this repository."
           keyOf={(l) => l.name}
           selected={(l) => draft().includes(l.name)}
@@ -354,7 +382,7 @@ export function AssigneeEditor(props: {
                 />
                 <button
                   type="button"
-                  class="tg-focus shrink-0 rounded-md border border-border px-2 py-1.5 text-xs hover:bg-canvas-subtle"
+                  class="tg-focus inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-md border border-border px-3 py-1.5 text-xs hover:bg-canvas-subtle sm:min-h-0 sm:min-w-0 sm:px-2"
                   onClick={addManual}
                 >
                   Add
@@ -373,6 +401,7 @@ export function MilestoneEditor(props: {
   all: readonly MilestoneDto[];
   loading?: boolean;
   error?: string;
+  onRetry?: () => void;
   selected: number | null;
   disabled?: boolean;
   onApply: (milestone: number | null) => void;
@@ -401,6 +430,7 @@ export function MilestoneEditor(props: {
           options={filtered()}
           loading={props.loading}
           error={props.error}
+          onRetry={props.onRetry}
           empty="No open milestones."
           keyOf={(m) => String(m.number)}
           selected={(m) => props.selected === m.number}
@@ -422,8 +452,9 @@ export function MilestoneEditor(props: {
             <Show when={props.selected !== null}>
               <button
                 type="button"
-                class="tg-focus w-full rounded-md px-2 py-1.5 text-left text-sm text-danger hover:bg-canvas-subtle"
+                class="tg-focus flex min-h-11 w-full items-center rounded-md px-2 py-1.5 text-left text-sm text-danger hover:bg-canvas-subtle sm:min-h-0"
                 onClick={() => {
+                  if (props.disabled) return;
                   props.onApply(null);
                   close();
                 }}

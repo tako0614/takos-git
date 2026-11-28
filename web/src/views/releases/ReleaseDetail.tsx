@@ -66,7 +66,7 @@ export function ReleaseDetail(props: ReleaseDetailProps): JSX.Element {
     <div class="flex flex-col gap-4">
       <button
         type="button"
-        class="tg-focus inline-flex min-h-10 w-fit items-center gap-1 rounded text-sm text-accent hover:underline sm:min-h-0"
+        class="tg-focus inline-flex min-h-11 w-fit items-center gap-1 rounded text-sm text-accent hover:underline sm:min-h-0"
         onClick={() => props.onBack()}
       >
         <Icons.ArrowLeft class="h-4 w-4" /> All releases

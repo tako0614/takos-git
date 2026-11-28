@@ -265,7 +265,7 @@ function ReleaseRow(props: {
         <div class="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            class="tg-focus inline-flex min-h-10 items-center truncate rounded text-left text-base font-semibold text-fg hover:text-accent hover:underline sm:min-h-0"
+            class="tg-focus inline-flex min-h-11 items-center truncate rounded text-left text-base font-semibold text-fg hover:text-accent hover:underline sm:min-h-0"
             onClick={() => props.onOpen(r().tag)}
           >
             {releaseTitle(r())}

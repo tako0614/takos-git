@@ -27,7 +27,10 @@ export function LogViewer(props: {
   const timers = createLifecycleOwner();
 
   const load = async (initial: boolean) => {
-    if (initial) setLoading(true);
+    if (initial) {
+      setLoading(true);
+      setError(null);
+    }
     try {
       const res = await actionsApi.jobLogs(
         props.owner,
@@ -42,6 +45,7 @@ export function LogViewer(props: {
       if (disposed) return;
       if (err instanceof ApiError && err.isNotFound) {
         setNotReady(true);
+        setError(null);
       } else if (initial) {
         setError(err instanceof ApiError ? err.message : "Failed to load logs");
       }
@@ -94,7 +98,7 @@ export function LogViewer(props: {
         <div>
           <button
             type="button"
-            class="tg-focus inline-flex min-h-10 items-center gap-1 rounded px-2 hover:text-fg sm:min-h-0 sm:px-1"
+            class="tg-focus inline-flex min-h-11 items-center gap-1 rounded px-2 hover:text-fg sm:min-h-0 sm:px-1"
             onClick={() => void copy()}
             disabled={!text()}
           >
@@ -116,7 +120,7 @@ export function LogViewer(props: {
             <span>{error()}</span>
             <button
               type="button"
-              class="tg-focus rounded border border-border bg-canvas-subtle px-2 py-1 text-xs font-medium text-fg hover:bg-canvas-inset"
+              class="tg-focus inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded border border-border bg-canvas-subtle px-3 py-1 text-xs font-medium text-fg hover:bg-canvas-inset sm:min-h-0 sm:min-w-0 sm:px-2"
               onClick={() => void load(true)}
             >
               Retry
